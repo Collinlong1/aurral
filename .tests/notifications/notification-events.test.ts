@@ -418,3 +418,70 @@ test("notifyFlowDone uses display name and track library path placeholders", asy
     assert.doesNotMatch(webhook.body.path, /_playlists/);
   });
 });
+
+test("a webhook sends each event's own body and falls back to its default body", async () => {
+  await withCaptureServer(async ({ baseUrl, waitFor }) => {
+    dbOps.updateSettings({
+      integrations: {
+        webhookEvents: {
+          notifyRequestMade: true,
+          notifyRequestAvailable: true,
+          notifyWeeklyFlowDone: true,
+        },
+        webhooks: [
+          {
+            url: `${baseUrl}/hook`,
+            body: '{"text":"Default for $event"}',
+            eventBodies: {
+              notifyRequestMade: '{"text":"Album requested: $albumName by $username"}',
+              notifyRequestAvailable: '{"text":"Album available: $albumName at $albumPath"}',
+              notifyWeeklyFlowDone: "   ",
+            },
+            headers: [],
+          },
+        ],
+      },
+    });
+
+    await notifyRequestMade({ albumName: "Blue Train", user: { id: 7, username: "alice" } });
+    await waitFor(1);
+    await notifyRequestAvailable({ albumName: "Blue Train", albumPath: "/music/Blue Train" });
+    await waitFor(2);
+    await notifyFlowDone("weekly", {}, "/flows/weekly", "Weekly");
+    const requests = await waitFor(3);
+
+    assert.deepEqual(
+      requests.map((entry) => entry.body.text),
+      [
+        "Album requested: Blue Train by alice",
+        "Album available: Blue Train at /music/Blue Train",
+        "Default for notifyWeeklyFlowDone",
+      ],
+    );
+  });
+});
+
+test("a webhook test can send the body for one event", async () => {
+  await withCaptureServer(async ({ baseUrl, waitFor }) => {
+    await notifications.sendWebhookTest(
+      {
+        url: `${baseUrl}/hook`,
+        body: '{"text":"default"}',
+        eventBodies: { notifyRequestAvailable: '{"text":"$event $albumName"}' },
+        headers: [],
+      },
+      "notifyRequestAvailable",
+    );
+    await notifications.sendWebhookTest({
+      url: `${baseUrl}/hook`,
+      body: '{"text":"default $event"}',
+      eventBodies: { notifyRequestAvailable: '{"text":"unused"}' },
+      headers: [],
+    });
+    const requests = await waitFor(2);
+    assert.deepEqual(
+      requests.map((entry) => entry.body.text),
+      ["notifyRequestAvailable Test album", "default webhookTest"],
+    );
+  });
+});

@@ -24,6 +24,13 @@ const webhookSettings = {
         url: v.string(),
         headers: lenient(listOf(v.looseObject({ key: v.string(), value: v.string() }))),
         body: nullableText,
+        // Optional body per event; an empty one falls back to body.
+        eventBodies: service({
+          notifyDiscoveryUpdated: nullableText,
+          notifyWeeklyFlowDone: nullableText,
+          notifyRequestMade: nullableText,
+          notifyRequestAvailable: nullableText,
+        }),
       }),
     ),
   ),

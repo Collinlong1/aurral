@@ -69,10 +69,26 @@ async function clientTestResponse<
 
 const clientConfig = v.record(v.string(), v.unknown());
 const gotifyTarget = v.object({ url: v.optional(v.string()), token: v.optional(v.string()) });
+const webhookEvent = v.picklist([
+  "notifyDiscoveryUpdated",
+  "notifyWeeklyFlowDone",
+  "notifyRequestMade",
+  "notifyRequestAvailable",
+]);
+const eventBody = v.optional(v.nullable(v.string()));
 const webhookTarget = v.object({
   url: v.optional(v.string()),
   headers: v.optional(v.array(v.object({ key: v.string(), value: v.string() }))),
   body: v.optional(v.nullable(v.string())),
+  eventBodies: v.optional(
+    v.object({
+      notifyDiscoveryUpdated: eventBody,
+      notifyWeeklyFlowDone: eventBody,
+      notifyRequestMade: eventBody,
+      notifyRequestAvailable: eventBody,
+    }),
+  ),
+  testEvent: v.optional(webhookEvent),
 });
 
 export default new Hono<AppEnv>()
@@ -175,13 +191,13 @@ export default new Hono<AppEnv>()
     }
   })
   .post("/webhook/test", requireAuth, requireAdmin, validate("json", webhookTarget), async (c) => {
-    const webhook = c.req.valid("json");
+    const { testEvent, ...webhook } = c.req.valid("json");
     const urlValidation = validateExternalUrl(webhook.url);
     if (!urlValidation.valid) return c.json({ error: urlValidation.error }, 400);
 
     try {
       const { sendWebhookTest } = await import("../../services/notificationService.ts");
-      await sendWebhookTest({ ...webhook, url: urlValidation.url });
+      await sendWebhookTest({ ...webhook, url: urlValidation.url }, testEvent);
       return c.json({ success: true, message: "Test webhook sent" }, 200);
     } catch (error) {
       const failure = asAppError(error);

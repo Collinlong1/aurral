@@ -149,6 +149,13 @@ const WEBHOOK_PLACEHOLDERS = [
   "event",
 ];
 
+// The webhook's body for this event, or its default body.
+export function webhookBodyFor(webhook: WebhookTarget, event: string | undefined) {
+  const eventBodies = (webhook.eventBodies ?? {}) as Record<string, string | null | undefined>;
+  const eventBody = event ? (eventBodies[event] ?? "").trim() : "";
+  return eventBody || (webhook.body || "").trim();
+}
+
 export function interpolateBody(str: string | null | undefined, vars: Partial<WebhookVars> = {}) {
   const source = String(str ?? "");
   const pattern = new RegExp(`\\$(${WEBHOOK_PLACEHOLDERS.join("|")})`, "g");
@@ -215,7 +222,7 @@ async function sendWebhooksDirect(
       console.warn(`[NotificationService] Skipping webhook with non-http(s) URL: ${url}`);
       continue;
     }
-    const rawBody = (webhook.body || "").trim();
+    const rawBody = webhookBodyFor(webhook, event);
     try {
       if (rawBody) {
         const interpolated = interpolateBody(rawBody, resolved);
@@ -407,13 +414,15 @@ const WEBHOOK_TEST_VARS = Object.freeze({
   userId: "webhook-test-user",
 });
 
-export async function sendWebhookTest(webhook: WebhookTarget) {
+// Sends the webhook as it would for `event`, or with its default body.
+export async function sendWebhookTest(webhook: WebhookTarget, event?: string | null) {
+  const testEvent = event || "webhookTest";
   await sendWebhooksDirect(
     {
       webhooks: [webhook],
-      webhookEvents: { webhookTest: true },
+      webhookEvents: { [testEvent]: true },
     },
-    "webhookTest",
+    testEvent,
     WEBHOOK_TEST_VARS,
   );
 }
