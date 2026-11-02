@@ -321,7 +321,13 @@ const queueRequestNotification = (
     albumName,
     artistName,
     requester,
-  }: { albumName: string; artistName: string; requester: HistoryRequester | null },
+    albumPath,
+  }: {
+    albumName: string;
+    artistName: string;
+    requester: HistoryRequester | null;
+    albumPath?: string | null;
+  },
 ) => {
   import("./notificationService.ts")
     .then((notifications) =>
@@ -329,6 +335,7 @@ const queueRequestNotification = (
         albumName,
         artistName,
         user: requester ? { id: requester.userId, username: requester.username } : null,
+        ...(albumPath ? { albumPath } : {}),
       }),
     )
     .catch((err) => {
@@ -484,9 +491,11 @@ export const recordAlbumSearchCompleted = ({
   artistMbid,
   user = null,
   referenceId = null,
+  albumPath = null,
 }: AlbumRef & {
   user?: RequesterUser | null;
   referenceId?: string | null;
+  albumPath?: string | null;
 } = {}) => {
   const name = String(albumName || "").trim() || "Album";
   const artist = String(artistName || "").trim();
@@ -494,6 +503,7 @@ export const recordAlbumSearchCompleted = ({
   if (!ref) return null;
   const existing = dbOps.getAurralHistoryById(stableId("album_requested", ref));
   const requester = requesterFromUser(user) || requesterFromMetadata(existing?.metadata);
+  const { managedBy, requestGroupId, canonicalAlbumId } = existing?.metadata || {};
   const alreadyAvailable = existing?.statusLabel === "Downloaded";
   const entry = upsertAurralHistory({
     referenceId: ref,
@@ -504,6 +514,9 @@ export const recordAlbumSearchCompleted = ({
     statusLabel: "Downloaded",
     href: buildArtistHref(artistMbid),
     metadata: {
+      ...(managedBy ? { managedBy } : {}),
+      ...(requestGroupId ? { requestGroupId } : {}),
+      ...(canonicalAlbumId ? { canonicalAlbumId } : {}),
       albumId,
       albumName: name,
       artistName: artist,
@@ -516,9 +529,40 @@ export const recordAlbumSearchCompleted = ({
       albumName: name,
       artistName: artist,
       requester,
+      albumPath,
     });
   }
   return entry;
+};
+
+// An Aurral-managed request is available once its download jobs have ended
+// with at least one track in the Library.
+export const recordAurralRequestAvailable = ({
+  requestGroupId,
+  albumPath = null,
+}: {
+  requestGroupId: string;
+  albumPath?: string | null;
+}) => {
+  const group = String(requestGroupId || "").trim();
+  if (!group) return null;
+  const entry = dbOps
+    .getAurralHistory({ since: Date.now() - MAX_AGE_MS, limit: 300 })
+    .find(
+      (candidate) =>
+        candidate.kind === "album_requested" &&
+        candidate.metadata?.managedBy === "aurral" &&
+        candidate.metadata?.requestGroupId === group,
+    );
+  if (!entry || entry.statusLabel === "Downloaded") return null;
+  return recordAlbumSearchCompleted({
+    albumId: entry.metadata?.albumId,
+    albumName: entry.metadata?.albumName,
+    artistName: entry.metadata?.artistName,
+    artistMbid: entry.metadata?.artistMbid,
+    referenceId: albumRequestReferenceId(entry),
+    albumPath,
+  });
 };
 
 const albumRequestReferenceId = (entry: AurralHistoryEntry) => {

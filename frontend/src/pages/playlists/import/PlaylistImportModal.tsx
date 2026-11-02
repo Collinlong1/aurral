@@ -17,6 +17,7 @@ import { listeningHistoryQueryOptions } from "../../../queryOptions.ts";
 import { reserveUniqueName, normalizeNameKey } from "../flowPageUtils";
 import { apiFetchWithin, type ApiError } from "../../../utils/api/core.ts";
 import { getApiErrorBody, getApiErrorMessage } from "../../../utils/api/errors.ts";
+import { M3uImportPanel } from "./M3uImportPanel.tsx";
 
 declare global {
   interface Window {
@@ -24,7 +25,7 @@ declare global {
   }
 }
 
-type ImportSource = "spotify" | "listenbrainz" | "lastfm" | "youtube" | "aurral";
+type ImportSource = "spotify" | "listenbrainz" | "lastfm" | "youtube" | "aurral" | "m3u";
 type ImportPlaylist = {
   id: string;
   name: string;
@@ -769,7 +770,9 @@ export function PlaylistImportModal({
             ? "Use a public YouTube or YouTube Music playlist URL."
             : source === "aurral"
               ? "Paste a share link or code from aurral.org."
-              : undefined
+              : source === "m3u"
+                ? "Import .m3u and .m3u8 playlists from a folder on the server."
+                : undefined
       }
       onClose={onClose}
       disableClose={importing}
@@ -783,19 +786,21 @@ export function PlaylistImportModal({
           >
             Cancel
           </button>
-          <button
-            type="button"
-            onClick={source === "aurral" ? handleImportShare : handleImportExternal}
-            className="btn btn-primary"
-            disabled={importing || !(source === "aurral" ? sharedPlaylist : canImportExternal)}
-          >
-            {importing ? (
-              <DotLoader size="sm" label={null} />
-            ) : (
-              <Music2 className="artist-icon-sm" />
-            )}
-            Import playlist
-          </button>
+          {source === "m3u" ? null : (
+            <button
+              type="button"
+              onClick={source === "aurral" ? handleImportShare : handleImportExternal}
+              className="btn btn-primary"
+              disabled={importing || !(source === "aurral" ? sharedPlaylist : canImportExternal)}
+            >
+              {importing ? (
+                <DotLoader size="sm" label={null} />
+              ) : (
+                <Music2 className="artist-icon-sm" />
+              )}
+              Import playlist
+            </button>
+          )}
         </>
       }
     >
@@ -812,6 +817,7 @@ export function PlaylistImportModal({
               { id: "listenbrainz", label: "ListenBrainz" },
               { id: "youtube", label: "YouTube Music" },
               { id: "aurral", label: "Aurral share" },
+              ...(user?.role === "admin" ? [{ id: "m3u", label: "M3U files" } as const] : []),
             ] as const
           ).map((option) => (
             <button
@@ -826,7 +832,16 @@ export function PlaylistImportModal({
           ))}
         </div>
 
-        {source === "aurral" ? (
+        {source === "m3u" ? (
+          <M3uImportPanel
+            showError={showError}
+            showSuccess={showSuccess}
+            onDone={() => {
+              onImported?.();
+              onClose();
+            }}
+          />
+        ) : source === "aurral" ? (
           <div className="playlist-import__share">
             {sharedPlaylist ? (
               <>

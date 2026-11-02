@@ -19,10 +19,18 @@ import {
   SettingsServiceRow,
   useSettingsItem,
 } from "../SettingsLayout";
+import { ScriptDetail, ScriptsGroups, resolveScriptItem } from "./ScriptsSettings";
 
 type Integrations = SettingsState["integrations"];
 type Webhook = Integrations["webhooks"][number];
 type WebhookHeader = NonNullable<Webhook["headers"]>[number];
+type EventBodies = Partial<Record<EventKey, string>>;
+type WebhookDraft = {
+  url: string;
+  body: string | null;
+  headers: WebhookHeader[];
+  eventBodies: EventBodies;
+};
 type TestStatus = { tone: "success" | "error"; message: string };
 
 const MAX_WEBHOOKS = 5;
@@ -105,6 +113,72 @@ function EventToggles({
   ));
 }
 
+// Only the event bodies that hold text, so an empty one falls back to the
+// default body.
+function filledEventBodies(eventBodies: EventBodies): EventBodies {
+  return Object.fromEntries(
+    Object.entries(eventBodies)
+      .map(([key, value]) => [key, (value ?? "").trim()])
+      .filter(([, value]) => value),
+  );
+}
+
+function EventBodyRow({
+  event,
+  label,
+  draft,
+  value,
+  onChange,
+}: {
+  event: EventKey;
+  label: string;
+  draft: WebhookDraft;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const test = useTest(
+    () =>
+      parseResponse(
+        downloadClientSettingsClient.webhook.test.$post({ json: { ...draft, testEvent: event } }),
+      ),
+    `Test ${label.toLowerCase()} webhook sent.`,
+    "Test failed. Check the URL, body, and headers, then retry.",
+    "Webhook",
+  );
+  return (
+    <SettingsRow
+      label={`${label} body`}
+      htmlFor={`webhook-body-${event}`}
+      help="Optional. Leave blank to send the default body for this event."
+      stack
+    >
+      <SettingsTextarea
+        id={`webhook-body-${event}`}
+        rows={3}
+        maxLength={1000}
+        spellCheck={false}
+        autoComplete="off"
+        value={value}
+        onChange={(changeEvent) => {
+          test.reset();
+          onChange(changeEvent.target.value);
+        }}
+      />
+      <SettingsActions status={test.status}>
+        <button
+          type="button"
+          className="btn btn-secondary btn-sm"
+          onClick={test.run}
+          disabled={test.testing || !draft.url}
+        >
+          {test.testing ? <DotLoader size="xs" label={null} /> : null}
+          Test
+        </button>
+      </SettingsActions>
+    </SettingsRow>
+  );
+}
+
 function GotifyDetail() {
   const { settings, updateSettings } = useServerSettings();
   const { gotify } = settings.integrations;
@@ -177,8 +251,18 @@ function WebhookDetail({ index }: { index: number | null }) {
   const [url, setUrl] = useState(existing?.url ?? "");
   const [body, setBody] = useState(existing?.body ?? "");
   const [headers, setHeaders] = useState<WebhookHeader[]>(existing?.headers ?? []);
+  const [eventBodies, setEventBodies] = useState<EventBodies>(
+    Object.fromEntries(
+      Object.entries(existing?.eventBodies ?? {}).map(([key, value]) => [key, value ?? ""]),
+    ),
+  );
   const [missingUrl, setMissingUrl] = useState(false);
-  const draft = { url: url.trim(), body: body.trim() || null, headers };
+  const draft: WebhookDraft = {
+    url: url.trim(),
+    body: body.trim() || null,
+    headers,
+    eventBodies: filledEventBodies(eventBodies),
+  };
   const test = useTest(
     () => parseResponse(downloadClientSettingsClient.webhook.test.$post({ json: draft })),
     "Test webhook sent.",
@@ -240,9 +324,9 @@ function WebhookDetail({ index }: { index: number | null }) {
             />
           </SettingsRow>
           <SettingsRow
-            label="Body"
+            label="Default body"
             htmlFor="webhook-body"
-            help="Optional. With a body Aurral sends a POST, otherwise a GET. $event, $artistName, $albumName, $flowName, and $username are filled in."
+            help="Optional. With a body Aurral sends a POST, otherwise a GET. $event, $artistName, $albumName, $albumPath, $flowName, and $username are filled in. Events without their own body below use this one."
             stack
           >
             <SettingsTextarea
@@ -258,6 +342,19 @@ function WebhookDetail({ index }: { index: number | null }) {
               }}
             />
           </SettingsRow>
+          {EVENTS.map(([key, label]) => (
+            <EventBodyRow
+              key={key}
+              event={key}
+              label={label}
+              draft={draft}
+              value={eventBodies[key] ?? ""}
+              onChange={(value) => {
+                test.reset();
+                setEventBodies({ ...eventBodies, [key]: value });
+              }}
+            />
+          ))}
           <SettingsRow label="Headers" stack>
             {headers.map((header, headerIndex) => (
               <div key={headerIndex} className="settings-webhook-header">
@@ -362,9 +459,11 @@ export function NotificationsSection() {
   const item = useSettingsItem();
   const { gotify, webhooks, webhookEvents } = settings.integrations;
   const webhookItem = resolveWebhookItem(webhooks, item);
+  const scriptItem = resolveScriptItem(settings.integrations.scripts, item);
 
   if (item === "gotify") return <GotifyDetail />;
   if (webhookItem) return <WebhookDetail key={item} index={webhookItem.index} />;
+  if (scriptItem) return <ScriptDetail key={item} index={scriptItem.index} />;
 
   return (
     <SettingsPage title="Notifications">
@@ -415,6 +514,23 @@ export function NotificationsSection() {
           />
         </SettingsGroup>
       ) : null}
+      <ScriptsGroups
+        eventToggles={(scriptEvents) => (
+          <EventToggles
+            idPrefix="script-event"
+            values={scriptEvents}
+            onChange={(key, enabled) =>
+              updateSettings({
+                ...settings,
+                integrations: {
+                  ...settings.integrations,
+                  scriptEvents: { ...scriptEvents, [key]: enabled },
+                },
+              })
+            }
+          />
+        )}
+      />
     </SettingsPage>
   );
 }

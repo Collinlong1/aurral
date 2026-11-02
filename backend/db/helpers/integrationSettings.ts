@@ -24,6 +24,13 @@ const webhookSettings = {
         url: v.string(),
         headers: lenient(listOf(v.looseObject({ key: v.string(), value: v.string() }))),
         body: nullableText,
+        // Optional body per event; an empty one falls back to body.
+        eventBodies: service({
+          notifyDiscoveryUpdated: nullableText,
+          notifyWeeklyFlowDone: nullableText,
+          notifyRequestMade: nullableText,
+          notifyRequestAvailable: nullableText,
+        }),
       }),
     ),
   ),
@@ -37,8 +44,25 @@ const webhookSettings = {
 
 export const webhookSettingsSchema = v.looseObject(webhookSettings);
 
+const notificationEvents = service({
+  notifyDiscoveryUpdated: flag,
+  notifyWeeklyFlowDone: flag,
+  notifyRequestMade: flag,
+  notifyRequestAvailable: flag,
+});
+
+export const scriptSettingsSchema = v.looseObject({
+  name: text,
+  file: v.string(),
+  args: lenient(listOf(v.string())),
+  timeoutSec: count,
+  enabled: flag,
+});
+
 export const integrationSettingsSchema = v.looseObject({
   ...webhookSettings,
+  scripts: lenient(listOf(scriptSettingsSchema)),
+  scriptEvents: notificationEvents,
   navidrome: service({ url: text, username: text, password: text, prefixOwnerUsername: flag }),
   plex: service({
     url: text,

@@ -1,3 +1,4 @@
+import { statSync } from "fs";
 import * as v from "valibot";
 import axios from "../../lib/axiosFetch.ts";
 import { dbOps } from "../db/helpers/index.ts";
@@ -5,7 +6,15 @@ import { logger } from "./logger.ts";
 import { enqueueNotification, parseHonkerPayload } from "./honkerDb.ts";
 import { asAppError } from "../../lib/errors.ts";
 import { webhookSettingsSchema } from "../db/helpers/integrationSettings.ts";
+import {
+  runScript,
+  scriptSucceeded,
+  scriptsEnabled,
+  type ScriptRunResult,
+  type ScriptTarget,
+} from "./scriptHooks.ts";
 import type { StoredIntegrations } from "../db/helpers/settings.ts";
+import { buildLibraryAlbumDir, resolveDownloadRoot } from "./downloadPaths.ts";
 
 type WebhookSettings = v.InferOutput<typeof webhookSettingsSchema>;
 type WebhookTarget = NonNullable<WebhookSettings["webhooks"]>[number];
@@ -16,6 +25,7 @@ interface WebhookVars {
   flowName: string;
   albumName: string;
   artistName: string;
+  albumPath: string;
   username: string;
   userId: string;
   event: string;
@@ -30,10 +40,22 @@ interface RequestActor {
 interface RequestNotice {
   albumName?: string;
   artistName?: string;
+  albumPath?: string;
   user?: RequestActor | null;
 }
 
 const text = v.optional(v.string());
+
+const notificationVars = v.looseObject({
+  flowPath: text,
+  flowName: text,
+  albumName: text,
+  artistName: text,
+  albumPath: text,
+  username: text,
+  userId: text,
+  event: text,
+});
 
 export const queuedNotificationSchema = v.variant("kind", [
   v.looseObject({
@@ -46,19 +68,20 @@ export const queuedNotificationSchema = v.variant("kind", [
     kind: v.literal("webhooks"),
     integrations: v.optional(webhookSettingsSchema),
     event: text,
-    vars: v.optional(
-      v.looseObject({
-        flowPath: text,
-        flowName: text,
-        albumName: text,
-        artistName: text,
-        username: text,
-        userId: text,
-        event: text,
-      }),
-    ),
+    vars: v.optional(notificationVars),
     flowPath: text,
     flowName: text,
+  }),
+  v.looseObject({
+    kind: v.literal("script"),
+    script: v.looseObject({
+      name: text,
+      file: v.string(),
+      args: v.optional(v.array(v.string())),
+      timeoutSec: v.optional(v.number()),
+    }),
+    event: text,
+    vars: v.optional(notificationVars),
   }),
 ]);
 
@@ -120,10 +143,18 @@ const WEBHOOK_PLACEHOLDERS = [
   "flowName",
   "albumName",
   "artistName",
+  "albumPath",
   "username",
   "userId",
   "event",
 ];
+
+// The webhook's body for this event, or its default body.
+export function webhookBodyFor(webhook: WebhookTarget, event: string | undefined) {
+  const eventBodies = (webhook.eventBodies ?? {}) as Record<string, string | null | undefined>;
+  const eventBody = event ? (eventBodies[event] ?? "").trim() : "";
+  return eventBody || (webhook.body || "").trim();
+}
 
 export function interpolateBody(str: string | null | undefined, vars: Partial<WebhookVars> = {}) {
   const source = String(str ?? "");
@@ -138,6 +169,7 @@ function normalizeWebhookVars(vars: Partial<WebhookVars> = {}, flowPath = "", fl
       flowName: vars.flowName ?? flowName ?? "",
       albumName: vars.albumName ?? "",
       artistName: vars.artistName ?? "",
+      albumPath: vars.albumPath ?? "",
       username: vars.username ?? "",
       userId: vars.userId ?? "",
       event: vars.event ?? "",
@@ -148,6 +180,7 @@ function normalizeWebhookVars(vars: Partial<WebhookVars> = {}, flowPath = "", fl
     flowName: flowName || "",
     albumName: "",
     artistName: "",
+    albumPath: "",
     username: "",
     userId: "",
     event: "",
@@ -189,7 +222,7 @@ async function sendWebhooksDirect(
       console.warn(`[NotificationService] Skipping webhook with non-http(s) URL: ${url}`);
       continue;
     }
-    const rawBody = (webhook.body || "").trim();
+    const rawBody = webhookBodyFor(webhook, event);
     try {
       if (rawBody) {
         const interpolated = interpolateBody(rawBody, resolved);
@@ -217,11 +250,65 @@ async function sendWebhooksDirect(
   }
 }
 
+const scriptLabel = (script: ScriptTarget) => String(script.name || "").trim() || script.file;
+
+// The end of a script's output, short enough for a log line.
+const outputTail = (output: string, limit = 2000) =>
+  output.length > limit ? output.slice(-limit) : output;
+
+async function runScriptDirect(
+  script: ScriptTarget,
+  event: string | undefined,
+  vars: Partial<WebhookVars>,
+) {
+  if (!scriptsEnabled()) {
+    logger.warn("notifications", "Script skipped: custom scripts are not enabled", {
+      script: scriptLabel(script),
+      event: event || null,
+    });
+    return;
+  }
+  let result: ScriptRunResult;
+  try {
+    result = await runScript(script, normalizeWebhookVars({ ...vars, event }));
+  } catch (error) {
+    logger.error("notifications", "Script could not start", {
+      script: scriptLabel(script),
+      event: event || null,
+      message: asAppError(error)?.message || String(error),
+    });
+    throw error;
+  }
+  const details = {
+    script: scriptLabel(script),
+    event: event || null,
+    exitCode: result.exitCode,
+    signal: result.signal,
+    timedOut: result.timedOut,
+    durationMs: result.durationMs,
+    output: outputTail(result.output),
+  };
+  if (scriptSucceeded(result)) {
+    logger.info("notifications", "Script finished", details);
+    return;
+  }
+  logger.error("notifications", "Script failed", details);
+  throw new Error(
+    result.timedOut
+      ? `Script ${scriptLabel(script)} timed out`
+      : `Script ${scriptLabel(script)} exited with ${result.exitCode ?? result.signal}`,
+  );
+}
+
 export async function deliverQueuedNotification(
   payload: v.InferOutput<typeof queuedNotificationSchema>,
 ) {
   if (payload.kind === "gotify") {
     await sendGotifyDirect(payload.title, payload.message, payload.priority ?? 5);
+    return;
+  }
+  if (payload.kind === "script") {
+    await runScriptDirect(payload.script, payload.event, payload.vars ?? {});
     return;
   }
   await sendWebhooksDirect(
@@ -258,6 +345,42 @@ function queueWebhooks(
   });
 }
 
+// One job per script, so a failing script retries alone and never holds up
+// webhooks, Gotify, or another script.
+function queueScripts(
+  { scripts, scriptEvents }: StoredIntegrations,
+  event: string,
+  vars: Partial<WebhookVars> = {},
+) {
+  if (!scriptsEnabled() || !scriptEvents?.[event as keyof typeof scriptEvents]) return [];
+  if (!Array.isArray(scripts)) return [];
+  const resolved = normalizeWebhookVars({ ...vars, event });
+  return scripts
+    .filter((script) => script.enabled !== false && String(script.file || "").trim())
+    .map((script) =>
+      enqueueNotification({
+        kind: "script",
+        script: {
+          name: String(script.name || ""),
+          file: String(script.file),
+          args: Array.isArray(script.args) ? script.args.map(String) : [],
+          ...(script.timeoutSec ? { timeoutSec: Number(script.timeoutSec) } : {}),
+        },
+        event,
+        vars: resolved,
+        requestedAt: Date.now(),
+      }),
+    );
+}
+
+function queueEventHooks(
+  integrations: StoredIntegrations,
+  event: string,
+  vars: Partial<WebhookVars> = {},
+) {
+  return [queueWebhooks(integrations, event, vars), ...queueScripts(integrations, event, vars)];
+}
+
 export async function sendGotifyTest(
   url: string | null | undefined,
   token: string | null | undefined,
@@ -286,19 +409,36 @@ const WEBHOOK_TEST_VARS = Object.freeze({
   flowName: "Aurral webhook test",
   albumName: "Test album",
   artistName: "Test artist",
+  albumPath: "/music/Test artist/Test album",
   username: "webhook-test-user",
   userId: "webhook-test-user",
 });
 
-export async function sendWebhookTest(webhook: WebhookTarget) {
+// Sends the webhook as it would for `event`, or with its default body.
+export async function sendWebhookTest(webhook: WebhookTarget, event?: string | null) {
+  const testEvent = event || "webhookTest";
   await sendWebhooksDirect(
     {
       webhooks: [webhook],
-      webhookEvents: { webhookTest: true },
+      webhookEvents: { [testEvent]: true },
     },
-    "webhookTest",
+    testEvent,
     WEBHOOK_TEST_VARS,
   );
+}
+
+const SCRIPT_TEST_VARS = Object.freeze({
+  flowPath: "",
+  flowName: "",
+  albumName: "Test album",
+  artistName: "Test artist",
+  albumPath: "/music/Test artist/Test album",
+  username: "script-test-user",
+  userId: "script-test-user",
+});
+
+export async function sendScriptTest(script: ScriptTarget) {
+  return runScript(script, normalizeWebhookVars({ ...SCRIPT_TEST_VARS, event: "scriptTest" }));
 }
 
 export async function notifyDiscoveryUpdated() {
@@ -311,7 +451,7 @@ export async function notifyDiscoveryUpdated() {
     );
   }
   tasks.push(
-    queueWebhooks(settings.integrations, "notifyDiscoveryUpdated", {
+    ...queueEventHooks(settings.integrations, "notifyDiscoveryUpdated", {
       flowName: "Aurral – Discover",
     }),
   );
@@ -340,7 +480,7 @@ export async function notifyFlowDone(
     );
   }
   tasks.push(
-    queueWebhooks(settings.integrations, "notifyWeeklyFlowDone", {
+    ...queueEventHooks(settings.integrations, "notifyWeeklyFlowDone", {
       flowPath,
       flowName: displayName,
     }),
@@ -363,7 +503,7 @@ export async function notifyRequestMade({
     tasks.push(queueGotify("Aurral – Request", `Album requested: ${subject}${byUser}`, 5));
   }
   tasks.push(
-    queueWebhooks(settings.integrations, "notifyRequestMade", {
+    ...queueEventHooks(settings.integrations, "notifyRequestMade", {
       albumName: String(albumName || "").trim(),
       artistName: String(artistName || "").trim(),
       ...actor,
@@ -372,9 +512,23 @@ export async function notifyRequestMade({
   await Promise.all(tasks);
 }
 
+// The album's folder in the Library, when it is there.
+function resolveAlbumPath(albumName?: string, artistName?: string, known?: string) {
+  const candidate = String(known || "").trim();
+  if (candidate) return candidate;
+  if (!String(albumName || "").trim()) return "";
+  try {
+    const dir = buildLibraryAlbumDir(resolveDownloadRoot(), { albumName, artistName });
+    return statSync(dir).isDirectory() ? dir : "";
+  } catch {
+    return "";
+  }
+}
+
 export async function notifyRequestAvailable({
   albumName,
   artistName,
+  albumPath,
   user = null,
 }: RequestNotice = {}) {
   const settings = dbOps.getSettings();
@@ -387,9 +541,10 @@ export async function notifyRequestAvailable({
     tasks.push(queueGotify("Aurral – Request", `Album available: ${subject}${byUser}`, 5));
   }
   tasks.push(
-    queueWebhooks(settings.integrations, "notifyRequestAvailable", {
+    ...queueEventHooks(settings.integrations, "notifyRequestAvailable", {
       albumName: String(albumName || "").trim(),
       artistName: String(artistName || "").trim(),
+      albumPath: resolveAlbumPath(albumName, artistName, albumPath),
       ...actor,
     }),
   );

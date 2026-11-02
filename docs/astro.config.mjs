@@ -77,6 +77,7 @@ export default defineConfig({
             { slug: "integrations/ticketmaster" },
             { slug: "integrations/metadata" },
             { slug: "integrations/notifications" },
+            { slug: "integrations/scripts" },
           ],
         },
         {

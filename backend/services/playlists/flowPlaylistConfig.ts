@@ -124,6 +124,7 @@ const IMPORT_SOURCE_PROVIDERS = new Set([
   "youtube-music-playlist",
   "deezer-playlist",
   "aurral-share",
+  "m3u-file",
 ]);
 const DAY_MS = 24 * 60 * 60 * 1000;
 let cachedFlows: FlowConfig[] | null = null;

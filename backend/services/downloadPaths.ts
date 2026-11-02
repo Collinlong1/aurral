@@ -120,6 +120,22 @@ export function buildAurralTrackDestination(
 const folderName = (value: string | null | undefined, fallback: string) =>
   sanitizePathPart(sanitizePathPart(value, "").replace(/^\.+/, ""), fallback);
 
+// The Library folder an album's tracks are written to.
+export function buildLibraryAlbumDir(
+  root: string,
+  album: { artistName?: string | null; albumName?: string | null },
+) {
+  return path.resolve(
+    root,
+    buildAurralTrackDestination(
+      null,
+      folderName(album?.artistName, "Unknown Artist"),
+      folderName(album?.albumName, "Unknown Album"),
+      { root },
+    ),
+  );
+}
+
 // The Library's naming: Artist/Album/07 - Title.ext, or 2-07 - Title.ext past
 // the first disc, under the Library folder.
 export function buildLibraryTrackPath(

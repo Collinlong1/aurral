@@ -1,6 +1,6 @@
 ---
 title: Playlist imports
-description: Import Spotify, YouTube Music, Last.fm, ListenBrainz, and Aurral share playlists.
+description: Import Spotify, YouTube Music, Last.fm, ListenBrainz, Aurral share, and M3U playlists.
 ---
 
 An imported playlist is a static playlist. It differs from a flow:
@@ -89,6 +89,19 @@ A playlist link someone shares with you opens this window with the link loaded. 
 - **Import once** saves today's tracklist without downloading. When the sender shares files and allows downloads, you can copy their files instead.
 
 When the sender stops sharing, the next sync fails with a message and the playlist stays as it is. See [Sharing](/using/sharing/).
+
+## Import M3U files
+
+An admin can import `.m3u` and `.m3u8` playlists from a folder on the server. Aurral reads the folder and its subfolders. A file named `playlist.m3u8` takes the name of its folder, and a `#PLAYLIST:` line sets the name explicitly. Entries can be relative to the playlist file, absolute paths, or `file://` URLs.
+
+1. Open **Playlists**, select **Import playlist**, and choose **M3U files**.
+2. Enter the folder as Aurral sees it, for example `/data/media/playlists`, and select **Scan**.
+3. Choose the playlists to import. Each one shows its track count, any files that are missing, and how many tracks are already in the Library. Playlists imported before are marked **Already imported**.
+4. Choose the options, then select **Import**:
+   - **Copy tracks into the Library**: Aurral ingests each playlist's folder as a copy, files and tags the tracks, and builds the playlist from those copies once the ingest finishes. The original files are not changed.
+   - **Download tracks that aren't in the Library**: tracks without a file in the Library are searched for and downloaded, using their tags or the `#EXTINF` line. Without this option they are left out of the playlist.
+
+A track whose file is in the Library folder is linked to that file, so Aurral never searches for it or downloads it again. A track in a read-only Library folder is matched by name, which depends on [Reuse existing files](#reuse-existing-files). M3U imports do not sync: importing the same file again is skipped.
 
 ## What happens after an import
 
