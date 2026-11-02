@@ -289,7 +289,7 @@ export function EditUserPage({ user }: { user: SettingsUser }) {
           </SettingsActions>
         </PermissionsGroup>
         <AdminPlexLinkField user={user} />
-        {user.role !== "admin" ? (
+        {!user.isProtected ? (
           <SettingsGroup>
             <SettingsActions>
               <button
