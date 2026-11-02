@@ -23,6 +23,7 @@ import {
   getAvailableLibraryMediaPaths,
   getLibraryMediaPaths,
   linkLibraryAlbumTrack,
+  markLibraryAlbumTitles,
   markLibraryMediaFilesUnavailable,
   mergeReleaseKeyedLibraryAlbums,
   reconcileLibraryAlbums,
@@ -444,6 +445,9 @@ export async function scanMusicRoot({
   const legacyKeyed = findLegacyKeyedLibraryFiles(source);
   const legacyMoves: Parameters<typeof splitLegacyKeyedLibraryRows>[0] = [];
   const seenPaths = new Set<string>();
+  // Album titles this scan read for each release-group album; more than one
+  // marks a box set tagged per disc.
+  const releaseAlbumTitles = new Map<number, Set<string>>();
   const failedPaths = new Set<string>();
   const missingFilePaths = new Set<string>();
   let firstFailure: { filePath: string; reason: ReturnType<typeof safeLogDiagnostic> } | null =
@@ -532,6 +536,11 @@ export async function scanMusicRoot({
             syncSearch,
           });
           if (record.artistMbids.length) setLibraryAlbumCredits(album.id, record.artistMbids);
+          if (album.release_group_mbid && record.albumName) {
+            const titles = releaseAlbumTitles.get(album.id) ?? new Set<string>();
+            titles.add(record.albumName);
+            releaseAlbumTitles.set(album.id, titles);
+          }
           if (source === "aurral" || source === "readonly") claimUnownedAlbum(album);
           const track = upsertLibraryTrack({
             identityKey: trackKey,
@@ -618,6 +627,9 @@ export async function scanMusicRoot({
           ),
         ])
           changedFiles.add(filePath);
+      }
+      for (const [albumId, titles] of releaseAlbumTitles) {
+        if (titles.size > 1) markLibraryAlbumTitles(albumId, { mixedTitles: true });
       }
       if (requestedFiles) {
         const scopes = reconcilePaths || requestedFiles;

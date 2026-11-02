@@ -623,6 +623,66 @@ export function setLibraryAlbumCredits(albumId: number, artistMbids: string[]) {
   invalidateLibraryCache();
 }
 
+// Box sets often tag every disc with its own album title. A scan flags such a
+// release-group album, and the index pass names it after its release group;
+// that name then stays, whatever title its files carry.
+function resolveAlbumTitle(
+  existing: LibraryAlbumsRow | undefined,
+  taggedTitle: string,
+): { albumTitle: string; titleMetadata: Record<string, unknown> | null } {
+  if (!existing) return { albumTitle: taggedTitle, titleMetadata: null };
+  const stored = readRawLibraryMetadata(existing.metadata_json);
+  // Kept even when a caller passes no metadata, which would otherwise
+  // replace the album's metadata.
+  const kept = Object.fromEntries(
+    ["canonicalTitle", "mixedTitles", "titlesChecked", "titleLookupAt"]
+      .filter((name) => stored[name] != null)
+      .map((name) => [name, stored[name]]),
+  );
+  const keep = Object.keys(kept).length ? kept : null;
+  if (typeof stored.canonicalTitle === "string" && stored.canonicalTitle) {
+    return { albumTitle: stored.canonicalTitle, titleMetadata: keep };
+  }
+  return { albumTitle: taggedTitle, titleMetadata: keep };
+}
+
+// Names an album after its release group for good, see resolveAlbumTitle.
+export function setLibraryAlbumCanonicalTitle(albumId: number, title: string) {
+  const album = db
+    .prepare<[number], LibraryAlbumsRow>("SELECT * FROM library_albums WHERE id = ?")
+    .get(albumId);
+  const canonicalTitle = normalizeText(title);
+  if (!album || !canonicalTitle) return false;
+  const { mixedTitles: _mixed, ...metadata } = readRawLibraryMetadata(album.metadata_json);
+  db.prepare<[string, string, number, number]>(
+    "UPDATE library_albums SET title = ?, metadata_json = ?, updated_at = ? WHERE id = ?",
+  ).run(canonicalTitle, stringify({ ...metadata, canonicalTitle })!, now(), albumId);
+  syncLibrarySearchAlbum(albumId);
+  for (const track of db
+    .prepare<[number], Pick<LibraryAlbumTracksRow, "track_id">>(
+      "SELECT track_id FROM library_album_tracks WHERE album_id = ?",
+    )
+    .all(albumId)) {
+    syncLibrarySearchTrack(track.track_id);
+  }
+  invalidateLibraryCache();
+  return true;
+}
+
+// Records the outcome of checking an album's files for mixed titles.
+export function markLibraryAlbumTitles(albumId: number, fields: Record<string, unknown>) {
+  const album = db
+    .prepare<[number], Pick<LibraryAlbumsRow, "metadata_json">>(
+      "SELECT metadata_json FROM library_albums WHERE id = ?",
+    )
+    .get(albumId);
+  if (!album) return;
+  db.prepare<[string, number]>("UPDATE library_albums SET metadata_json = ? WHERE id = ?").run(
+    stringify({ ...readRawLibraryMetadata(album.metadata_json), ...fields })!,
+    albumId,
+  );
+}
+
 export function upsertLibraryAlbum({
   identityKey,
   mbid = null,
@@ -646,13 +706,12 @@ export function upsertLibraryAlbum({
 }) {
   const timestamp = now();
   const key = normalizeText(identityKey);
-  const albumTitle = normalizeText(title);
+  const taggedTitle = normalizeText(title);
   const albumMbid = mbid || null;
   const albumReleaseGroupMbid = releaseGroupMbid || null;
   const albumArtistName = albumArtist || null;
   const albumReleaseDate = releaseDate || null;
-  const metadataText = stringify(metadata);
-  if (!key || !Number.isSafeInteger(Number(artistId)) || !albumTitle) {
+  if (!key || !Number.isSafeInteger(Number(artistId)) || !taggedTitle) {
     throw new Error("Library album identityKey, artistId, and title are required");
   }
   let libraryChanged = false;
@@ -660,9 +719,12 @@ export function upsertLibraryAlbum({
     const existing = db
       .prepare<[string], LibraryAlbumsRow>("SELECT * FROM library_albums WHERE identity_key = ?")
       .get(key);
+    const { albumTitle, titleMetadata } = resolveAlbumTitle(existing, taggedTitle);
+    const ownMetadata = titleMetadata ? { ...metadata, ...titleMetadata } : metadata;
+    const metadataText = stringify(ownMetadata);
     const mergedMetadataText =
-      existing && metadata
-        ? stringify({ ...readRawLibraryMetadata(existing.metadata_json), ...metadata })
+      existing && ownMetadata
+        ? stringify({ ...readRawLibraryMetadata(existing.metadata_json), ...ownMetadata })
         : metadataText;
     if (
       existing &&

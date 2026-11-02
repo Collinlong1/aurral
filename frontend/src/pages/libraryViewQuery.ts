@@ -93,6 +93,59 @@ type LibraryViewRequest = {
   direction?: string;
 };
 
+// A detail view shows everything its album or artist holds. Box sets run to
+// well over one page, so the remaining pages are read too.
+const MAX_DETAIL_PAGES = 50;
+const DETAIL_PAGE_CONCURRENCY = 4;
+
+const fetchEveryLibraryPage = async (
+  params: NonNullable<Parameters<typeof fetchLibraryPage>[0]>,
+  signal: AbortSignal,
+) => {
+  const first = await fetchLibraryPage({ ...params, page: 1 }, { signal });
+  const size = Number(params.pageSize) || LIBRARY_PAGE_SIZE;
+  const pageCount = Math.min(Math.ceil(Number(first?.total || 0) / size), MAX_DETAIL_PAGES);
+  if (pageCount <= 1) return first;
+  const rest: LibraryPageResponse[] = [];
+  for (let page = 2; page <= pageCount; page += DETAIL_PAGE_CONCURRENCY) {
+    const batch = Array.from(
+      { length: Math.min(DETAIL_PAGE_CONCURRENCY, pageCount - page + 1) },
+      (_, offset) => fetchLibraryPage({ ...params, page: page + offset }, { signal }),
+    );
+    rest.push(...(await Promise.all(batch)));
+  }
+  const seen = new Set<string>();
+  const items = [first, ...rest]
+    .flatMap((page): unknown[] => (Array.isArray(page?.items) ? [...page.items] : []))
+    .filter((item) => {
+      const id = String((item as { id?: unknown })?.id ?? "");
+      if (!id || seen.has(id)) return !id;
+      seen.add(id);
+      return true;
+    });
+  const merged = normalizeLibraryPages([first, ...rest]);
+  // Each page lists an album's tracks on that page only.
+  const trackIds = new Map<string, Set<string>>();
+  for (const page of [first, ...rest]) {
+    for (const album of normalizeLibraryPages([page]).albums) {
+      const ids = trackIds.get(String(album.id)) ?? new Set<string>();
+      for (const id of album.trackIds ?? []) ids.add(String(id));
+      trackIds.set(String(album.id), ids);
+    }
+  }
+  return {
+    ...first,
+    items,
+    hasMore: false,
+    artists: merged.artists,
+    albums: merged.albums.map((album) => ({
+      ...album,
+      trackIds: [...(trackIds.get(String(album.id)) ?? [])],
+    })),
+    tracks: merged.tracks,
+  } as unknown as typeof first;
+};
+
 const fetchLibraryPages = async (
   { section, albumId, artistId, pageIndex, query, genre, sort, direction }: LibraryViewRequest,
   signal: AbortSignal,
@@ -100,7 +153,7 @@ const fetchLibraryPages = async (
   const tab = libraryTabForSection(section);
   const pageSize = LIBRARY_PAGE_SIZE;
   if (albumId) {
-    return fetchLibraryPage(
+    return fetchEveryLibraryPage(
       {
         kind: "tracks",
         albumId,
@@ -110,15 +163,15 @@ const fetchLibraryPages = async (
         // shown per row.
         availableOnly: false,
       },
-      { signal },
+      signal,
     );
   }
   if (artistId) {
     return Promise.all([
-      fetchLibraryPage({ kind: "albums", artistId, page: 1, pageSize }, { signal }),
-      fetchLibraryPage(
+      fetchEveryLibraryPage({ kind: "albums", artistId, page: 1, pageSize }, signal),
+      fetchEveryLibraryPage(
         { kind: "tracks", artistId, page: 1, pageSize, availableOnly: true },
-        { signal },
+        signal,
       ),
     ]);
   }

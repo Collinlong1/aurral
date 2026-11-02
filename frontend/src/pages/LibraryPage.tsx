@@ -1,5 +1,13 @@
 import ArtworkImage from "../components/ArtworkImage";
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentProps,
+  type ReactNode,
+} from "react";
 import { useQuery } from "@tanstack/react-query";
 import { parseResponse } from "hono/client";
 import {
@@ -170,6 +178,33 @@ type LibraryPageTrack = LibraryTrack & {
   durationMs?: number | null;
   albumName?: string | null;
 };
+
+// The album title a track's own file carries: a box set's disc title.
+const fileAlbumTitle = (track: LibraryPageTrack) => {
+  const tags = (track as { metadata?: { tags?: { album?: unknown } } | null }).metadata?.tags;
+  return typeof tags?.album === "string" ? tags.album.trim() : "";
+};
+
+// A heading at each disc of an album with several, named after the disc's
+// own album title when it has one, as box sets do.
+function discSections(album: LibraryAlbum, tracks: LibraryPageTrack[]) {
+  const discs = tracks.map((track) => ({
+    disc: Number(
+      track.albums?.find((entry) => String(entry.albumId) === String(album.id))?.discNumber || 0,
+    ),
+    title: fileAlbumTitle(track),
+  }));
+  if (new Set(discs.map(({ disc, title }) => `${disc}\u0000${title}`)).size < 2) return null;
+  return (_track: LibraryPageTrack, index: number) => {
+    const current = discs[index];
+    const previous = discs[index - 1];
+    if (previous && previous.disc === current.disc && previous.title === current.title) {
+      return null;
+    }
+    const title = current.title && current.title !== album.title ? current.title : "";
+    return [current.disc ? `Disc ${current.disc}` : "", title].filter(Boolean).join(" · ") || null;
+  };
+}
 
 type LibraryData = LibraryViewLibrary;
 
@@ -2379,7 +2414,13 @@ function LibraryPage() {
   const renderTrackList = (
     tracks: LibraryPageTrack[],
     label: string,
-    { variant = "collection" }: { variant?: "collection" | "release" } = {},
+    {
+      variant = "collection",
+      sectionFor = null,
+    }: {
+      variant?: "collection" | "release";
+      sectionFor?: ((track: LibraryPageTrack, index: number) => ReactNode) | null;
+    } = {},
   ) => (
     <TrackList
       label={label}
@@ -2422,6 +2463,7 @@ function LibraryPage() {
           (entry) => String(entry.albumId) === String(album?.id),
         )?.trackNumber;
         const isFavorite = favoriteIds.has(favoriteId("song", track));
+        const section = sectionFor?.(track, index) ?? null;
         const monitoringItem = trackMonitoring.getMenuItem(track, {
           aurral:
             (album?.managedBy === "aurral" && (!file || hasDeletableTrackFile(track))) ||
@@ -2517,6 +2559,7 @@ function LibraryPage() {
         ];
         return {
           key: track.id,
+          section,
           number: variant === "release" && trackNumber ? trackNumber : index + 1,
           title: track.title || "Unknown Track",
           badge: !trackMonitoring.isMonitored(track) ? (
@@ -3118,6 +3161,7 @@ function LibraryPage() {
         />
         {renderTrackList(albumTracks, libraryAlbum.title + " tracks", {
           variant: "release",
+          sectionFor: discSections(libraryAlbum, albumTracks),
         })}
         {albumMonitoring.dialog}
       </section>

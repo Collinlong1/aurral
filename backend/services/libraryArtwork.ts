@@ -19,7 +19,7 @@ import {
   optimizeImageBuffer,
 } from "./imageProxyService.ts";
 import { getArtistImage } from "./imageService.ts";
-import { readLibraryMetadata } from "./libraryMetadata.ts";
+import { readLibraryMetadata, readRawLibraryMetadata } from "./libraryMetadata.ts";
 import { fetchReleaseGroupCoverUrl } from "./releaseGroupCoverService.ts";
 
 export type LibraryArtworkKind = "album" | "artist";
@@ -55,8 +55,10 @@ const albumVersionsStmt = db.prepare<
     files: number;
     bytes: number;
     modified: number;
+    box_title: string | null;
   }
 >(`SELECT album.id, album.mbid, album.release_group_mbid,
+    json_extract(album.metadata_json, '$.canonicalTitle') AS box_title,
     COUNT(media.id) AS files,
     COALESCE(SUM(media.size), 0) AS bytes,
     COALESCE(MAX(media.mtime_ms), 0) AS modified
@@ -92,6 +94,9 @@ const albumFilesStmt = db.prepare<[number], Pick<LibraryMediaFilesRow, "path">>(
   `SELECT path FROM library_media_files
   WHERE album_id = ? AND available = 1 ORDER BY path COLLATE NOCASE LIMIT 100`,
 );
+const albumFoldersStmt = db.prepare<[number], Pick<LibraryMediaFilesRow, "path">>(
+  "SELECT path FROM library_media_files WHERE album_id = ? AND available = 1",
+);
 const artistStmt = db.prepare<[number], Pick<LibraryArtistsRow, "mbid" | "name">>(
   "SELECT mbid, name FROM library_artists WHERE id = ?",
 );
@@ -126,6 +131,7 @@ const albumVersions = (json: string, revision: string) =>
           row.bytes,
           row.modified,
           row.release_group_mbid ?? row.mbid ?? "",
+          row.box_title ?? "",
         ),
       ]),
   );
@@ -260,7 +266,55 @@ async function findArtistPhoto(mbid: string, artistName: string): Promise<Artwor
   return { artwork: null, transient: Boolean(photo?.transient || image.transientError) };
 }
 
+// The folder that holds every disc of a box set, unless that is its
+// artist's folder.
+function boxSetFolder(albumId: number, artistName: string) {
+  const folders = [
+    ...new Set(albumFoldersStmt.all(albumId).map((file) => path.dirname(file.path))),
+  ];
+  if (folders.length < 2) return null;
+  const parts = folders.map((folder) => folder.split(path.sep));
+  const shared: string[] = [];
+  for (let index = 0; index < parts[0].length; index++) {
+    if (!parts.every((segments) => segments[index] === parts[0][index])) break;
+    shared.push(parts[0][index]);
+  }
+  const folder = shared.join(path.sep);
+  const name = path.basename(folder).toLowerCase();
+  return folder &&
+    name !==
+      String(artistName || "")
+        .trim()
+        .toLowerCase()
+    ? folder
+    : null;
+}
+
+// A box set Aurral named after its release group shows the set's own cover,
+// not the first disc's: a cover image in the set's folder, then the release
+// group's cover.
+async function findBoxSetCover(
+  albumId: number,
+  album: NonNullable<ReturnType<typeof albumStmt.get>>,
+): Promise<ArtworkLookup | null> {
+  const metadata = readRawLibraryMetadata(album.metadata_json);
+  if (typeof metadata.canonicalTitle !== "string") return null;
+  const folder = boxSetFolder(albumId, album.artist_name);
+  const sidecar = folder ? await readSidecarCover(folder) : null;
+  if (sidecar) return { artwork: sidecar };
+  if (!album.release_group_mbid) return null;
+  const cover = await fetchReleaseGroupCoverUrl(album.release_group_mbid, {
+    artistName: album.artist_name,
+    albumTitle: album.title,
+  });
+  const download = cover?.imageUrl ? await downloadArtwork(cover.imageUrl) : null;
+  return download?.artwork ? download : null;
+}
+
 async function findAlbumCover(albumId: number): Promise<ArtworkLookup> {
+  const boxSet = albumStmt.get(albumId);
+  const boxSetCover = boxSet ? await findBoxSetCover(albumId, boxSet) : null;
+  if (boxSetCover) return boxSetCover;
   const fileArtwork = await readFileArtwork(albumId);
   if (fileArtwork) return { artwork: fileArtwork };
   const album = albumStmt.get(albumId);
