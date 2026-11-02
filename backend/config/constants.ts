@@ -20,6 +20,12 @@ export const APP_VERSION = resolveAppVersion({
   cwd: process.cwd(),
 });
 export const DATE_TIME_FORMATS = ["browser", "day-first", "year-first"];
+// Where Subsonic clients get artist names: "tags" serves each file's ARTIST and
+// ALBUMARTIST tags as written, the way Navidrome does; "library" serves Aurral's
+// artist entities. Artist IDs come from the library either way.
+export type SubsonicArtistSource = "tags" | "library";
+export const normalizeSubsonicArtistSource = (value: unknown): SubsonicArtistSource =>
+  value === "library" ? "library" : "tags";
 export const normalizeDateTimeFormat = (value: string | null | undefined): string =>
   DATE_TIME_FORMATS.includes(value as string) ? (value as string) : "browser";
 
@@ -28,6 +34,7 @@ export const defaultData = {
     dateTimeFormat: "browser",
     subsonic: {
       favoriteAutoKeep: true,
+      artistSource: "tags" as SubsonicArtistSource,
     },
     integrations: {
       navidrome: {

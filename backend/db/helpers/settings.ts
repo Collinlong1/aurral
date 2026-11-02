@@ -8,7 +8,11 @@ import {
   validateDownloadFolderPath,
 } from "../../services/downloadFolderConfig.ts";
 import { normalizeExistingFileMode } from "../../services/downloadJobs/fileReuseMode.ts";
-import { normalizeDateTimeFormat } from "../../config/constants.ts";
+import {
+  normalizeDateTimeFormat,
+  normalizeSubsonicArtistSource,
+  type SubsonicArtistSource,
+} from "../../config/constants.ts";
 import type { defaultData } from "../../config/constants.ts";
 import {
   normalizeIntervalDays,
@@ -102,7 +106,7 @@ export interface SettingsUpdate {
   releaseTypes?: string[];
   flows?: unknown;
   sharedPlaylists?: unknown;
-  subsonic?: { favoriteAutoKeep?: boolean };
+  subsonic?: { favoriteAutoKeep?: boolean; artistSource?: SubsonicArtistSource };
   playlistWorker?: StoredPlaylistWorker;
   missingTrackSearch?: StoredMissingTrackSearch;
   reviewTimeoutHours?: number | string;
@@ -296,7 +300,10 @@ export const dbOps = {
       "releaseTypes",
     );
     const subsonic =
-      readStoredSettingJson(v.looseObject({ favoriteAutoKeep: flag }), "subsonic") || {};
+      readStoredSettingJson(
+        v.looseObject({ favoriteAutoKeep: flag, artistSource: lenient(v.string()) }),
+        "subsonic",
+      ) || {};
     const playlistWorker = normalizePlaylistWorkerSettings(
       readStoredSettingJson(v.looseObject({}), "playlistWorker"),
     );
@@ -331,6 +338,7 @@ export const dbOps = {
       releaseTypes: releaseTypes || [],
       subsonic: {
         favoriteAutoKeep: subsonic.favoriteAutoKeep !== false,
+        artistSource: normalizeSubsonicArtistSource(subsonic.artistSource),
       },
       playlistWorker,
       missingTrackSearch,
@@ -454,6 +462,7 @@ export const dbOps = {
           "subsonic",
           dbHelpers.stringifyJSON({
             favoriteAutoKeep: settings.subsonic.favoriteAutoKeep !== false,
+            artistSource: normalizeSubsonicArtistSource(settings.subsonic.artistSource),
           }),
         );
       }
