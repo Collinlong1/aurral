@@ -418,6 +418,21 @@
   width: 100%;
 }
 
+.settings-script-output {
+  width: 100%;
+  max-height: 20rem;
+  overflow: auto;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--aurral-border);
+  border-radius: var(--aurral-radius-sm);
+  background: var(--aurral-surface);
+  color: var(--aurral-text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--aurral-font-xs);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .settings-textarea.input {
   height: auto;
   min-height: 6rem;

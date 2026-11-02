@@ -10,7 +10,7 @@ Aurral can send a notification for these events:
 - **Request made**: a user requested an album.
 - **Request available**: a requested album was downloaded, or was already on disk.
 
-Aurral can send notifications to Gotify, to webhooks, or to both. Gotify and webhooks have separate event switches. Aurral does not send an event that is turned off, even when a webhook URL exists.
+Aurral can send notifications to Gotify, to webhooks, or to both. It can also run [custom scripts](/integrations/scripts/). Gotify and webhooks have separate event switches. Aurral does not send an event that is turned off, even when a webhook URL exists.
 
 ## Gotify
 
@@ -37,6 +37,7 @@ The body can use these placeholders:
 | `$flowName`                 | The playlist name                                                                          |
 | `$flowPath`                 | The media path. For a flow, `_flows/<flow-id>`. For a static playlist, the Library folder. |
 | `$albumName`, `$artistName` | The requested album and its artist                                                         |
+| `$albumPath`                | For **Request available**, the album's folder in the Library, when known                   |
 | `$username`, `$userId`      | The user who requested the album                                                           |
 | `$event`                    | The event name                                                                             |
 
@@ -48,12 +49,13 @@ Under **Webhook events** in **Settings > Notifications**, turn on the events tha
 
 Open the webhook and select **Send test**. Aurral sends the current URL, body, and headers at once. The test ignores the event switches and does not save the webhook. It fills the placeholders with these values:
 
-| Placeholder   | Test value             |
-| ------------- | ---------------------- |
-| `$event`      | `webhookTest`          |
-| `$flowName`   | `Aurral webhook test`  |
-| `$flowPath`   | `/aurral/test-webhook` |
-| `$albumName`  | `Test album`           |
-| `$artistName` | `Test artist`          |
-| `$username`   | `webhook-test-user`    |
-| `$userId`     | `webhook-test-user`    |
+| Placeholder   | Test value                      |
+| ------------- | ------------------------------- |
+| `$event`      | `webhookTest`                   |
+| `$flowName`   | `Aurral webhook test`           |
+| `$flowPath`   | `/aurral/test-webhook`          |
+| `$albumName`  | `Test album`                    |
+| `$artistName` | `Test artist`                   |
+| `$albumPath`  | `/music/Test artist/Test album` |
+| `$username`   | `webhook-test-user`             |
+| `$userId`     | `webhook-test-user`             |

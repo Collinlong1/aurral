@@ -34,6 +34,7 @@ import settings from "./settings/index.ts";
 import shareLinks from "./shareLinks.ts";
 import settingsDownloadClients from "./settings/downloadClients.ts";
 import settingsPlayback from "./settings/playback.ts";
+import settingsScripts from "./settings/scripts.ts";
 import updates from "./updates.ts";
 import users from "./users.ts";
 import wrapped from "./wrapped.ts";
@@ -80,6 +81,7 @@ export const api = new Hono<AppEnv>()
   .route("/", settings)
   .route("/", settingsPlayback)
   .route("/", settingsDownloadClients)
+  .route("/", settingsScripts)
   .route("/", updates)
   .route("/", backup)
   .route("/", auth)

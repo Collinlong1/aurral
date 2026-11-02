@@ -6,6 +6,13 @@ import { logger } from "./logger.ts";
 import { enqueueNotification, parseHonkerPayload } from "./honkerDb.ts";
 import { asAppError } from "../../lib/errors.ts";
 import { webhookSettingsSchema } from "../db/helpers/integrationSettings.ts";
+import {
+  runScript,
+  scriptSucceeded,
+  scriptsEnabled,
+  type ScriptRunResult,
+  type ScriptTarget,
+} from "./scriptHooks.ts";
 import type { StoredIntegrations } from "../db/helpers/settings.ts";
 import { buildLibraryAlbumDir, resolveDownloadRoot } from "./downloadPaths.ts";
 
@@ -39,6 +46,17 @@ interface RequestNotice {
 
 const text = v.optional(v.string());
 
+const notificationVars = v.looseObject({
+  flowPath: text,
+  flowName: text,
+  albumName: text,
+  artistName: text,
+  albumPath: text,
+  username: text,
+  userId: text,
+  event: text,
+});
+
 export const queuedNotificationSchema = v.variant("kind", [
   v.looseObject({
     kind: v.literal("gotify"),
@@ -50,20 +68,20 @@ export const queuedNotificationSchema = v.variant("kind", [
     kind: v.literal("webhooks"),
     integrations: v.optional(webhookSettingsSchema),
     event: text,
-    vars: v.optional(
-      v.looseObject({
-        flowPath: text,
-        flowName: text,
-        albumName: text,
-        artistName: text,
-        albumPath: text,
-        username: text,
-        userId: text,
-        event: text,
-      }),
-    ),
+    vars: v.optional(notificationVars),
     flowPath: text,
     flowName: text,
+  }),
+  v.looseObject({
+    kind: v.literal("script"),
+    script: v.looseObject({
+      name: text,
+      file: v.string(),
+      args: v.optional(v.array(v.string())),
+      timeoutSec: v.optional(v.number()),
+    }),
+    event: text,
+    vars: v.optional(notificationVars),
   }),
 ]);
 
@@ -225,11 +243,65 @@ async function sendWebhooksDirect(
   }
 }
 
+const scriptLabel = (script: ScriptTarget) => String(script.name || "").trim() || script.file;
+
+// The end of a script's output, short enough for a log line.
+const outputTail = (output: string, limit = 2000) =>
+  output.length > limit ? output.slice(-limit) : output;
+
+async function runScriptDirect(
+  script: ScriptTarget,
+  event: string | undefined,
+  vars: Partial<WebhookVars>,
+) {
+  if (!scriptsEnabled()) {
+    logger.warn("notifications", "Script skipped: custom scripts are not enabled", {
+      script: scriptLabel(script),
+      event: event || null,
+    });
+    return;
+  }
+  let result: ScriptRunResult;
+  try {
+    result = await runScript(script, normalizeWebhookVars({ ...vars, event }));
+  } catch (error) {
+    logger.error("notifications", "Script could not start", {
+      script: scriptLabel(script),
+      event: event || null,
+      message: asAppError(error)?.message || String(error),
+    });
+    throw error;
+  }
+  const details = {
+    script: scriptLabel(script),
+    event: event || null,
+    exitCode: result.exitCode,
+    signal: result.signal,
+    timedOut: result.timedOut,
+    durationMs: result.durationMs,
+    output: outputTail(result.output),
+  };
+  if (scriptSucceeded(result)) {
+    logger.info("notifications", "Script finished", details);
+    return;
+  }
+  logger.error("notifications", "Script failed", details);
+  throw new Error(
+    result.timedOut
+      ? `Script ${scriptLabel(script)} timed out`
+      : `Script ${scriptLabel(script)} exited with ${result.exitCode ?? result.signal}`,
+  );
+}
+
 export async function deliverQueuedNotification(
   payload: v.InferOutput<typeof queuedNotificationSchema>,
 ) {
   if (payload.kind === "gotify") {
     await sendGotifyDirect(payload.title, payload.message, payload.priority ?? 5);
+    return;
+  }
+  if (payload.kind === "script") {
+    await runScriptDirect(payload.script, payload.event, payload.vars ?? {});
     return;
   }
   await sendWebhooksDirect(
@@ -264,6 +336,42 @@ function queueWebhooks(
     flowName: resolved.flowName,
     requestedAt: Date.now(),
   });
+}
+
+// One job per script, so a failing script retries alone and never holds up
+// webhooks, Gotify, or another script.
+function queueScripts(
+  { scripts, scriptEvents }: StoredIntegrations,
+  event: string,
+  vars: Partial<WebhookVars> = {},
+) {
+  if (!scriptsEnabled() || !scriptEvents?.[event as keyof typeof scriptEvents]) return [];
+  if (!Array.isArray(scripts)) return [];
+  const resolved = normalizeWebhookVars({ ...vars, event });
+  return scripts
+    .filter((script) => script.enabled !== false && String(script.file || "").trim())
+    .map((script) =>
+      enqueueNotification({
+        kind: "script",
+        script: {
+          name: String(script.name || ""),
+          file: String(script.file),
+          args: Array.isArray(script.args) ? script.args.map(String) : [],
+          ...(script.timeoutSec ? { timeoutSec: Number(script.timeoutSec) } : {}),
+        },
+        event,
+        vars: resolved,
+        requestedAt: Date.now(),
+      }),
+    );
+}
+
+function queueEventHooks(
+  integrations: StoredIntegrations,
+  event: string,
+  vars: Partial<WebhookVars> = {},
+) {
+  return [queueWebhooks(integrations, event, vars), ...queueScripts(integrations, event, vars)];
 }
 
 export async function sendGotifyTest(
@@ -310,6 +418,20 @@ export async function sendWebhookTest(webhook: WebhookTarget) {
   );
 }
 
+const SCRIPT_TEST_VARS = Object.freeze({
+  flowPath: "",
+  flowName: "",
+  albumName: "Test album",
+  artistName: "Test artist",
+  albumPath: "/music/Test artist/Test album",
+  username: "script-test-user",
+  userId: "script-test-user",
+});
+
+export async function sendScriptTest(script: ScriptTarget) {
+  return runScript(script, normalizeWebhookVars({ ...SCRIPT_TEST_VARS, event: "scriptTest" }));
+}
+
 export async function notifyDiscoveryUpdated() {
   const settings = dbOps.getSettings();
   const gotify = settings.integrations?.gotify || {};
@@ -320,7 +442,7 @@ export async function notifyDiscoveryUpdated() {
     );
   }
   tasks.push(
-    queueWebhooks(settings.integrations, "notifyDiscoveryUpdated", {
+    ...queueEventHooks(settings.integrations, "notifyDiscoveryUpdated", {
       flowName: "Aurral – Discover",
     }),
   );
@@ -349,7 +471,7 @@ export async function notifyFlowDone(
     );
   }
   tasks.push(
-    queueWebhooks(settings.integrations, "notifyWeeklyFlowDone", {
+    ...queueEventHooks(settings.integrations, "notifyWeeklyFlowDone", {
       flowPath,
       flowName: displayName,
     }),
@@ -372,7 +494,7 @@ export async function notifyRequestMade({
     tasks.push(queueGotify("Aurral – Request", `Album requested: ${subject}${byUser}`, 5));
   }
   tasks.push(
-    queueWebhooks(settings.integrations, "notifyRequestMade", {
+    ...queueEventHooks(settings.integrations, "notifyRequestMade", {
       albumName: String(albumName || "").trim(),
       artistName: String(artistName || "").trim(),
       ...actor,
@@ -410,7 +532,7 @@ export async function notifyRequestAvailable({
     tasks.push(queueGotify("Aurral – Request", `Album available: ${subject}${byUser}`, 5));
   }
   tasks.push(
-    queueWebhooks(settings.integrations, "notifyRequestAvailable", {
+    ...queueEventHooks(settings.integrations, "notifyRequestAvailable", {
       albumName: String(albumName || "").trim(),
       artistName: String(artistName || "").trim(),
       albumPath: resolveAlbumPath(albumName, artistName, albumPath),

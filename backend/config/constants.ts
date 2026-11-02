@@ -155,6 +155,20 @@ export const defaultData = {
         notifyRequestMade: false,
         notifyRequestAvailable: false,
       },
+      // Custom script hooks; only read when AURRAL_SCRIPTS_DIR is set.
+      scripts: [] as {
+        name: string;
+        file: string;
+        args: string[];
+        timeoutSec: number;
+        enabled: boolean;
+      }[],
+      scriptEvents: {
+        notifyDiscoveryUpdated: false,
+        notifyWeeklyFlowDone: false,
+        notifyRequestMade: false,
+        notifyRequestAvailable: false,
+      },
     },
     releaseTypes: [
       "Album",

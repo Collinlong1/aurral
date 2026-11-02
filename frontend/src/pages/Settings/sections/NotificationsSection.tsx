@@ -19,6 +19,7 @@ import {
   SettingsServiceRow,
   useSettingsItem,
 } from "../SettingsLayout";
+import { ScriptDetail, ScriptsGroups, resolveScriptItem } from "./ScriptsSettings";
 
 type Integrations = SettingsState["integrations"];
 type Webhook = Integrations["webhooks"][number];
@@ -242,7 +243,7 @@ function WebhookDetail({ index }: { index: number | null }) {
           <SettingsRow
             label="Body"
             htmlFor="webhook-body"
-            help="Optional. With a body Aurral sends a POST, otherwise a GET. $event, $artistName, $albumName, $flowName, and $username are filled in."
+            help="Optional. With a body Aurral sends a POST, otherwise a GET. $event, $artistName, $albumName, $albumPath, $flowName, and $username are filled in."
             stack
           >
             <SettingsTextarea
@@ -362,9 +363,11 @@ export function NotificationsSection() {
   const item = useSettingsItem();
   const { gotify, webhooks, webhookEvents } = settings.integrations;
   const webhookItem = resolveWebhookItem(webhooks, item);
+  const scriptItem = resolveScriptItem(settings.integrations.scripts, item);
 
   if (item === "gotify") return <GotifyDetail />;
   if (webhookItem) return <WebhookDetail key={item} index={webhookItem.index} />;
+  if (scriptItem) return <ScriptDetail key={item} index={scriptItem.index} />;
 
   return (
     <SettingsPage title="Notifications">
@@ -415,6 +418,23 @@ export function NotificationsSection() {
           />
         </SettingsGroup>
       ) : null}
+      <ScriptsGroups
+        eventToggles={(scriptEvents) => (
+          <EventToggles
+            idPrefix="script-event"
+            values={scriptEvents}
+            onChange={(key, enabled) =>
+              updateSettings({
+                ...settings,
+                integrations: {
+                  ...settings.integrations,
+                  scriptEvents: { ...scriptEvents, [key]: enabled },
+                },
+              })
+            }
+          />
+        )}
+      />
     </SettingsPage>
   );
 }

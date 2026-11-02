@@ -244,6 +244,19 @@ export const normalizeSettings = (savedSettings: SavedSettings) => {
         notifyRequestAvailable: false,
         ...(savedSettings.integrations?.webhookEvents || {}),
       },
+      // Present only while the server has custom scripts enabled.
+      ...(Array.isArray(savedSettings.integrations?.scripts)
+        ? {
+            scripts: savedSettings.integrations.scripts,
+            scriptEvents: {
+              notifyDiscoveryUpdated: false,
+              notifyWeeklyFlowDone: false,
+              notifyRequestMade: false,
+              notifyRequestAvailable: false,
+              ...(savedSettings.integrations?.scriptEvents || {}),
+            },
+          }
+        : {}),
     },
   };
 };
