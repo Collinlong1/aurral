@@ -4,7 +4,12 @@ import { dbOps } from "../db/helpers/index.ts";
 import { MAX_REVIEW_TIMEOUT_HOURS } from "../db/helpers/settings.ts";
 import { readIntegrationSettings } from "../db/helpers/integrationSettings.ts";
 import type { AppSettings, StoredIntegrations } from "../db/helpers/settings.ts";
-import { DATE_TIME_FORMATS, DEFAULT_METADATA_BASE_URL, defaultData } from "../config/constants.ts";
+import {
+  DATE_TIME_FORMATS,
+  DEFAULT_METADATA_BASE_URL,
+  defaultData,
+  normalizeSubsonicArtistSource,
+} from "../config/constants.ts";
 import { reconcileLocalNetworkBypassSetting } from "../middleware/auth.ts";
 import { validateExternalUrl } from "../middleware/urlValidator.ts";
 import { websocketService } from "./websocketService.ts";
@@ -537,6 +542,9 @@ export async function saveAppSettings(
             normalizedSubsonic.favoriteAutoKeep !== undefined
               ? normalizedSubsonic.favoriteAutoKeep !== false
               : currentSubsonic.favoriteAutoKeep !== false,
+          artistSource: normalizeSubsonicArtistSource(
+            normalizedSubsonic.artistSource ?? currentSubsonic.artistSource,
+          ),
         }
       : currentSubsonic,
     rootFolderPath:

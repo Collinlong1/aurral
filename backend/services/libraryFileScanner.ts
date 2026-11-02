@@ -1,6 +1,12 @@
 import fs from "fs/promises";
 import path from "path";
-import { parseFile, type ICommonTagsResult, type IFormat, type IOptions } from "music-metadata";
+import {
+  parseFile,
+  type IAudioMetadata,
+  type ICommonTagsResult,
+  type IFormat,
+  type IOptions,
+} from "music-metadata";
 import { db } from "../config/db-sqlite.ts";
 import { readRawLibraryMetadata } from "./libraryMetadata.ts";
 import { asAppError } from "../../lib/errors.ts";
@@ -37,10 +43,12 @@ import {
   type DownloadTrackFields,
 } from "./downloadUtils.ts";
 import { logger, safeLogDiagnostic } from "./logger.ts";
+import { readArtistTags } from "./artistTags.ts";
 
 type ScannedMetadata = {
   common?: Partial<ICommonTagsResult>;
   format?: Partial<IFormat>;
+  native?: IAudioMetadata["native"];
 };
 
 type MetadataEnrichment = DownloadTrackFields | null | undefined;
@@ -209,6 +217,7 @@ function buildMetadataRecord(metadata: ScannedMetadata, filePath: string, rootPa
     trackKey,
     trackMbid,
     trackArtistName: text(common.artist),
+    artistTags: readArtistTags(metadata),
     title,
     trackNumber,
     discNumber,
@@ -447,11 +456,14 @@ export async function scanMusicRoot({
         try {
           const stat = await fs.stat(filePath);
           const existing = getLibraryMediaFile({ source, path: filePath });
+          // A file indexed before Aurral kept artist credits has none stored, so it is read
+          // once more even though it has not changed.
           if (
             force !== true &&
             !changed?.namedFilePaths.has(filePath) &&
             !legacyKeyed.paths.has(filePath) &&
             existing?.available === 1 &&
+            existing.artist_tags_json != null &&
             Number(existing.size) === stat.size &&
             Number(existing.mtime_ms) === stat.mtimeMs
           ) {
@@ -554,6 +566,7 @@ export async function scanMusicRoot({
             durationMs: record.durationMs,
             quality: record.quality,
             artistTag: record.trackArtistName,
+            artistTags: record.artistTags,
             scanId,
           });
           if (before) releaseLibraryFileRows(before, { albumId: album.id, trackId: track.id });

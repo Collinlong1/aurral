@@ -25,6 +25,7 @@ import {
   refreshLibraryManagementCache,
 } from "./libraryManagementStore.ts";
 import { selectCanonicalFile } from "./canonicalFileSelector.ts";
+import { artistTagsSchema, type ArtistTags } from "./artistTags.ts";
 
 const nullableText = lenient(v.nullable(v.string()));
 const nullableCount = lenient(v.nullable(v.number()));
@@ -49,6 +50,7 @@ type LibraryCanonicalMedia =
       media_mtime_ms: LibraryMediaFilesRow["mtime_ms"];
       media_duration_ms: LibraryMediaFilesRow["duration_ms"];
       media_quality_json: LibraryMediaFilesRow["quality_json"];
+      media_artist_tags_json: LibraryMediaFilesRow["artist_tags_json"];
       media_available: LibraryMediaFilesRow["available"];
       media_created_at: LibraryMediaFilesRow["created_at"];
     }
@@ -62,6 +64,7 @@ type LibraryCanonicalMedia =
       media_mtime_ms: null;
       media_duration_ms: null;
       media_quality_json: null;
+      media_artist_tags_json: null;
       media_available: null;
       media_created_at: null;
     };
@@ -102,6 +105,7 @@ export type LibraryTrackFile = {
   mtimeMs: LibraryMediaFilesRow["mtime_ms"];
   durationMs: LibraryMediaFilesRow["duration_ms"];
   quality: v.InferOutput<typeof trackFileQualitySchema> | null;
+  artistTags?: ArtistTags | null;
   available: boolean;
   createdAt: LibraryMediaFilesRow["created_at"];
 };
@@ -201,6 +205,7 @@ const CANONICAL_SELECT = `SELECT
   media.mtime_ms AS media_mtime_ms,
   media.duration_ms AS media_duration_ms,
   media.quality_json AS media_quality_json,
+  media.artist_tags_json AS media_artist_tags_json,
   media.available AS media_available,
   media.created_at AS media_created_at`;
 
@@ -426,6 +431,11 @@ function buildLibraryFromRows(rows: Iterable<LibraryCanonicalRow>) {
           trackFileQualitySchema,
           row.media_quality_json,
           "library file quality",
+        ),
+        artistTags: dbHelpers.readJSON(
+          artistTagsSchema,
+          row.media_artist_tags_json,
+          "library file artist tags",
         ),
         available: Boolean(row.media_available),
         createdAt: row.media_created_at,
