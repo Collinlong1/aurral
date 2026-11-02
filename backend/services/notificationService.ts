@@ -1,3 +1,4 @@
+import { statSync } from "fs";
 import * as v from "valibot";
 import axios from "../../lib/axiosFetch.ts";
 import { dbOps } from "../db/helpers/index.ts";
@@ -6,6 +7,7 @@ import { enqueueNotification, parseHonkerPayload } from "./honkerDb.ts";
 import { asAppError } from "../../lib/errors.ts";
 import { webhookSettingsSchema } from "../db/helpers/integrationSettings.ts";
 import type { StoredIntegrations } from "../db/helpers/settings.ts";
+import { buildLibraryAlbumDir, resolveDownloadRoot } from "./downloadPaths.ts";
 
 type WebhookSettings = v.InferOutput<typeof webhookSettingsSchema>;
 type WebhookTarget = NonNullable<WebhookSettings["webhooks"]>[number];
@@ -16,6 +18,7 @@ interface WebhookVars {
   flowName: string;
   albumName: string;
   artistName: string;
+  albumPath: string;
   username: string;
   userId: string;
   event: string;
@@ -30,6 +33,7 @@ interface RequestActor {
 interface RequestNotice {
   albumName?: string;
   artistName?: string;
+  albumPath?: string;
   user?: RequestActor | null;
 }
 
@@ -52,6 +56,7 @@ export const queuedNotificationSchema = v.variant("kind", [
         flowName: text,
         albumName: text,
         artistName: text,
+        albumPath: text,
         username: text,
         userId: text,
         event: text,
@@ -120,6 +125,7 @@ const WEBHOOK_PLACEHOLDERS = [
   "flowName",
   "albumName",
   "artistName",
+  "albumPath",
   "username",
   "userId",
   "event",
@@ -138,6 +144,7 @@ function normalizeWebhookVars(vars: Partial<WebhookVars> = {}, flowPath = "", fl
       flowName: vars.flowName ?? flowName ?? "",
       albumName: vars.albumName ?? "",
       artistName: vars.artistName ?? "",
+      albumPath: vars.albumPath ?? "",
       username: vars.username ?? "",
       userId: vars.userId ?? "",
       event: vars.event ?? "",
@@ -148,6 +155,7 @@ function normalizeWebhookVars(vars: Partial<WebhookVars> = {}, flowPath = "", fl
     flowName: flowName || "",
     albumName: "",
     artistName: "",
+    albumPath: "",
     username: "",
     userId: "",
     event: "",
@@ -286,6 +294,7 @@ const WEBHOOK_TEST_VARS = Object.freeze({
   flowName: "Aurral webhook test",
   albumName: "Test album",
   artistName: "Test artist",
+  albumPath: "/music/Test artist/Test album",
   username: "webhook-test-user",
   userId: "webhook-test-user",
 });
@@ -372,9 +381,23 @@ export async function notifyRequestMade({
   await Promise.all(tasks);
 }
 
+// The album's folder in the Library, when it is there.
+function resolveAlbumPath(albumName?: string, artistName?: string, known?: string) {
+  const candidate = String(known || "").trim();
+  if (candidate) return candidate;
+  if (!String(albumName || "").trim()) return "";
+  try {
+    const dir = buildLibraryAlbumDir(resolveDownloadRoot(), { albumName, artistName });
+    return statSync(dir).isDirectory() ? dir : "";
+  } catch {
+    return "";
+  }
+}
+
 export async function notifyRequestAvailable({
   albumName,
   artistName,
+  albumPath,
   user = null,
 }: RequestNotice = {}) {
   const settings = dbOps.getSettings();
@@ -390,6 +413,7 @@ export async function notifyRequestAvailable({
     queueWebhooks(settings.integrations, "notifyRequestAvailable", {
       albumName: String(albumName || "").trim(),
       artistName: String(artistName || "").trim(),
+      albumPath: resolveAlbumPath(albumName, artistName, albumPath),
       ...actor,
     }),
   );

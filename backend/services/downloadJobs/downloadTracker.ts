@@ -24,6 +24,7 @@ import { isPlaylistOwnerActive } from "./playlistOwnerStatus.ts";
 import { logger } from "../logger.ts";
 import { getShareDownload } from "../shareLinks/downloadStore.ts";
 import { recordAlbumGrabQueued, recordAlbumTrackState } from "../albumGrabActivity.ts";
+import { recordAurralRequestOutcome } from "../aurralRequestCompletion.ts";
 import { mapRequest, type ReleaseManifest } from "../releaseManifest.ts";
 import {
   cancelDownloadJob,
@@ -1277,6 +1278,9 @@ export class DownloadTracker {
     );
     if (ENDED_STATUSES.has(job.status)) this._dropHeldForReview(job);
     recordAlbumTrackState(job);
+    if (job.requestGroupId && ENDED_STATUSES.has(job.status)) {
+      recordAurralRequestOutcome(job, this.jobs.values());
+    }
     this._touchRevision();
   }
 
