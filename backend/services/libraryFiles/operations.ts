@@ -227,7 +227,14 @@ export async function runLibraryFileOperation(
 
 export async function processLibraryFileJob(operationId: number) {
   const { done } = await runLibraryFileOperation(operationId);
-  if (!done) await enqueue(operationId, { dedupe: false });
+  if (!done) {
+    await enqueue(operationId, { dedupe: false });
+    return;
+  }
+  // M3U playlists waiting on this ingest can now be built from its files.
+  await import("../importLists/m3uImport.ts")
+    .then(({ completePendingM3uImports }) => completePendingM3uImports())
+    .catch((error) => console.warn("[m3u-import] Pending playlists failed:", error));
 }
 
 const relative = (root: string, filePath: string | null | undefined) => {
