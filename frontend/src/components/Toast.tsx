@@ -7,7 +7,7 @@ import {
   type MouseEvent,
   type ReactNode,
 } from "react";
-import { AlertCircle, CheckCircle, Info, TriangleAlert, X } from "./icons";
+import { AlertCircle, CheckCircle, Info, TriangleAlert, X, type IconComponent } from "./icons";
 import { DotLoader } from "./DotLoader";
 
 const TOAST_ICONS = {
@@ -28,6 +28,8 @@ export interface ToastItem {
   title?: ReactNode;
   message?: ReactNode;
   description?: ReactNode;
+  artwork?: string[];
+  icon?: IconComponent;
   action?: { label: string; onClick?: () => void; dismiss?: boolean };
   duration?: number;
 }
@@ -39,7 +41,17 @@ interface ToastProps {
 }
 
 export function Toast({ toast, onDismiss, index = 0 }: ToastProps) {
-  const { id, type = "info", title, message, description, action, duration = 3000 } = toast;
+  const {
+    id,
+    type = "info",
+    title,
+    message,
+    description,
+    artwork,
+    icon,
+    action,
+    duration = 3000,
+  } = toast;
   const [isExiting, setIsExiting] = useState(false);
   const timerRef = useRef<number | null>(null);
   const exitTimerRef = useRef<number | null>(null);
@@ -88,6 +100,7 @@ export function Toast({ toast, onDismiss, index = 0 }: ToastProps) {
       dismiss();
       return;
     }
+    if (remainingRef.current === Infinity) return;
 
     startedAtRef.current = Date.now();
     timerRef.current = window.setTimeout(dismiss, remainingRef.current);
@@ -139,7 +152,7 @@ export function Toast({ toast, onDismiss, index = 0 }: ToastProps) {
     if (action?.dismiss !== false) dismiss();
   };
 
-  const Icon = TOAST_ICONS[type] || TOAST_ICONS.info;
+  const Icon = icon ?? TOAST_ICONS[type] ?? TOAST_ICONS.info;
   const body = description || message;
 
   return (
@@ -153,9 +166,20 @@ export function Toast({ toast, onDismiss, index = 0 }: ToastProps) {
       onFocusCapture={handleInteractionStart}
       onBlurCapture={handleInteractionEnd}
     >
-      <div className="app-toast__icon" aria-hidden="true">
-        <Icon />
-      </div>
+      {artwork?.length ? (
+        <div className="app-toast__artwork" aria-hidden="true">
+          {(artwork.length < 4 ? artwork.slice(0, 1) : artwork).map((url) => (
+            <img key={url} src={url} alt="" loading="lazy" />
+          ))}
+        </div>
+      ) : (
+        <div
+          className={`app-toast__icon${icon ? " app-toast__icon--large" : ""}`}
+          aria-hidden="true"
+        >
+          <Icon />
+        </div>
+      )}
       <div className="app-toast__content">
         {title && <div className="app-toast__title">{title}</div>}
         {body && (

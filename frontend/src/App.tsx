@@ -27,6 +27,7 @@ import ReloadPrompt from "./components/ReloadPrompt";
 import ThemeSync from "./components/ThemeSync";
 import UpdateIndicator from "./components/UpdateIndicator";
 import SpotifyReconnectNotice from "./components/SpotifyReconnectNotice";
+import StarPrompt from "./components/StarPrompt";
 import { DotLoader } from "./components/DotLoader";
 import { SkeletonPageTitle } from "./components/Skeletons";
 import { useDiscoveryStatus } from "./hooks/useDiscoveryStatus";
@@ -212,17 +213,14 @@ function ProtectedLayout() {
   return (
     <DiscoverRecentProvider>
       <PlaylistBulkActionsProvider>
-        <Layout
-          headerActions={<UpdateIndicator visible={!user || user.role === "admin"} />}
-          overlay={
-            wrappedSeason && (
-              <Suspense fallback={null}>
-                <WrappedAnnouncement />
-              </Suspense>
-            )
-          }
-        >
+        <Layout headerActions={<UpdateIndicator visible={!user || user.role === "admin"} />}>
           <SpotifyReconnectNotice />
+          <StarPrompt />
+          {wrappedSeason && (
+            <Suspense fallback={null}>
+              <WrappedAnnouncement />
+            </Suspense>
+          )}
           {healthIssue === "lidarr" && isHealthy && (
             <div className="app-status-banner app-status-banner--warning">
               <AlertTriangle className="app-status-banner__icon app-status-banner__icon--warning" />
