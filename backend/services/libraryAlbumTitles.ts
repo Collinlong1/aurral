@@ -128,21 +128,28 @@ export async function nameMixedTitleAlbums(lookup: ReleaseGroupLookup = getAlbum
     )
     .all();
   let renamed = 0;
+  // Once the provider is unreachable, later box sets are named after their
+  // folder; one without a usable folder waits for the provider.
+  let providerDown = false;
   for (const album of albums) {
     const metadata = readRawLibraryMetadata(album.metadata_json);
     if (Number(metadata.titleLookupAt) > Date.now() - LOOKUP_RETRY_MS) continue;
     let title = "";
-    try {
-      const releaseGroup = await lookup(album.release_group_mbid!);
-      title = String(releaseGroup?.title || "").trim();
-    } catch (error) {
-      const failure = asAppError(error);
-      if (failure?.code === "ERR_METADATA_COOLDOWN") break;
-      if (failure?.response?.status !== 404) {
-        logger.warn("library", "Stopped naming box sets; metadata provider unavailable", {
-          message: failure?.message || String(error),
-        });
-        break;
+    let unavailable: boolean = providerDown;
+    if (!providerDown) {
+      try {
+        const releaseGroup = await lookup(album.release_group_mbid!);
+        title = String(releaseGroup?.title || "").trim();
+      } catch (error) {
+        const failure = asAppError(error);
+        if (failure?.code === "ERR_METADATA_COOLDOWN" || failure?.response?.status !== 404) {
+          if (failure?.code !== "ERR_METADATA_COOLDOWN") {
+            logger.warn("library", "Metadata provider unavailable; naming box sets by folder", {
+              message: failure?.message || String(error),
+            });
+          }
+          providerDown = unavailable = true;
+        }
       }
     }
     title ||= boxSetFolderTitle(album.id, album.album_artist) || "";
@@ -150,7 +157,7 @@ export async function nameMixedTitleAlbums(lookup: ReleaseGroupLookup = getAlbum
       renamed += 1;
       continue;
     }
-    markLibraryAlbumTitles(album.id, { titleLookupAt: Date.now() });
+    if (!unavailable) markLibraryAlbumTitles(album.id, { titleLookupAt: Date.now() });
   }
   return renamed;
 }

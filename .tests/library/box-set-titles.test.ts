@@ -175,3 +175,12 @@ test("a regular album spread over folders is checked once and left alone", async
   assert.equal(album.metadata.titlesChecked, true);
   assert.equal(album.title, "Same Album");
 });
+
+test("while the metadata provider is unreachable, a box set takes its folder's name", async () => {
+  await writeDiscs(DECCA);
+  await scan();
+  await titles.nameMixedTitleAlbums(async () => {
+    throw new Error("fetch failed");
+  });
+  assert.equal(boxSetAlbum().title, "Decca Sound: The Analogue Years");
+});
