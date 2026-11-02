@@ -623,15 +623,10 @@ export function setLibraryAlbumCredits(albumId: number, artistMbids: string[]) {
   invalidateLibraryCache();
 }
 
-// An album keyed by a MusicBrainz release keeps one title. Box sets often tag
-// every disc with its own album title; without this, the title followed
-// whichever disc was read last. A conflicting title keeps the album's current
-// title and flags it, so the index pass can name it after its release group.
-// A title set from the release group stays until the album is gone.
-const MIXED_TITLE_KEYS = ["release-group:", "album:"];
-
+// Box sets often tag every disc with its own album title. A scan flags such a
+// release-group album, and the index pass names it after its release group;
+// that name then stays, whatever title its files carry.
 function resolveAlbumTitle(
-  key: string,
   existing: LibraryAlbumsRow | undefined,
   taggedTitle: string,
 ): { albumTitle: string; titleMetadata: Record<string, unknown> | null } {
@@ -648,18 +643,7 @@ function resolveAlbumTitle(
   if (typeof stored.canonicalTitle === "string" && stored.canonicalTitle) {
     return { albumTitle: stored.canonicalTitle, titleMetadata: keep };
   }
-  if (
-    taggedTitle === existing.title ||
-    !MIXED_TITLE_KEYS.some((prefix) => key.startsWith(prefix)) ||
-    !db
-      .prepare<[number], { id: number }>(
-        "SELECT id FROM library_media_files WHERE album_id = ? AND available = 1 LIMIT 1",
-      )
-      .get(existing.id)
-  ) {
-    return { albumTitle: taggedTitle, titleMetadata: keep };
-  }
-  return { albumTitle: existing.title, titleMetadata: { ...keep, mixedTitles: true } };
+  return { albumTitle: taggedTitle, titleMetadata: keep };
 }
 
 // Names an album after its release group for good, see resolveAlbumTitle.
@@ -735,7 +719,7 @@ export function upsertLibraryAlbum({
     const existing = db
       .prepare<[string], LibraryAlbumsRow>("SELECT * FROM library_albums WHERE identity_key = ?")
       .get(key);
-    const { albumTitle, titleMetadata } = resolveAlbumTitle(key, existing, taggedTitle);
+    const { albumTitle, titleMetadata } = resolveAlbumTitle(existing, taggedTitle);
     const ownMetadata = titleMetadata ? { ...metadata, ...titleMetadata } : metadata;
     const metadataText = stringify(ownMetadata);
     const mergedMetadataText =

@@ -10,14 +10,25 @@ import {
   setupIsolatedBackend,
 } from "../helpers/backendTestHarness.ts";
 
-const [state, { db }, store, titles] = await setupIsolatedBackend(
+const [
+  state,
+  { db },
+  titles,
+  { scanMusicRoots },
+  { getMetadataBaseUrl },
+  { setMetadataProviderCooldown },
+] = await setupIsolatedBackend(
   "box-set-titles",
   () => import("../../backend/config/db-sqlite.ts"),
-  () => import("../../backend/services/libraryMediaStore.ts"),
   () => import("../../backend/services/libraryAlbumTitles.ts"),
+  () => import("../../backend/services/libraryFileScanner.ts"),
+  () => import("../../backend/services/providers/brainzmashProvider.ts"),
+  () => import("../../backend/services/metadataProviderBudget.ts"),
 );
+// Unit tests are offline: the metadata provider refuses lookups up front.
+setMetadataProviderCooldown(getMetadataBaseUrl(), 403, Number.MAX_SAFE_INTEGER);
 
-const RELEASE_GROUP = "11111111-2222-3333-4444-555555555555";
+const RELEASE_GROUP = "11111111-2222-4333-8444-555555555555";
 let root = "";
 
 beforeEach(() => {
@@ -33,117 +44,134 @@ afterAll(async () => {
   await cleanupIsolatedState(state);
 });
 
-const artist = () =>
-  store.upsertLibraryArtist({ identityKey: "artist:various", name: "Various Artists" });
+type Disc = { folder: string; album: string };
 
-// Files one disc each, as a scan stores them: one album per release group.
-async function boxSet(discs: { folder: string; album: string }[], albumArtist = "Various Artists") {
-  const { id: artistId } = artist()!;
-  let album = null;
-  for (const [index, disc] of discs.entries()) {
-    const filePath = path.join(root, disc.folder, `01 - Track ${index + 1}.flac`);
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    await writeFlacFixture(filePath, { album: disc.album, title: `Track ${index + 1}` });
-    album = store.upsertLibraryAlbum({
-      identityKey: `release-group:${RELEASE_GROUP}`,
-      releaseGroupMbid: RELEASE_GROUP,
-      artistId,
-      title: disc.album,
-      albumArtist,
-    });
-    const track = store.upsertLibraryTrack({
-      identityKey: `track:${index}`,
-      title: `Track ${index + 1}`,
-    });
-    store.upsertLibraryMediaFile({
-      trackId: track!.id,
-      albumId: album!.id,
-      source: "readonly",
-      path: filePath,
-      scanId: 1,
-    });
-  }
-  return albumRow(album!.id);
-}
-
-const albumRow = (id: number) =>
-  db
-    .prepare<[number], { id: number; title: string; metadata_json: string | null }>(
-      "SELECT id, title, metadata_json FROM library_albums WHERE id = ?",
-    )
-    .get(id)!;
-
-const DISCS = [
-  { folder: "Decca Sound_ The Analogue Years/CD01", album: "Rachmaninov: Piano Concerto No. 2" },
-  { folder: "Decca Sound_ The Analogue Years/CD02", album: "Holst: The Planets" },
-  { folder: "Decca Sound_ The Analogue Years/CD03", album: "Rimsky-Korsakov: Antar" },
+const DECCA: Disc[] = [
+  {
+    folder: "Compilations/Decca Sound_ The Analogue Years/CD01",
+    album: "Rachmaninov: Piano Concerto No. 2",
+  },
+  { folder: "Compilations/Decca Sound_ The Analogue Years/CD02", album: "Holst: The Planets" },
+  { folder: "Compilations/Decca Sound_ The Analogue Years/CD03", album: "Rimsky-Korsakov: Antar" },
 ];
 
-test("an album keyed by release group keeps its first title when discs disagree", async () => {
-  const album = await boxSet(DISCS);
-  const row = albumRow(album.id);
-  assert.equal(row.title, "Rachmaninov: Piano Concerto No. 2");
-  assert.equal(JSON.parse(row.metadata_json || "{}").mixedTitles, true);
+async function writeDiscs(discs: Disc[], albumArtist = "Various Artists") {
+  for (const [index, disc] of discs.entries()) {
+    await writeFlacFixture(path.join(root, disc.folder, "01 - Track.flac"), {
+      album: disc.album,
+      album_artist: albumArtist,
+      artist: albumArtist,
+      title: `Track on disc ${index + 1}`,
+      track: 1,
+      disc: index + 1,
+      MUSICBRAINZ_RELEASEGROUPID: RELEASE_GROUP,
+    });
+  }
+}
+
+const scan = () => scanMusicRoots({ rootPaths: [root], source: "readonly", syncSearch: false });
+
+const boxSetAlbum = () => {
+  const rows = db
+    .prepare<[string], { id: number; title: string; metadata_json: string | null }>(
+      "SELECT id, title, metadata_json FROM library_albums WHERE release_group_mbid = ?",
+    )
+    .all(RELEASE_GROUP);
+  assert.equal(rows.length, 1, "one album per release group");
+  return { ...rows[0], metadata: JSON.parse(rows[0].metadata_json || "{}") || {} };
+};
+
+const notFound = async () => {
+  throw Object.assign(new Error("not found"), { response: { status: 404 } });
+};
+
+test("a scan flags a release-group album whose discs carry different titles", async () => {
+  await writeDiscs(DECCA);
+  await scan();
+  assert.equal(boxSetAlbum().metadata.mixedTitles, true);
 });
 
 test("a box set is named after its release group, and keeps that name on later scans", async () => {
-  const album = await boxSet(DISCS);
+  await writeDiscs(DECCA);
+  await scan();
   const renamed = await titles.nameMixedTitleAlbums(async (mbid) => {
     assert.equal(mbid, RELEASE_GROUP);
     return { title: "The Decca Sound: The Analogue Years" };
   });
   assert.equal(renamed, 1);
-  assert.equal(albumRow(album.id).title, "The Decca Sound: The Analogue Years");
+  assert.equal(boxSetAlbum().title, "The Decca Sound: The Analogue Years");
 
-  store.upsertLibraryAlbum({
-    identityKey: `release-group:${RELEASE_GROUP}`,
-    releaseGroupMbid: RELEASE_GROUP,
-    artistId: artist()!.id,
-    title: "Holst: The Planets",
+  // A disc retagged later is read again, and the album keeps its name.
+  await writeFlacFixture(path.join(root, DECCA[1].folder, "01 - Track.flac"), {
+    album: "Holst: The Planets (Remastered)",
+    album_artist: "Various Artists",
+    artist: "Various Artists",
+    title: "Track on disc 2",
+    track: 1,
+    disc: 2,
+    MUSICBRAINZ_RELEASEGROUPID: RELEASE_GROUP,
   });
-  assert.equal(albumRow(album.id).title, "The Decca Sound: The Analogue Years");
+  await scan();
+  assert.equal(boxSetAlbum().title, "The Decca Sound: The Analogue Years");
 });
 
 test("a box set MusicBrainz does not have takes its folder's name", async () => {
-  const album = await boxSet(DISCS);
-  const notFound = Object.assign(new Error("not found"), { response: { status: 404 } });
-  await titles.nameMixedTitleAlbums(async () => {
-    throw notFound;
-  });
-  assert.equal(albumRow(album.id).title, "Decca Sound: The Analogue Years");
+  await writeDiscs(DECCA);
+  await scan();
+  await titles.nameMixedTitleAlbums(notFound);
+  assert.equal(boxSetAlbum().title, "Decca Sound: The Analogue Years");
 });
 
 test("an artist folder is not used as a box set name", async () => {
-  const album = await boxSet(
+  const artist = "Franz Liszt; Leslie Howard";
+  await writeDiscs(
     [
-      { folder: "Franz Liszt; Leslie Howard/Vol 1", album: "Waltzes" },
-      { folder: "Franz Liszt; Leslie Howard/Vol 2", album: "Music for Piano and Orchestra" },
+      { folder: `${artist}/Vol 1`, album: "Waltzes" },
+      { folder: `${artist}/Vol 2`, album: "Music for Piano and Orchestra, bonus disk" },
     ],
-    "Franz Liszt; Leslie Howard",
+    artist,
   );
-  await titles.nameMixedTitleAlbums(async () => null);
-  assert.equal(albumRow(album.id).title, "Waltzes");
+  await scan();
+  const before = boxSetAlbum().title;
+  await titles.nameMixedTitleAlbums(notFound);
+  assert.equal(boxSetAlbum().title, before);
+});
+
+test("an album retagged with one new title takes it, as before", async () => {
+  await writeDiscs([
+    { folder: "Album/CD1", album: "Old Name" },
+    { folder: "Album/CD2", album: "Old Name" },
+  ]);
+  await scan();
+  await writeDiscs([
+    { folder: "Album/CD1", album: "New Name" },
+    { folder: "Album/CD2", album: "New Name" },
+  ]);
+  await scan();
+  const album = boxSetAlbum();
+  assert.equal(album.title, "New Name");
+  assert.equal(album.metadata.mixedTitles, undefined);
 });
 
 test("albums merged before this change are found by reading their files once", async () => {
-  const album = await boxSet(DISCS);
+  await writeDiscs(DECCA);
+  await scan();
   // As stored before: the last disc's title, with nothing flagged.
-  db.prepare("UPDATE library_albums SET title = ?, metadata_json = NULL WHERE id = ?").run(
+  db.prepare("UPDATE library_albums SET title = ?, metadata_json = NULL").run(
     "Rimsky-Korsakov: Antar",
-    album.id,
   );
   assert.equal(await titles.findMixedTitleAlbums(), 1);
-  assert.equal(JSON.parse(albumRow(album.id).metadata_json || "{}").mixedTitles, true);
+  assert.equal(boxSetAlbum().metadata.mixedTitles, true);
+});
 
-  // A regular album split over folders with one title is checked once.
-  const single = await (async () => {
-    db.prepare("DELETE FROM library_albums").run();
-    return boxSet([
-      { folder: "Album/CD1", album: "Same Album" },
-      { folder: "Album/CD2", album: "Same Album" },
-    ]);
-  })();
+test("a regular album spread over folders is checked once and left alone", async () => {
+  await writeDiscs([
+    { folder: "Album/CD1", album: "Same Album" },
+    { folder: "Album/CD2", album: "Same Album" },
+  ]);
+  await scan();
   assert.equal(await titles.findMixedTitleAlbums(), 0);
-  assert.equal(JSON.parse(albumRow(single.id).metadata_json || "{}").titlesChecked, true);
-  assert.equal(albumRow(single.id).title, "Same Album");
+  const album = boxSetAlbum();
+  assert.equal(album.metadata.titlesChecked, true);
+  assert.equal(album.title, "Same Album");
 });
