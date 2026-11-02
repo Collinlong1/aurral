@@ -2799,6 +2799,19 @@ const LIDARR_METADATA_PATHS = [...LIDARR_METADATA_KEYS, "monitorOption"]
 // files, the tracks Aurral asked for, and the songs an album's track list
 // names stay. What Lidarr managed and still has Aurral files becomes
 // Aurral's, unmonitored.
+// Files indexed before Aurral kept artist credits; a scan reads their tags again.
+export function hasLibraryFilesWithoutArtistTags() {
+  return Boolean(
+    db
+      .prepare<[], { present: number }>(
+        `SELECT EXISTS (
+           SELECT 1 FROM library_media_files WHERE available = 1 AND artist_tags_json IS NULL
+         ) AS present`,
+      )
+      .get()?.present,
+  );
+}
+
 export function hasLidarrLibraryData() {
   return (
     db

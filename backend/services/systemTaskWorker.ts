@@ -181,8 +181,13 @@ export async function processSystemTask(
       const { hasCompletedLibraryScan, scheduleLibraryScan } =
         await import("./libraryScanWorker.ts");
       const { lidarrClient } = await import("./lidarrClient.ts");
-      const { hasLidarrLibraryData } = await import("./libraryMediaStore.ts");
-      if (!hasCompletedLibraryScan() || (!lidarrClient.isConfigured() && hasLidarrLibraryData())) {
+      const { hasLibraryFilesWithoutArtistTags, hasLidarrLibraryData } =
+        await import("./libraryMediaStore.ts");
+      if (
+        !hasCompletedLibraryScan() ||
+        (!lidarrClient.isConfigured() && hasLidarrLibraryData()) ||
+        hasLibraryFilesWithoutArtistTags()
+      ) {
         scheduleLibraryScan();
       }
       return;

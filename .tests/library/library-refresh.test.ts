@@ -22,8 +22,15 @@ const {
 } = await import("../../backend/services/libraryScanWorker.ts");
 const { dbOps } = await import("../../backend/db/helpers/index.ts");
 const { db } = await import("../../backend/config/db-sqlite.ts");
-const { beginLibraryScan, finishLibraryScan } =
-  await import("../../backend/services/libraryMediaStore.ts");
+const {
+  beginLibraryScan,
+  finishLibraryScan,
+  linkLibraryAlbumTrack,
+  upsertLibraryAlbum,
+  upsertLibraryArtist,
+  upsertLibraryMediaFile,
+  upsertLibraryTrack,
+} = await import("../../backend/services/libraryMediaStore.ts");
 const { processSystemTask } = await import("../../backend/services/systemTaskWorker.ts");
 const { getLibraryScanQueue, bootstrapHonkerSchedules, getHonkerDb } =
   await import("../../backend/services/honkerDb.ts");
@@ -40,6 +47,56 @@ test("library scans are not scheduled as a recurring background task", () => {
       .some((task) => task.queue === "library-scan"),
     false,
   );
+});
+
+test("library bootstrap scans again while available files have no stored artist tags", async () => {
+  const queue = getLibraryScanQueue();
+  clearScheduledLibraryScan();
+  const scanId = beginLibraryScan({ source: "test" });
+  finishLibraryScan(scanId);
+  const artist = upsertLibraryArtist({ identityKey: "test-artist:tags", name: "Tag Artist" });
+  const album = upsertLibraryAlbum({
+    identityKey: "test-album:tags",
+    artistId: artist.id,
+    title: "Tag Album",
+  });
+  const track = upsertLibraryTrack({ identityKey: "test-track:tags", title: "Tag Song" });
+  linkLibraryAlbumTrack({ albumId: album.id, trackId: track.id, discNumber: 1, trackNumber: 1 });
+  const filePath = "/music/Tag Artist/Tag Album/01 Tag Song.flac";
+  let jobId: number | null = null;
+  try {
+    upsertLibraryMediaFile({
+      trackId: track.id,
+      albumId: album.id,
+      source: "test",
+      path: filePath,
+    });
+    await processSystemTask({ kind: "library-index-bootstrap" });
+    jobId = getScheduledLibraryScanJobId();
+    assert.ok(jobId, "files indexed before artist tags were stored are read again");
+    queue.cancel(jobId);
+    clearScheduledLibraryScan();
+    jobId = null;
+
+    upsertLibraryMediaFile({
+      trackId: track.id,
+      albumId: album.id,
+      source: "test",
+      path: filePath,
+      artistTags: { artist: "Tag Artist" },
+    });
+    await processSystemTask({ kind: "library-index-bootstrap" });
+    assert.equal(getScheduledLibraryScanJobId(), null);
+  } finally {
+    if (jobId) queue.cancel(jobId);
+    clearScheduledLibraryScan();
+    db.prepare("DELETE FROM library_media_files WHERE source = 'test'").run();
+    db.prepare("DELETE FROM library_album_tracks WHERE track_id = ?").run(track.id);
+    db.prepare("DELETE FROM library_tracks WHERE id = ?").run(track.id);
+    db.prepare("DELETE FROM library_albums WHERE id = ?").run(album.id);
+    db.prepare("DELETE FROM library_artists WHERE id = ?").run(artist.id);
+    db.prepare("DELETE FROM library_scan_runs WHERE source = 'test'").run();
+  }
 });
 
 test("library bootstrap runs until the first completed scan, and again while a turned-off Lidarr's music remains", async () => {
