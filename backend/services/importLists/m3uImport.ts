@@ -9,7 +9,11 @@ import { downloadTracker } from "../downloadJobs/downloadTracker.ts";
 import { isPathInsideRoot, resolveDownloadRoot } from "../downloadPaths.ts";
 import { logger, safeLogDiagnostic } from "../logger.ts";
 import { flowPlaylistConfig } from "../playlists/flowPlaylistConfig.ts";
-import { normalizePlaylistTrack, type PlaylistTrack } from "../playlists/playlistTracks.ts";
+import {
+  normalizePlaylistTrack,
+  type PlaylistTrack,
+  type PlaylistTrackInput,
+} from "../playlists/playlistTracks.ts";
 import { enqueueImportedPlaylist } from "./importPlaylist.ts";
 
 // Imports .m3u/.m3u8 playlists from a folder on the server. Each entry is
@@ -34,22 +38,6 @@ export type M3uEntry = {
   title: string | null;
   durationMs: number | null;
 };
-
-export type ImportTrack = {
-  artistName: string;
-  trackName: string;
-  albumName?: string | null;
-  artistMbid?: string | null;
-  albumMbid?: string | null;
-  trackMbid?: string | null;
-  releaseYear?: string | null;
-  durationMs?: number | null;
-  trackNumber?: number | null;
-  discNumber?: number | null;
-  canonicalJobId?: string;
-};
-
-// --- Parsing ---------------------------------------------------------------
 
 function resolveEntryPath(raw: string, m3uDir: string) {
   let value = raw.trim();
@@ -113,8 +101,6 @@ export function playlistNameFor(m3uPath: string, declaredName: string | null) {
   const base = path.basename(m3uPath, path.extname(m3uPath));
   return /^playlist$/i.test(base) ? path.basename(path.dirname(m3uPath)) : base;
 }
-
-// --- Folder scan -----------------------------------------------------------
 
 export async function resolveImportFolder(folder: unknown) {
   const requested = String(folder ?? "").trim();
@@ -208,8 +194,6 @@ export async function scanM3uFolder(folder: unknown) {
   return { folder: root, libraryRoot, playlists };
 }
 
-// --- Track resolution ------------------------------------------------------
-
 const text = (value: unknown) => {
   const result = String(Array.isArray(value) ? value[0] : (value ?? "")).trim();
   return result || null;
@@ -257,7 +241,7 @@ export async function readTrackInfo(filePath: string, entry: M3uEntry | null = n
     durationMs: Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds * 1000) : null,
     trackNumber: common?.track?.no || fallback.trackNumber || null,
     discNumber: common?.disk?.no || null,
-  } satisfies ImportTrack;
+  };
 }
 
 // Where an ingest filed a source file: its new path, or the Library's
@@ -289,7 +273,7 @@ export async function buildM3uTracks(
 ) {
   const { name, entries } = await readM3u(m3uPath);
   const libraryRoot = path.resolve(resolveDownloadRoot());
-  const tracks: ImportTrack[] = [];
+  const tracks: (PlaylistTrackInput & { canonicalJobId?: string })[] = [];
   const stats = { pinned: 0, byName: 0, skipped: 0, total: entries.length };
   for (const entry of entries) {
     const source = await realOrSelf(entry.path);
@@ -338,8 +322,6 @@ export async function buildM3uTracks(
   }
   return { name, tracks, stats };
 }
-
-// --- Import ----------------------------------------------------------------
 
 const pendingSchema = v.array(
   v.object({
