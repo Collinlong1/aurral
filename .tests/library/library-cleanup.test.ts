@@ -34,6 +34,7 @@ const [
   { getLibraryFileOperation },
   { resolveDownloadRoot },
   { downloadTracker },
+  { downloadWorker },
   qualityProfileService,
   { playlistManager },
   { findUniqueLibrarySong },
@@ -41,6 +42,7 @@ const [
   { retryPlaybackRetainedFiles },
   { getMetadataBaseUrl },
   { setMetadataProviderCooldown },
+  { scanRegistrySchema },
 ] = await setupIsolatedBackend(
   "library-cleanup",
   () => import("../../backend/config/db-sqlite.ts"),
@@ -50,6 +52,7 @@ const [
   () => import("../../backend/services/libraryFiles/operationStore.ts"),
   () => import("../../backend/services/downloadPaths.ts"),
   () => import("../../backend/services/downloadJobs/downloadTracker.ts"),
+  () => import("../../backend/services/downloadJobs/downloadWorker.ts"),
   () => import("../../backend/services/qualityProfileService.ts"),
   () => import("../../backend/services/playlists/playlistManager.ts"),
   () => import("../../backend/services/subsonicLibraryService.ts"),
@@ -57,6 +60,7 @@ const [
   () => import("../../backend/services/playback/playbackFileRetention.ts"),
   () => import("../../backend/services/providers/brainzmashProvider.ts"),
   () => import("../../backend/services/metadataProviderBudget.ts"),
+  () => import("../../backend/services/libraryScanWorker.ts"),
 );
 // Unit tests are offline, so the default metadata provider refuses lookups up front
 // instead of making each one wait its turn in the provider's rate limit.
@@ -725,6 +729,7 @@ test("automatic upgrades reach monitored Library tracks that Aurral did not down
       false,
     );
   } finally {
+    await downloadWorker.stopAndDrain();
     downloadTracker.enqueueDownloadPipeline = originalEnqueue;
   }
 });
@@ -808,6 +813,11 @@ test("an upgrade with MusicBrainz tags keeps the Library track, its favorites, i
   );
 
   assert.equal(await exists(oldPath), false);
+  assert.deepEqual(
+    dbOps.getJSONSetting("pendingLibraryScanJob", scanRegistrySchema)?.changedPaths,
+    [oldPath, upgraded],
+    "an upgrade rescans only the files it replaced, not the whole Library",
+  );
   const tracks = db
     .prepare<unknown[], Rows.LibraryTracksRow>("SELECT * FROM library_tracks WHERE title = 'Low'")
     .all();

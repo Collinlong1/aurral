@@ -5,6 +5,19 @@ description: Fixes for common setup and runtime problems.
 
 Start with **Settings > Status > Storage > Run checks**. Most file problems show up there with the exact path and a suggested fix.
 
+## Read the log
+
+Open **Settings > Status > Logs**. **Problems** groups the warnings and errors from the last day, with how often each happened. Select one to see its lines. **Download** saves the last day of the log, and **Copy problems** copies its warnings and errors. Passwords, tokens, and API keys are masked before they are saved, so the log is safe to attach to an issue.
+
+To see more detail, turn on **Debug logging**, reproduce the problem, and turn it off again.
+
+The log lives in the `logs` folder of the data folder. In Docker that is `/config/logs/aurral.log`. It holds up to 50 MB, then drops the oldest lines. To download it from another machine, use the API key:
+
+```sh
+curl -H "X-Api-Key: YOUR_API_KEY" -o aurral-logs.txt \
+  "https://aurral.example.com/api/logs/export"
+```
+
 ## Lidarr does not connect
 
 - Use a URL that the Aurral server can reach, not the URL in your browser.
