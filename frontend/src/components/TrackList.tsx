@@ -15,6 +15,7 @@ import { LibraryItemMenu } from "./LibraryItemMenu";
 import Tooltip from "./Tooltip";
 import TooltipButton from "./TooltipButton";
 import RouteLink from "./RouteLink";
+import "./DiscSection.css";
 
 const SORTABLE_HEADINGS = {
   number: "index",

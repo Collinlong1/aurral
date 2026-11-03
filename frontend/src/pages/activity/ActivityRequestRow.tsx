@@ -25,6 +25,7 @@ import {
 import Tooltip from "../../components/Tooltip";
 import RouteLink from "../../components/RouteLink";
 import type { QueueEntry } from "../../utils/audioQueue.ts";
+import "./bulkCancel.css";
 
 export type ActivityRequestRowProps = {
   request: ActivityRequest;
