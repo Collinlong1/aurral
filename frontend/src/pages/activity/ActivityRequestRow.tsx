@@ -16,6 +16,8 @@ import {
 import TooltipButton from "../../components/TooltipButton";
 import { DotLoader } from "../../components/DotLoader";
 import {
+  canCancelActivityRequest,
+  cancellableJobIds,
   formatReviewReasonSummary,
   formatTimelineTime,
   type ActivityRequest,
@@ -39,6 +41,10 @@ export type ActivityRequestRowProps = {
   onRetry: (jobId: string | null | undefined) => void;
   onPreview: (request: ActivityRequest) => void;
   onInfo?: (request: ActivityRequest) => void;
+  // Set in the queue, where rows with jobs that can be cancelled can be picked
+  // to cancel together.
+  selectedJobIds?: ReadonlySet<string>;
+  onSelectJobs?: (jobIds: string[], selected: boolean) => void;
   onToggle?: () => void;
   expanded?: boolean;
   tracksId?: string;
@@ -103,6 +109,8 @@ export default function ActivityRequestRow({
   onRetry,
   onPreview,
   onInfo,
+  selectedJobIds,
+  onSelectJobs,
   onToggle,
   expanded,
   tracksId,
@@ -152,16 +160,15 @@ export default function ActivityRequestRow({
   const isApproving = reviewingJob === "approve";
   const isDenying = reviewingJob === "deny";
   const activeControl = request.jobId ? controllingJobs[request.jobId] : undefined;
-  const canCancel =
-    request.kind === "track_download" &&
-    !!request.jobId &&
-    (request.status === "pending" || request.status === "processing") &&
-    !isBlockedTrack;
+  const canCancel = canCancelActivityRequest(request) && !isBlockedTrack;
   const canRetry =
     request.kind === "track_download" &&
     !!request.jobId &&
     ["pending", "processing", "failed", "cancelled"].includes(request.status) &&
     !isBlockedTrack;
+  // A row picks its own job, or every job of an album grab that can be cancelled.
+  const selectableJobIds = onSelectJobs ? cancellableJobIds([request]) : [];
+  const selectedCount = selectableJobIds.filter((jobId) => selectedJobIds?.has(jobId)).length;
   const isThisPlaying = currentTrack?.id === String(request.jobId) && isPlaying;
   const jobError = request.jobId ? jobErrors[request.jobId] : undefined;
   const reviewReasonSummary = isBlockedTrack ? formatReviewReasonSummary(request.subtitle) : null;
@@ -174,18 +181,38 @@ export default function ActivityRequestRow({
 
   return (
     <article className="activity-row">
-      <Tooltip content={status.label}>
-        <span
-          className={`activity-row__status activity-row__status--${status.tone}`}
-          aria-label={status.label}
-        >
-          {status.spinning ? (
-            <DotLoader size="sm" label={null} />
-          ) : (
-            <StatusIcon aria-hidden="true" />
-          )}
-        </span>
-      </Tooltip>
+      <span className="activity-row__lead">
+        {onSelectJobs ? (
+          <span className="activity-row__select">
+            {selectableJobIds.length ? (
+              <input
+                type="checkbox"
+                checked={selectedCount > 0 && selectedCount === selectableJobIds.length}
+                ref={(input) => {
+                  if (input) {
+                    input.indeterminate =
+                      selectedCount > 0 && selectedCount < selectableJobIds.length;
+                  }
+                }}
+                onChange={(event) => onSelectJobs(selectableJobIds, event.target.checked)}
+                aria-label={`Select ${displayTitle}`}
+              />
+            ) : null}
+          </span>
+        ) : null}
+        <Tooltip content={status.label}>
+          <span
+            className={`activity-row__status activity-row__status--${status.tone}`}
+            aria-label={status.label}
+          >
+            {status.spinning ? (
+              <DotLoader size="sm" label={null} />
+            ) : (
+              <StatusIcon aria-hidden="true" />
+            )}
+          </span>
+        </Tooltip>
+      </span>
       <div className="activity-row__details">
         <h2 className="activity-row__title">
           {onToggle ? (

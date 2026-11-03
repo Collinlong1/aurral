@@ -342,3 +342,20 @@ export const buildHistoryListEntries = (requests: ActivityRequest[]) => {
   }));
   return [...entries, ...groupRequestsByDate(rest)];
 };
+
+// A track download that is still waiting or running can be cancelled.
+export const canCancelActivityRequest = (request: ActivityRequest) =>
+  request.kind === "track_download" &&
+  Boolean(request.jobId) &&
+  (request.status === "pending" || request.status === "processing");
+
+// The jobs of these requests that can be cancelled, including the tracks of an
+// album grab, each once.
+export const cancellableJobIds = (requests: ActivityRequest[]) => [
+  ...new Set(
+    requests
+      .flatMap((request) => [request, ...(request.children || [])])
+      .filter(canCancelActivityRequest)
+      .map((request) => String(request.jobId)),
+  ),
+];
