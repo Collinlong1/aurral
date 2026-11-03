@@ -1,15 +1,10 @@
 import { isDeepStrictEqual } from "node:util";
 import * as v from "valibot";
 import { dbOps } from "../db/helpers/index.ts";
-import { MAX_REVIEW_TIMEOUT_HOURS } from "../db/helpers/settings.ts";
+import { MAX_REVIEW_TIMEOUT_HOURS, normalizeSubsonicArtistSource } from "../db/helpers/settings.ts";
 import { readIntegrationSettings } from "../db/helpers/integrationSettings.ts";
 import type { AppSettings, StoredIntegrations } from "../db/helpers/settings.ts";
-import {
-  DATE_TIME_FORMATS,
-  DEFAULT_METADATA_BASE_URL,
-  defaultData,
-  normalizeSubsonicArtistSource,
-} from "../config/constants.ts";
+import { DATE_TIME_FORMATS, DEFAULT_METADATA_BASE_URL, defaultData } from "../config/constants.ts";
 import { reconcileLocalNetworkBypassSetting } from "../middleware/auth.ts";
 import { validateExternalUrl } from "../middleware/urlValidator.ts";
 import { websocketService } from "./websocketService.ts";
@@ -29,7 +24,7 @@ import { getNewsSettings, normalizeNewsFeeds, normalizeNewsGroups } from "./apiC
 import { normalizeQualityProfile } from "./qualityProfileModel.ts";
 import { getMusicDataSourceName } from "./musicDataSource/index.ts";
 import { asAppError } from "../../lib/errors.ts";
-import { normalizeScriptArgs, normalizeTimeoutSec, scriptsEnabled } from "./scriptHooks.ts";
+import { normalizeScriptSettings, readableScriptSettings } from "./scriptHooks.ts";
 
 const objectValue = v.record(v.string(), v.unknown());
 const asObject = (value: unknown) => (v.is(objectValue, value) ? value : undefined);
@@ -71,42 +66,6 @@ const INTEGRATION_KEYS = [
   "scriptEvents",
   "google",
 ];
-
-const MAX_SCRIPTS = 10;
-
-// Script settings exist only while AURRAL_SCRIPTS_DIR is set; otherwise
-// settings read and save exactly as they do without the feature.
-function readableIntegrations(integrations: StoredIntegrations) {
-  const result = { ...integrations };
-  if (!scriptsEnabled()) {
-    delete result.scripts;
-    delete result.scriptEvents;
-    return result;
-  }
-  const defaults = defaultData.settings.integrations;
-  result.scripts = result.scripts ?? defaults.scripts;
-  result.scriptEvents = { ...defaults.scriptEvents, ...result.scriptEvents };
-  return result;
-}
-
-function normalizeScriptPatch(integrations: StoredIntegrations) {
-  if (!scriptsEnabled()) {
-    delete integrations.scripts;
-    delete integrations.scriptEvents;
-    return;
-  }
-  if (!Array.isArray(integrations.scripts)) return;
-  integrations.scripts = integrations.scripts
-    .map((script) => ({
-      name: String(script.name ?? "").trim(),
-      file: String(script.file ?? "").trim(),
-      args: normalizeScriptArgs(script.args),
-      timeoutSec: normalizeTimeoutSec(script.timeoutSec),
-      enabled: script.enabled !== false,
-    }))
-    .filter((script) => script.file)
-    .slice(0, MAX_SCRIPTS);
-}
 
 function mergePlexIntegration(
   existing: StoredIntegrations["plex"] = {},
@@ -202,7 +161,7 @@ export function readAppSettings() {
     rootWarnings: resolveLibraryRootWarnings(settings),
     downloadFolderPath: settings.downloadFolderPath || resolveDownloadRoot(),
     integrations: {
-      ...readableIntegrations(settings.integrations || {}),
+      ...readableScriptSettings(settings.integrations || {}),
       news: getNewsSettings(),
       ytdlp: {
         ...(settings.integrations?.ytdlp || {}),
@@ -216,7 +175,7 @@ function normalizeIntegrationPatch(
   integrations: StoredIntegrations,
   currentSettings: AppSettings,
 ): string | null {
-  normalizeScriptPatch(integrations);
+  normalizeScriptSettings(integrations);
   const lidarr = asObject(integrations.lidarr);
   if (lidarr?.externalUrl !== undefined) {
     const trimmedExternalUrl = String(lidarr.externalUrl).trim();

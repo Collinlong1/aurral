@@ -37,3 +37,27 @@ export function albumDiscHeadings(tracks: AlbumDiscTrack[], albumTitle: string) 
       : [disc ? `Disc ${disc}` : "", discTitle(disc)].filter(Boolean).join(" · ") || null,
   );
 }
+
+type DiscTrack = {
+  albums?: readonly { albumId: unknown; discNumber?: unknown }[] | null;
+  metadata?: unknown;
+};
+
+// The album title a track's own file carries: a box set's disc title.
+const fileAlbumTitle = (track: DiscTrack) => {
+  const tags = (track.metadata as { tags?: { album?: unknown } } | null | undefined)?.tags;
+  return typeof tags?.album === "string" ? tags.album.trim() : "";
+};
+
+// The heading above each track of this album's track list, from the track's
+// disc on the album and its file's album title.
+export const albumDiscSections = (album: { id: unknown; title: string }, tracks: DiscTrack[]) =>
+  albumDiscHeadings(
+    tracks.map((track) => ({
+      disc: Number(
+        track.albums?.find((entry) => String(entry.albumId) === String(album.id))?.discNumber || 0,
+      ),
+      title: fileAlbumTitle(track),
+    })),
+    album.title,
+  );

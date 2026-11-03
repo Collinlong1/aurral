@@ -31,6 +31,19 @@ const playlistMeta = (playlist: ScanResult["playlists"][number]) => {
   return parts.join(" · ");
 };
 
+const OPTIONS = [
+  [
+    "copyTracks",
+    "Copy tracks into the Library",
+    "Files next to each playlist are copied into the Library and tagged, then the playlist uses those copies. The originals stay where they are.",
+  ],
+  [
+    "downloadMissing",
+    "Download tracks that aren't in the Library",
+    "Otherwise those tracks are left out of the playlist.",
+  ],
+] as const;
+
 export function M3uImportPanel({
   onDone,
   showError,
@@ -42,8 +55,7 @@ export function M3uImportPanel({
 }) {
   const [folder, setFolder] = useState(readFolder);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [copyTracks, setCopyTracks] = useState(true);
-  const [downloadMissing, setDownloadMissing] = useState(false);
+  const [options, setOptions] = useState({ copyTracks: true, downloadMissing: false });
 
   const scan = useMutation({
     mutationFn: (path: string) => parseResponse(m3uApi.scan.$post({ json: { folder: path } })),
@@ -62,7 +74,7 @@ export function M3uImportPanel({
     mutationFn: () =>
       parseResponse(
         m3uApi.$post({
-          json: { folder: scan.data!.folder, files: [...selected], copyTracks, downloadMissing },
+          json: { folder: scan.data!.folder, files: [...selected], ...options },
         }),
       ),
     onSuccess: (result) => {
@@ -153,37 +165,21 @@ export function M3uImportPanel({
             </div>
 
             <div className="playlist-import__choices">
-              <label className="playlist-import__choice">
-                <input
-                  type="checkbox"
-                  className="artist-checkbox"
-                  checked={copyTracks}
-                  onChange={(event) => setCopyTracks(event.target.checked)}
-                  disabled={busy}
-                />
-                <span className="playlist-import__selected-copy">
-                  <span>Copy tracks into the Library</span>
-                  <span className="playlist-import__choice-hint">
-                    Files next to each playlist are copied into the Library and tagged, then the
-                    playlist uses those copies. The originals stay where they are.
+              {OPTIONS.map(([key, label, hint]) => (
+                <label key={key} className="playlist-import__choice">
+                  <input
+                    type="checkbox"
+                    className="artist-checkbox"
+                    checked={options[key]}
+                    onChange={(event) => setOptions({ ...options, [key]: event.target.checked })}
+                    disabled={busy}
+                  />
+                  <span className="playlist-import__selected-copy">
+                    <span>{label}</span>
+                    <span className="playlist-import__choice-hint">{hint}</span>
                   </span>
-                </span>
-              </label>
-              <label className="playlist-import__choice">
-                <input
-                  type="checkbox"
-                  className="artist-checkbox"
-                  checked={downloadMissing}
-                  onChange={(event) => setDownloadMissing(event.target.checked)}
-                  disabled={busy}
-                />
-                <span className="playlist-import__selected-copy">
-                  <span>Download tracks that aren&apos;t in the Library</span>
-                  <span className="playlist-import__choice-hint">
-                    Otherwise those tracks are left out of the playlist.
-                  </span>
-                </span>
-              </label>
+                </label>
+              ))}
             </div>
 
             <button

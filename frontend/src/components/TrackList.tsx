@@ -1,6 +1,5 @@
 import ArtworkImage from "./ArtworkImage";
 import {
-  Fragment,
   useEffect,
   useRef,
   useState,
@@ -15,6 +14,7 @@ import { LibraryItemMenu } from "./LibraryItemMenu";
 import Tooltip from "./Tooltip";
 import TooltipButton from "./TooltipButton";
 import RouteLink from "./RouteLink";
+import { DiscSection } from "./DiscSection.tsx";
 
 const SORTABLE_HEADINGS = {
   number: "index",
@@ -291,140 +291,137 @@ export function TrackList({
         <span />
       </div>
       <div role="list" aria-label={label}>
-        {rows.map((row) => {
+        {rows.flatMap((row) => {
           const playLabel = `${row.playing ? "Pause" : "Play"} ${row.title}`;
-          return (
-            <Fragment key={row.key}>
-              {row.section ? (
-                <div className="native-library-track-section" role="presentation">
-                  {row.section}
-                </div>
-              ) : null}
-              <div
-                ref={(node) => {
-                  if (node) rowRefs.current.set(String(row.key), node);
-                  else rowRefs.current.delete(String(row.key));
-                }}
-                className={
-                  "native-library-track" +
-                  (row.active ? " is-active" : "") +
-                  (row.missing ? " is-missing" : "")
-                }
-                data-library-menu-target={row.menu || row.menuElement ? true : undefined}
-                role="listitem"
-                aria-current={row.active ? "true" : undefined}
-              >
-                {selection ? (
-                  <span className="native-library-track__select">
-                    <input
-                      type="checkbox"
-                      checked={Boolean(row.selected)}
-                      onChange={row.onToggleSelected}
-                      aria-label={`Select ${row.title}`}
-                    />
-                  </span>
-                ) : row.status ? (
-                  <Tooltip content={row.status.label}>
-                    <span
-                      className="native-library-track__status"
-                      role="img"
-                      aria-label={row.status.label}
-                    >
-                      {row.status.kind === "active" ? (
-                        <DotLoader size="xs" label={null} />
-                      ) : row.status.kind === "queued" ? (
-                        <Clock aria-hidden="true" />
-                      ) : (
-                        <AlertTriangle aria-hidden="true" />
-                      )}
-                    </span>
-                  </Tooltip>
-                ) : row.onPlay ? (
-                  <TooltipButton
-                    className="native-library-track__play"
-                    onClick={row.onPlay}
-                    disabled={row.playDisabled}
-                    label={playLabel}
-                    aria-label={playLabel}
+          return [
+            row.section ? (
+              <DiscSection key={`section-${row.key}`}>{row.section}</DiscSection>
+            ) : null,
+            <div
+              key={row.key}
+              ref={(node) => {
+                if (node) rowRefs.current.set(String(row.key), node);
+                else rowRefs.current.delete(String(row.key));
+              }}
+              className={
+                "native-library-track" +
+                (row.active ? " is-active" : "") +
+                (row.missing ? " is-missing" : "")
+              }
+              data-library-menu-target={row.menu || row.menuElement ? true : undefined}
+              role="listitem"
+              aria-current={row.active ? "true" : undefined}
+            >
+              {selection ? (
+                <span className="native-library-track__select">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(row.selected)}
+                    onChange={row.onToggleSelected}
+                    aria-label={`Select ${row.title}`}
+                  />
+                </span>
+              ) : row.status ? (
+                <Tooltip content={row.status.label}>
+                  <span
+                    className="native-library-track__status"
+                    role="img"
+                    aria-label={row.status.label}
                   >
-                    {row.playing ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}
-                  </TooltipButton>
-                ) : (
-                  <span aria-hidden="true" />
-                )}
-                <span className="native-library-track__number" aria-hidden="true">
-                  {row.active ? <PlayingIndicator row={row} /> : row.number}
-                </span>
-                {isCollection ? (
-                  <TrackCover
-                    cover={row.cover}
-                    indicator={row.active ? <PlayingIndicator row={row} /> : null}
-                  />
-                ) : null}
-                <Tooltip content={row.title}>
-                  {row.onPlay && !row.playDisabled && !selection ? (
-                    <button
-                      type="button"
-                      className="native-library-track__title"
-                      onClick={row.onPlay}
-                    >
-                      <span>
-                        {row.badge}
-                        {row.title}
-                      </span>
-                      {row.subtitle ? <small>{row.subtitle}</small> : null}
-                      {row.detail ? (
-                        <small className="native-library-track__detail">{row.detail}</small>
-                      ) : null}
-                    </button>
-                  ) : (
-                    <span className="native-library-track__title">
-                      <span>
-                        {row.badge}
-                        {row.title}
-                      </span>
-                      {row.subtitle ? <small>{row.subtitle}</small> : null}
-                      {row.detail ? (
-                        <small className="native-library-track__detail">{row.detail}</small>
-                      ) : null}
-                    </span>
-                  )}
+                    {row.status.kind === "active" ? (
+                      <DotLoader size="xs" label={null} />
+                    ) : row.status.kind === "queued" ? (
+                      <Clock aria-hidden="true" />
+                    ) : (
+                      <AlertTriangle aria-hidden="true" />
+                    )}
+                  </span>
                 </Tooltip>
-                {isCollection ? (
-                  <TrackLink link={row.artist} className="native-library-track__artist" />
-                ) : null}
-                {isCollection ? (
-                  <TrackLink link={row.album} className="native-library-track__album" />
-                ) : null}
-                <span
-                  className={"native-library-track__time" + (row.timeMissing ? " is-missing" : "")}
+              ) : row.onPlay ? (
+                <TooltipButton
+                  className="native-library-track__play"
+                  onClick={row.onPlay}
+                  disabled={row.playDisabled}
+                  label={playLabel}
+                  aria-label={playLabel}
                 >
-                  {row.time}
-                </span>
-                {row.trailing || <span />}
-                {selection ? (
-                  <span />
-                ) : row.menuElement ? (
-                  row.menuElement
-                ) : row.menu ? (
-                  <LibraryItemMenu label={row.title || "Track"} {...row.menu} />
+                  {row.playing ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}
+                </TooltipButton>
+              ) : (
+                <span aria-hidden="true" />
+              )}
+              <span className="native-library-track__number" aria-hidden="true">
+                {row.active ? <PlayingIndicator row={row} /> : row.number}
+              </span>
+              {isCollection ? (
+                <TrackCover
+                  cover={row.cover}
+                  indicator={row.active ? <PlayingIndicator row={row} /> : null}
+                />
+              ) : null}
+              <Tooltip content={row.title}>
+                {row.onPlay && !row.playDisabled && !selection ? (
+                  <button
+                    type="button"
+                    className="native-library-track__title"
+                    onClick={row.onPlay}
+                  >
+                    <span>
+                      {row.badge}
+                      {row.title}
+                    </span>
+                    {row.subtitle ? <small>{row.subtitle}</small> : null}
+                    {row.detail ? (
+                      <small className="native-library-track__detail">{row.detail}</small>
+                    ) : null}
+                  </button>
                 ) : (
-                  <span />
+                  <span className="native-library-track__title">
+                    <span>
+                      {row.badge}
+                      {row.title}
+                    </span>
+                    {row.subtitle ? <small>{row.subtitle}</small> : null}
+                    {row.detail ? (
+                      <small className="native-library-track__detail">{row.detail}</small>
+                    ) : null}
+                  </span>
                 )}
-                {row.favorite && !selection ? (
-                  <FavoriteButton
-                    className="native-library-track__favorite"
-                    active={row.favorite.active}
-                    pending={row.favorite.pending}
-                    label={row.title || "track"}
-                    onClick={row.favorite.onToggle}
-                  />
-                ) : (
-                  <span />
-                )}
-              </div>
-            </Fragment>
-          );
+              </Tooltip>
+              {isCollection ? (
+                <TrackLink link={row.artist} className="native-library-track__artist" />
+              ) : null}
+              {isCollection ? (
+                <TrackLink link={row.album} className="native-library-track__album" />
+              ) : null}
+              <span
+                className={"native-library-track__time" + (row.timeMissing ? " is-missing" : "")}
+              >
+                {row.time}
+              </span>
+              {row.trailing || <span />}
+              {selection ? (
+                <span />
+              ) : row.menuElement ? (
+                row.menuElement
+              ) : row.menu ? (
+                <LibraryItemMenu label={row.title || "Track"} {...row.menu} />
+              ) : (
+                <span />
+              )}
+              {row.favorite && !selection ? (
+                <FavoriteButton
+                  className="native-library-track__favorite"
+                  active={row.favorite.active}
+                  pending={row.favorite.pending}
+                  label={row.title || "track"}
+                  onClick={row.favorite.onToggle}
+                />
+              ) : (
+                <span />
+              )}
+            </div>,
+          ];
         })}
       </div>
     </div>

@@ -23,7 +23,6 @@ import {
   getAvailableLibraryMediaPaths,
   getLibraryMediaPaths,
   linkLibraryAlbumTrack,
-  markLibraryAlbumTitles,
   markLibraryMediaFilesUnavailable,
   mergeReleaseKeyedLibraryAlbums,
   reconcileLibraryAlbums,
@@ -45,6 +44,7 @@ import {
 } from "./downloadUtils.ts";
 import { logger, safeLogDiagnostic } from "./logger.ts";
 import { readArtistTags } from "./artistTags.ts";
+import { markLibraryAlbumTitles } from "./libraryAlbumTitles.ts";
 
 type ScannedMetadata = {
   common?: Partial<ICommonTagsResult>;

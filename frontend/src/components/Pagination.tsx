@@ -1,3 +1,4 @@
+import "./Pagination.css";
 import { ChevronLeft, ChevronRight } from "./icons";
 import { Select } from "./Select";
 import { paginationPages, paginationRange } from "../utils/pagination.ts";

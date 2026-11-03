@@ -4,7 +4,6 @@ import { existsSync } from "node:fs";
 import type { RequestUser } from "../middleware/requestUser.ts";
 import { dbOps, userOps } from "../db/helpers/index.ts";
 import { db } from "../config/db-sqlite.ts";
-import { normalizeSubsonicArtistSource } from "../config/constants.ts";
 import {
   getLibraryAlbumPage,
   getLibraryArtistPage,
@@ -282,8 +281,6 @@ const protocolArtist = (artist: LibraryArtist | null | undefined, fallback = "Un
   musicBrainzId: artist?.mbid || "",
 });
 
-const servesTagArtists = (library: IndexedLibrary) => library.artistSource === "tags";
-
 // Credits a tag name to the library artist of the same name, or else to the entity the
 // value came from, so every artist ID a client follows still opens a library artist.
 const taggedArtist = (library: IndexedLibrary, name: string, owner: ProtocolArtist) => {
@@ -399,7 +396,7 @@ const toSong = (
     musicBrainzId: track.mbid || "",
     mediaType: "song",
   };
-  if (servesTagArtists(library)) {
+  if (library.tagArtists) {
     const tags = file?.artistTags || {};
     const albumTags =
       !tags.albumArtist && album ? albumArtistTags(album, albumTracks(library, album)) : tags;
@@ -451,7 +448,7 @@ const albumData = (library: IndexedLibrary, album: LibraryAlbum) => {
     // release-group id, so they report an empty value rather than a wrong one.
     musicBrainzId: album.mbid || "",
   };
-  if (servesTagArtists(library)) {
+  if (library.tagArtists) {
     const tags = albumArtistTags(album, tracks);
     const display = tags?.albumArtist || artistValue.name;
     value.artist = display;
@@ -518,7 +515,8 @@ const indexFocusedLibrary = (
 ) => ({
   ...library,
   starredAt,
-  artistSource: normalizeSubsonicArtistSource(dbOps.getSettings()?.subsonic?.artistSource),
+  // Read once per index: whether songs and albums carry their files' artist tags.
+  tagArtists: dbOps.getSettings()?.subsonic?.artistSource !== "library",
   customAlbumArtwork: getCustomArtworkMap(
     "album",
     library.albums.map((album) => album.id),

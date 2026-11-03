@@ -24,7 +24,6 @@ import {
 } from "../navigation/activityNavConfig";
 import {
   buildHistoryListEntries,
-  cancellableJobIds,
   compareActivityRequests,
   mergeActivityRequests,
   groupAlbumGrabRequests,
@@ -36,8 +35,9 @@ import ActivityAlbumRow from "./activity/ActivityAlbumRow";
 import ActivityStatusTabs from "./activity/ActivityStatusTabs";
 import ActivityMissingPage from "./activity/ActivityMissingPage";
 import ActivityInfoModal from "./activity/ActivityInfoModal";
+import { ActivityBulkCancel } from "./activity/ActivityBulkCancel.tsx";
+import { useBulkSelection } from "./activity/useBulkSelection.ts";
 import { getApiErrorText } from "../utils/api/errors.ts";
-import { ConfirmModal } from "../components/ConfirmModal.tsx";
 
 import { Navigate, useParams, useSearchParams } from "react-router";
 import RouteLink from "../components/RouteLink";
@@ -73,9 +73,6 @@ function ActivityPage() {
   const [controllingJobs, setControllingJobs] = useState<Record<string, "cancel" | "retry">>({});
   const [jobErrors, setJobErrors] = useState<Record<string, string>>({});
   const [infoRequest, setInfoRequest] = useState<ActivityRequest | null>(null);
-  const [pickedJobIds, setPickedJobIds] = useState<ReadonlySet<string>>(() => new Set());
-  const [bulkCancelling, setBulkCancelling] = useState(false);
-  const [confirmingCancelAll, setConfirmingCancelAll] = useState(false);
 
   const { playTrack, currentTrack, isPlaying, togglePlayPause } = useAudioQueue();
 
@@ -170,28 +167,7 @@ function ActivityPage() {
   );
 
   const hasMoreItems = visibleCount < sortedRequests.length;
-
-  // Every queued job shown under the current filter that can be cancelled, including
-  // ones further down than "Load more" has reached. Picks of jobs that finished or
-  // left the filter drop out on their own.
-  const cancellableIds = useMemo(
-    () => (isQueueView ? cancellableJobIds(filteredRequests) : []),
-    [filteredRequests, isQueueView],
-  );
-  const selectedJobIds = useMemo(
-    () => new Set(cancellableIds.filter((jobId) => pickedJobIds.has(jobId))),
-    [cancellableIds, pickedJobIds],
-  );
-  const selectJobs = useCallback((jobIds: string[], selected: boolean) => {
-    setPickedJobIds((current) => {
-      const next = new Set(current);
-      for (const jobId of jobIds) {
-        if (selected) next.add(jobId);
-        else next.delete(jobId);
-      }
-      return next;
-    });
-  }, []);
+  const bulkSelection = useBulkSelection(filteredRequests, isQueueView);
 
   const listEntries = useMemo(() => {
     if (isListLikeView) {
@@ -381,26 +357,6 @@ function ActivityPage() {
     }
   };
 
-  // Cancels these jobs a few at a time, then refreshes the queue once.
-  const cancelJobs = async (jobIds: string[]) => {
-    const pending = jobIds.filter((jobId) => !controllingJobs[jobId]);
-    if (!pending.length || bulkCancelling) return;
-    setBulkCancelling(true);
-    try {
-      const cancelNext = async () => {
-        for (let jobId = pending.shift(); jobId; jobId = pending.shift()) {
-          await controlDownloadJob(jobId, "cancel", { refresh: false });
-        }
-      };
-      await Promise.all(Array.from({ length: Math.min(4, pending.length) }, cancelNext));
-      selectJobs(jobIds, false);
-      void queryClient.invalidateQueries({ queryKey: activityQueryKey });
-    } finally {
-      setBulkCancelling(false);
-      setConfirmingCancelAll(false);
-    }
-  };
-
   const handleReviewPreview = useCallback(
     ({ jobId, trackName, artistName, albumName, albumMbid }: ActivityRequest) => {
       const trackId = String(jobId);
@@ -507,48 +463,13 @@ function ActivityPage() {
         </div>
       )}
 
-      {cancellableIds.length > 0 ? (
-        <div className="activity-bulk" role="group" aria-label="Cancel queued downloads">
-          <label className="activity-bulk__all">
-            <input
-              type="checkbox"
-              checked={selectedJobIds.size === cancellableIds.length}
-              ref={(input) => {
-                if (input) {
-                  input.indeterminate =
-                    selectedJobIds.size > 0 && selectedJobIds.size < cancellableIds.length;
-                }
-              }}
-              onChange={(event) => selectJobs(cancellableIds, event.target.checked)}
-              disabled={bulkCancelling}
-            />
-            <span role="status">
-              {selectedJobIds.size
-                ? `${selectedJobIds.size} selected`
-                : `Select all ${cancellableIds.length}`}
-            </span>
-          </label>
-          {selectedJobIds.size > 0 ? (
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm"
-              onClick={() => void cancelJobs([...selectedJobIds])}
-              disabled={bulkCancelling}
-              aria-busy={bulkCancelling}
-            >
-              {bulkCancelling ? "Cancelling…" : "Cancel selected"}
-            </button>
-          ) : null}
-          <button
-            type="button"
-            className="btn btn-ghost-danger btn-sm"
-            onClick={() => setConfirmingCancelAll(true)}
-            disabled={bulkCancelling}
-          >
-            Cancel all
-          </button>
-        </div>
-      ) : null}
+      <ActivityBulkCancel
+        {...bulkSelection}
+        controllingJobs={controllingJobs}
+        cancelJob={(jobId) => controlDownloadJob(jobId, "cancel", { refresh: false })}
+        onCancelled={() => void queryClient.invalidateQueries({ queryKey: activityQueryKey })}
+        filtered={Boolean(activeStatus)}
+      />
 
       {filteredRequests.length === 0 ? (
         !error && (
@@ -591,7 +512,7 @@ function ActivityPage() {
                 onRetry: (jobId: string | null | undefined) => controlDownloadJob(jobId, "retry"),
                 onPreview: handleReviewPreview,
                 onInfo: setInfoRequest,
-                ...(isQueueView ? { selectedJobIds, onSelectJobs: selectJobs } : {}),
+                ...(isQueueView ? bulkSelection.rowProps : {}),
               };
               return isAlbumActivityRequest(entry.request) ? (
                 <ActivityAlbumRow key={entry.key} request={entry.request} {...rowProps} />
@@ -614,18 +535,6 @@ function ActivityPage() {
         </div>
       )}
       <ActivityInfoModal item={infoRequest} onClose={() => setInfoRequest(null)} />
-      <ConfirmModal
-        open={confirmingCancelAll}
-        title="Cancel all queued downloads?"
-        body={`Cancels ${cancellableIds.length === 1 ? "the 1 download" : `all ${cancellableIds.length} downloads`} waiting or running${activeStatus ? " under this filter" : ""}. You can retry them afterwards.`}
-        confirmLabel="Cancel all"
-        cancelLabel="Keep them"
-        tone="danger"
-        busyLabel="Cancelling"
-        busy={bulkCancelling}
-        onCancel={() => setConfirmingCancelAll(false)}
-        onConfirm={() => void cancelJobs(cancellableIds)}
-      />
     </div>
   );
 }

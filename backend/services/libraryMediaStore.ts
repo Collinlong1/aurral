@@ -141,7 +141,7 @@ let libraryScanDepth = 0;
 let libraryCacheInvalidationPending = false;
 const libraryScanContext = new AsyncLocalStorage<{ changed: boolean }>();
 
-const invalidateLibraryCache = () => {
+export const invalidateLibraryCache = () => {
   const scan = libraryScanContext.getStore();
   if (scan) {
     scan.changed = true;
@@ -644,43 +644,6 @@ function resolveAlbumTitle(
     return { albumTitle: stored.canonicalTitle, titleMetadata: keep };
   }
   return { albumTitle: taggedTitle, titleMetadata: keep };
-}
-
-// Names an album after its release group for good, see resolveAlbumTitle.
-export function setLibraryAlbumCanonicalTitle(albumId: number, title: string) {
-  const album = db
-    .prepare<[number], LibraryAlbumsRow>("SELECT * FROM library_albums WHERE id = ?")
-    .get(albumId);
-  const canonicalTitle = normalizeText(title);
-  if (!album || !canonicalTitle) return false;
-  const { mixedTitles: _mixed, ...metadata } = readRawLibraryMetadata(album.metadata_json);
-  db.prepare<[string, string, number, number]>(
-    "UPDATE library_albums SET title = ?, metadata_json = ?, updated_at = ? WHERE id = ?",
-  ).run(canonicalTitle, stringify({ ...metadata, canonicalTitle })!, now(), albumId);
-  syncLibrarySearchAlbum(albumId);
-  for (const track of db
-    .prepare<[number], Pick<LibraryAlbumTracksRow, "track_id">>(
-      "SELECT track_id FROM library_album_tracks WHERE album_id = ?",
-    )
-    .all(albumId)) {
-    syncLibrarySearchTrack(track.track_id);
-  }
-  invalidateLibraryCache();
-  return true;
-}
-
-// Records the outcome of checking an album's files for mixed titles.
-export function markLibraryAlbumTitles(albumId: number, fields: Record<string, unknown>) {
-  const album = db
-    .prepare<[number], Pick<LibraryAlbumsRow, "metadata_json">>(
-      "SELECT metadata_json FROM library_albums WHERE id = ?",
-    )
-    .get(albumId);
-  if (!album) return;
-  db.prepare<[string, number]>("UPDATE library_albums SET metadata_json = ? WHERE id = ?").run(
-    stringify({ ...readRawLibraryMetadata(album.metadata_json), ...fields })!,
-    albumId,
-  );
 }
 
 export function upsertLibraryAlbum({

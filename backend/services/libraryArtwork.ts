@@ -26,6 +26,7 @@ import { logger, safeLogDiagnostic } from "./logger.ts";
 import getSharp from "./sharpConfig.ts";
 import { readLibraryMetadata, readRawLibraryMetadata } from "./libraryMetadata.ts";
 import { fetchReleaseGroupCoverUrl } from "./releaseGroupCoverService.ts";
+import { albumSharedFolder } from "./libraryAlbumTitles.ts";
 
 export type LibraryArtworkKind = "album" | "artist";
 type Artwork = { buffer: Uint8Array; contentType: string };
@@ -101,9 +102,6 @@ const albumStmt = db.prepare<
 const albumFilesStmt = db.prepare<[number], Pick<LibraryMediaFilesRow, "path">>(
   `SELECT path FROM library_media_files
   WHERE album_id = ? AND available = 1 ORDER BY path COLLATE NOCASE LIMIT 100`,
-);
-const albumFoldersStmt = db.prepare<[number], Pick<LibraryMediaFilesRow, "path">>(
-  "SELECT path FROM library_media_files WHERE album_id = ? AND available = 1",
 );
 const aurralFilesStmt = db.prepare<[number], Pick<LibraryMediaFilesRow, "path">>(
   "SELECT path FROM library_media_files WHERE album_id = ? AND available = 1 AND source = 'aurral'",
@@ -288,25 +286,11 @@ async function findArtistPhoto(mbid: string, artistName: string): Promise<Artwor
 // The folder that holds every disc of a box set, unless that is its
 // artist's folder.
 function boxSetFolder(albumId: number, artistName: string) {
-  const folders = [
-    ...new Set(albumFoldersStmt.all(albumId).map((file) => path.dirname(file.path))),
-  ];
-  if (folders.length < 2) return null;
-  const parts = folders.map((folder) => folder.split(path.sep));
-  const shared: string[] = [];
-  for (let index = 0; index < parts[0].length; index++) {
-    if (!parts.every((segments) => segments[index] === parts[0][index])) break;
-    shared.push(parts[0][index]);
-  }
-  const folder = shared.join(path.sep);
-  const name = path.basename(folder).toLowerCase();
-  return folder &&
-    name !==
-      String(artistName || "")
-        .trim()
-        .toLowerCase()
-    ? folder
-    : null;
+  const folder = albumSharedFolder(albumId);
+  const artist = String(artistName || "")
+    .trim()
+    .toLowerCase();
+  return folder && path.basename(folder).toLowerCase() !== artist ? folder : null;
 }
 
 // A box set Aurral named after its release group shows the set's own cover,

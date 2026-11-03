@@ -69,26 +69,21 @@ async function clientTestResponse<
 
 const clientConfig = v.record(v.string(), v.unknown());
 const gotifyTarget = v.object({ url: v.optional(v.string()), token: v.optional(v.string()) });
-const webhookEvent = v.picklist([
+const WEBHOOK_EVENTS = [
   "notifyDiscoveryUpdated",
   "notifyWeeklyFlowDone",
   "notifyRequestMade",
   "notifyRequestAvailable",
-]);
+] as const;
 const eventBody = v.optional(v.nullable(v.string()));
 const webhookTarget = v.object({
   url: v.optional(v.string()),
   headers: v.optional(v.array(v.object({ key: v.string(), value: v.string() }))),
   body: v.optional(v.nullable(v.string())),
   eventBodies: v.optional(
-    v.object({
-      notifyDiscoveryUpdated: eventBody,
-      notifyWeeklyFlowDone: eventBody,
-      notifyRequestMade: eventBody,
-      notifyRequestAvailable: eventBody,
-    }),
+    v.object(Object.fromEntries(WEBHOOK_EVENTS.map((key) => [key, eventBody]))),
   ),
-  testEvent: v.optional(webhookEvent),
+  testEvent: v.optional(v.picklist(WEBHOOK_EVENTS)),
 });
 
 export default new Hono<AppEnv>()

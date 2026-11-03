@@ -3,68 +3,37 @@ title: Custom scripts
 description: Run your own script when discovery updates, a flow finishes, or an album request changes.
 ---
 
-Aurral can run your own executable when a [notification event](/integrations/notifications/) fires. For example, a script can tag a new album, start a media server scan, or copy the album to another folder.
+Aurral can run your own executable when a [notification event](/integrations/notifications/) fires, for example to tag a new album or start a media server scan.
 
-Scripts are off by default. They appear in **Settings > Notifications** only while the `AURRAL_SCRIPTS_DIR` environment variable points to an existing folder. Without the variable, Aurral looks and behaves as if the feature does not exist.
+Scripts are off by default. To turn them on, mount a folder of executable scripts and point `AURRAL_SCRIPTS_DIR` at it, then restart Aurral:
 
-## Turn on scripts
+```yaml
+services:
+  aurral:
+    environment:
+      - AURRAL_SCRIPTS_DIR=/scripts
+    volumes:
+      - ./scripts:/scripts:ro
+```
 
-1. Create a folder for your scripts on the host, for example `./scripts` next to your Compose file.
-2. Mount it into the container and set `AURRAL_SCRIPTS_DIR` to the mounted path:
-
-   ```yaml
-   services:
-     aurral:
-       environment:
-         - AURRAL_SCRIPTS_DIR=/scripts
-       volumes:
-         - ./scripts:/scripts:ro
-   ```
-
-3. Put your scripts in the folder and make them executable, for example `chmod +x scripts/tag-album.sh`. The user from `PUID` and `PGID` must be able to read and run them.
-4. Restart Aurral.
-
-The Aurral image includes `sh`, `bash`, `python3`, `node`, and `ffmpeg`. Start each script with a matching line, such as `#!/bin/sh` or `#!/usr/bin/env python3`.
-
-## Add a script
-
-1. Open **Settings > Notifications** and select **Add script** under **Scripts**.
-2. Fill in the fields:
-   - **Name**: a label for the script.
-   - **File**: the script's file name in the scripts folder. The field suggests the files it finds there.
-   - **Arguments**: optional, one per line. Each line reaches the script as one argument, exactly as written.
-   - **Timeout (seconds)**: how long the script may run. Default `60`, at most `3600`.
-   - **Enabled**: turn the script off without deleting it.
-3. Select **Test** to run the script now. Aurral shows the exit code and the end of the output.
-4. Select **Add script**.
-5. Under **Script events**, turn on the events that should run your scripts.
+Then add scripts in **Settings > Notifications > Scripts**, select **Test** to run one now, and turn on the events that should run them under **Script events**. The Aurral image includes `sh`, `bash`, `python3`, `node`, and `ffmpeg`.
 
 ## What a script receives
 
-Aurral starts the script directly, without a shell, with the scripts folder as its working directory. An album or artist name is never read as shell syntax, whatever characters it contains.
+Aurral starts the script directly, without a shell, from the scripts folder. Arguments are passed exactly as written, one per line in the settings. Event values arrive as environment variables, and as one JSON object on standard input with the keys `event`, `albumName`, `artistName`, `albumPath`, `username`, `userId`, `flowName`, and `flowPath`:
 
-Each event reaches the script in two ways:
+| Variable             | Value                                                                     |
+| -------------------- | ------------------------------------------------------------------------- |
+| `AURRAL_EVENT`       | The event name, for example `notifyRequestAvailable`, or `scriptTest`.    |
+| `AURRAL_ALBUM_NAME`  | The requested album.                                                      |
+| `AURRAL_ARTIST_NAME` | The album's artist.                                                       |
+| `AURRAL_ALBUM_PATH`  | The album's folder in the Library, for **Request available**, when known. |
+| `AURRAL_USERNAME`    | The user who requested the album.                                         |
+| `AURRAL_USER_ID`     | That user's ID.                                                           |
+| `AURRAL_FLOW_NAME`   | The playlist name, for **Flow finished** and **Discover updated**.        |
+| `AURRAL_FLOW_PATH`   | The playlist's media path, for **Flow finished**.                         |
 
-- As environment variables:
-
-  | Variable             | Value                                                                     |
-  | -------------------- | ------------------------------------------------------------------------- |
-  | `AURRAL_EVENT`       | The event name, for example `notifyRequestAvailable`, or `scriptTest`.    |
-  | `AURRAL_ALBUM_NAME`  | The requested album.                                                      |
-  | `AURRAL_ARTIST_NAME` | The album's artist.                                                       |
-  | `AURRAL_ALBUM_PATH`  | The album's folder in the Library, for **Request available**, when known. |
-  | `AURRAL_USERNAME`    | The user who requested the album.                                         |
-  | `AURRAL_USER_ID`     | That user's ID.                                                           |
-  | `AURRAL_FLOW_NAME`   | The playlist name, for **Flow finished** and **Discover updated**.        |
-  | `AURRAL_FLOW_PATH`   | The playlist's media path, for **Flow finished**.                         |
-
-  A variable that does not apply to the event is empty.
-
-- As one JSON object on standard input, with the same values under the keys `event`, `albumName`, `artistName`, `albumPath`, `username`, `userId`, `flowName`, and `flowPath`.
-
-Apart from these variables, a script sees only `PATH`, `HOME`, `LANG`, `LC_ALL`, `TZ`, and `TMPDIR` from Aurral's environment. API keys and other secrets in Aurral's environment do not reach it.
-
-Example:
+A variable that does not apply to the event is empty. Apart from these, a script sees only `PATH`, `HOME`, `LANG`, `LC_ALL`, `TZ`, and `TMPDIR` from Aurral's environment.
 
 ```sh
 #!/bin/sh
@@ -73,14 +42,8 @@ Example:
 echo "$(date -Is) $AURRAL_ARTIST_NAME - $AURRAL_ALBUM_NAME ($AURRAL_ALBUM_PATH)" >> /scripts/available.log
 ```
 
-## Results, failures, and retries
-
-A script succeeds when it exits with code `0` before its timeout.
-
-- When the timeout passes, Aurral stops the script and every process it started.
-- A script that fails or times out is logged with its exit code and the end of its output, then retried later, up to five attempts in all. Aurral keeps up to the last 64 KB of output.
-- Each script runs as its own job. A failing script never delays or repeats webhooks, Gotify, or other scripts. Write scripts so that running one twice is safe.
+A script succeeds when it exits with code `0` before its timeout, which defaults to 60 seconds. When the timeout passes, Aurral stops the script and every process it started. A failed script is logged with its exit code and the end of its output, then retried, up to five attempts in all, so make running a script twice safe.
 
 ## Security
 
-Only an admin can add, change, or test scripts. Aurral runs only files inside `AURRAL_SCRIPTS_DIR`. It rejects a path that leads outside the folder, including through a symlink. Mount the folder read-only, as in the example above, so that nothing inside the container can change your scripts.
+A script runs with Aurral's permissions. Only an admin can add, change, or test scripts, and Aurral runs only files inside `AURRAL_SCRIPTS_DIR`, rejecting any path that leads outside it, including through a symlink. Mount the folder read-only, as above, so nothing inside the container can change your scripts.
