@@ -1,7 +1,7 @@
 import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 
-import { albumDiscHeadings } from "../../frontend/src/utils/albumDiscs.ts";
+import { albumDiscHeadings, albumDiscSections } from "../../frontend/src/utils/albumDiscs.ts";
 
 test("a one-disc album gets no headings, whatever releases its files came from", () => {
   assert.deepEqual(
@@ -47,5 +47,28 @@ test("a disc whose files disagree on a title is named by its number alone", () =
       "Album",
     ),
     ["Disc 1", "Disc 2", null],
+  );
+});
+
+test("a track list's disc headings come from each track's place on this album and its file's album tag", () => {
+  const track = (disc: number, album: string | null, otherDisc = 9) => ({
+    albums: [
+      { albumId: 7, discNumber: otherDisc },
+      { albumId: "3", discNumber: disc },
+    ],
+    metadata: album === null ? null : { tags: { album: ` ${album} ` } },
+  });
+  assert.deepEqual(
+    albumDiscSections({ id: 3, title: "The Box" }, [
+      track(1, "Symphony No. 1"),
+      track(1, "Symphony No. 1"),
+      track(2, null),
+      track(2, "Symphony No. 2"),
+    ]),
+    ["Disc 1 · Symphony No. 1", null, "Disc 2 · Symphony No. 2", null],
+  );
+  assert.deepEqual(
+    albumDiscSections({ id: 3, title: "One Disc" }, [track(1, "One Disc"), track(1, "One Disc")]),
+    [null, null],
   );
 });

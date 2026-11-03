@@ -3,9 +3,11 @@ import { parseFile } from "music-metadata";
 import { db } from "../config/db-sqlite.ts";
 import { asAppError } from "../../lib/errors.ts";
 import { readRawLibraryMetadata } from "./libraryMetadata.ts";
-import { markLibraryAlbumTitles, setLibraryAlbumCanonicalTitle } from "./libraryMediaStore.ts";
+import { invalidateLibraryCache } from "./libraryMediaStore.ts";
+import { syncLibrarySearchAlbum, syncLibrarySearchTrack } from "./librarySearchIndex.ts";
 import { logger } from "./logger.ts";
 import { getAlbumByMbid } from "./providers/brainzmashProvider.ts";
+import type { LibraryAlbumsRow, LibraryAlbumTracksRow } from "../db/rows.ts";
 
 // Box sets tagged with one album title per disc share a release group, so
 // they are one Library album. These passes give such an album the release
@@ -16,6 +18,44 @@ const SAMPLE_FILES = 6;
 // An album this large, or spread over several folders, may be a box set.
 const LARGE_ALBUM_FILES = 40;
 const LOOKUP_RETRY_MS = 24 * 60 * 60 * 1000;
+
+// Names an album after its release group for good; upsertLibraryAlbum keeps
+// the name whatever title its files carry.
+export function setLibraryAlbumCanonicalTitle(albumId: number, title: string) {
+  const album = db
+    .prepare<[number], LibraryAlbumsRow>("SELECT * FROM library_albums WHERE id = ?")
+    .get(albumId);
+  const canonicalTitle = String(title || "").trim();
+  if (!album || !canonicalTitle) return false;
+  const { mixedTitles: _mixed, ...metadata } = readRawLibraryMetadata(album.metadata_json);
+  db.prepare<[string, string, number, number]>(
+    "UPDATE library_albums SET title = ?, metadata_json = ?, updated_at = ? WHERE id = ?",
+  ).run(canonicalTitle, JSON.stringify({ ...metadata, canonicalTitle }), Date.now(), albumId);
+  syncLibrarySearchAlbum(albumId);
+  for (const track of db
+    .prepare<[number], Pick<LibraryAlbumTracksRow, "track_id">>(
+      "SELECT track_id FROM library_album_tracks WHERE album_id = ?",
+    )
+    .all(albumId)) {
+    syncLibrarySearchTrack(track.track_id);
+  }
+  invalidateLibraryCache();
+  return true;
+}
+
+// Records the outcome of checking an album's files for mixed titles.
+export function markLibraryAlbumTitles(albumId: number, fields: Record<string, unknown>) {
+  const album = db
+    .prepare<[number], Pick<LibraryAlbumsRow, "metadata_json">>(
+      "SELECT metadata_json FROM library_albums WHERE id = ?",
+    )
+    .get(albumId);
+  if (!album) return;
+  db.prepare<[string, number]>("UPDATE library_albums SET metadata_json = ? WHERE id = ?").run(
+    JSON.stringify({ ...readRawLibraryMetadata(album.metadata_json), ...fields }),
+    albumId,
+  );
+}
 
 type AlbumFiles = {
   id: number;
@@ -84,25 +124,38 @@ export async function findMixedTitleAlbums() {
 
 type ReleaseGroupLookup = (mbid: string) => Promise<{ title?: string | null } | null>;
 
+// The folder that holds all of an album's files when they sit in several
+// folders, as a box set's discs do.
+export function albumSharedFolder(albumId: number) {
+  const folders = [
+    ...new Set(
+      db
+        .prepare<[number], { path: string }>(
+          "SELECT path FROM library_media_files WHERE album_id = ? AND available = 1",
+        )
+        .all(albumId)
+        .map((row) => path.dirname(row.path)),
+    ),
+  ];
+  if (folders.length < 2) return null;
+  const parts = folders.map((folder) => folder.split(path.sep));
+  const shared: string[] = [];
+  for (let index = 0; index < parts[0].length; index++) {
+    if (!parts.every((segments) => segments[index] === parts[0][index])) break;
+    shared.push(parts[0][index]);
+  }
+  return shared.join(path.sep) || null;
+}
+
 // A box set's own folder, when all its discs sit under one folder other than
 // its artist's: "Decca Sound_ The Analogue Years" for files tagged per disc.
 // Taggers write ": " as "_ " in folder names.
 function boxSetFolderTitle(albumId: number, albumArtist: string | null) {
-  const paths = db
-    .prepare<[number], { path: string }>(
-      "SELECT path FROM library_media_files WHERE album_id = ? AND available = 1",
-    )
-    .all(albumId)
-    .map((row) => path.dirname(row.path).split(path.sep));
-  if (paths.length === 0) return null;
-  const shared: string[] = [];
-  for (let index = 0; index < paths[0].length; index++) {
-    if (!paths.every((parts) => parts[index] === paths[0][index])) break;
-    shared.push(paths[0][index]);
-  }
-  const spread = paths.some((parts) => parts.length > shared.length);
-  const folder = (shared.at(-1) || "").replaceAll("_ ", ": ").trim();
-  if (!spread || !folder) return null;
+  const folder = path
+    .basename(albumSharedFolder(albumId) || "")
+    .replaceAll("_ ", ": ")
+    .trim();
+  if (!folder) return null;
   const sameAsArtist = (name: string | null) =>
     Boolean(name) && folder.toLowerCase() === String(name).trim().toLowerCase();
   return sameAsArtist(albumArtist) ? null : folder;
