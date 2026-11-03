@@ -295,6 +295,74 @@ test("focused track, ownership, count, and sample queries stay bounded", () => {
   }
 });
 
+test("a Library track is owned only where it has a file, not where its recording does", () => {
+  const key = `query-track-scope-${process.pid}-${Date.now()}`;
+  const artist = upsertLibraryArtist({ identityKey: `${key}:artist`, name: "Scope Artist" });
+  const single = upsertLibraryAlbum({
+    identityKey: `${key}:single`,
+    artistId: artist.id,
+    title: "The Single",
+    releaseGroupMbid: `${key}-single-rg`,
+  });
+  const album = upsertLibraryAlbum({
+    identityKey: `${key}:album`,
+    artistId: artist.id,
+    title: "The Album",
+    releaseGroupMbid: `${key}-album-rg`,
+  });
+  const recording = `${key}-recording`;
+  const onSingle = upsertLibraryTrack({
+    identityKey: `${key}:single-track`,
+    mbid: recording,
+    title: "Shared Song",
+    artistName: artist.name,
+  });
+  const onAlbum = upsertLibraryTrack({
+    identityKey: `${key}:album-track`,
+    mbid: recording,
+    title: "Shared Song",
+    artistName: artist.name,
+  });
+  linkLibraryAlbumTrack({ albumId: single.id, trackId: onSingle.id, trackNumber: 1 });
+  linkLibraryAlbumTrack({ albumId: album.id, trackId: onAlbum.id, trackNumber: 1 });
+  const singlePath = `/tmp/${key}/single.flac`;
+  upsertLibraryMediaFile({
+    trackId: onSingle.id,
+    albumId: single.id,
+    source: "aurral",
+    path: singlePath,
+    available: true,
+  });
+
+  try {
+    assert.equal(getLibraryTrackOwnership({ trackMbid: recording }), true);
+    assert.equal(getLibraryTrackOwnership({ trackId: onSingle.id }), true);
+    assert.equal(
+      getLibraryTrackOwnership({ trackId: onSingle.id, albumMbid: `${key}-single-rg` }),
+      true,
+    );
+    assert.equal(getLibraryTrackOwnership({ trackId: onAlbum.id }), false);
+    assert.equal(
+      getLibraryTrackOwnership({ trackId: onAlbum.id, albumMbid: `${key}-album-rg` }),
+      false,
+    );
+    assert.equal(
+      getLibraryTrackOwnership({ trackId: onSingle.id, albumMbid: `${key}-album-rg` }),
+      false,
+    );
+  } finally {
+    db.prepare("DELETE FROM library_media_files WHERE path = ?").run(singlePath);
+    db.prepare("DELETE FROM library_album_tracks WHERE album_id IN (?, ?)").run(
+      single.id,
+      album.id,
+    );
+    db.prepare("DELETE FROM library_tracks WHERE id IN (?, ?)").run(onSingle.id, onAlbum.id);
+    db.prepare("DELETE FROM library_albums WHERE id IN (?, ?)").run(single.id, album.id);
+    db.prepare("DELETE FROM library_artists WHERE id = ?").run(artist.id);
+    invalidateLibraryQueryCache();
+  }
+});
+
 test("getLibrary merges sources and preserves normalized hierarchy", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "aurral-library-query-"));
   const source = `query-aurral-${process.pid}`;

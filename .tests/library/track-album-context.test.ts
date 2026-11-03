@@ -257,6 +257,68 @@ test("a track added from an album page joins that Library album when another Lib
   assert.equal(downloadTracker.getJob(added.body.jobId)!.albumMbid, GROUP);
 });
 
+test("a track missing from an album page is requested though the Library holds it on another album", async (t: import("vite-plus/test").TestContext) => {
+  const SINGLE = "a1a1a1a1-0000-4000-8000-000000000012";
+  const single = brainzmashGroup({
+    id: SINGLE,
+    title: "Song",
+    artist: "Context Artist",
+    releases: [{ id: "a1a1a1a1-0000-4000-8000-000000000013", tracks: [song] }],
+  });
+  await serveGroups(t, [group, single]);
+  const settings = dbOps.getSettings();
+  dbOps.updateSettings({
+    ...settings,
+    integrations: {
+      ...settings.integrations,
+      slskd: { enabled: true, url: "http://127.0.0.1:9", apiKey: "test-key" },
+    },
+  });
+  t.onTestFinished(() => dbOps.updateSettings(settings));
+  const singleAlbum = libraryAlbum({ groupMbid: SINGLE, title: "Song", recordings: [song] });
+  libraryAlbum({ groupMbid: GROUP, title: "Two Sides", recordings: [intro, song, outro] });
+  const songTrack = requireFixture(
+    db
+      .prepare<[string], { id: number }>("SELECT id FROM library_tracks WHERE mbid = ?")
+      .get("rec-song"),
+  );
+  libraryStore.upsertLibraryMediaFile({
+    trackId: songTrack.id,
+    albumId: singleAlbum.id,
+    source: "aurral",
+    path: "/tmp/track-album-context/single/song.flac",
+    available: true,
+  });
+
+  const anywhere = await app.request("/library/downloads/track", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      artistName: "Context Artist",
+      trackName: "Song",
+      trackMbid: "rec-song",
+    }),
+  });
+  assert.equal(((await anywhere.json()) as { alreadyOwned?: boolean }).alreadyOwned, true);
+
+  const fromAlbum = await app.request("/library/downloads/track", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      artistName: "Context Artist",
+      albumName: "Two Sides",
+      albumMbid: GROUP,
+      trackName: "Song",
+      trackMbid: "rec-song",
+      canonicalTrackId: String(songTrack.id),
+    }),
+  });
+  const body = (await fromAlbum.json()) as { alreadyOwned?: boolean; jobId?: string };
+  assert.equal(body.alreadyOwned, undefined, JSON.stringify(body));
+  assert.ok(body.jobId, JSON.stringify(body));
+  assert.equal(downloadTracker.getJob(body.jobId)!.albumMbid, GROUP);
+});
+
 test("a track added with its release is queued and searched on that release and disc", async (t) => {
   await serveGroups(t, [group]);
 
