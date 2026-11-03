@@ -3,19 +3,14 @@ import type { IAudioMetadata, ICommonTagsResult } from "music-metadata";
 
 // The artist credits exactly as a file's tags spell them, kept for clients that show
 // tag credits (Subsonic) instead of Aurral's artist entities.
-export type ArtistTags = {
-  artist?: string;
-  artists?: string[];
-  albumArtist?: string;
-  albumArtists?: string[];
-};
-
 export const artistTagsSchema = v.object({
   artist: v.optional(v.string()),
   artists: v.optional(v.array(v.string())),
   albumArtist: v.optional(v.string()),
   albumArtists: v.optional(v.array(v.string())),
 });
+
+export type ArtistTags = v.InferOutput<typeof artistTagsSchema>;
 
 // What Navidrome puts between several values of one artist tag.
 export const ARTIST_TAG_JOINER = " • ";
@@ -52,18 +47,12 @@ const TAG_TYPE_ORDER = ["vorbis", "ID3v2.4", "ID3v2.3", "ID3v2.2", "iTunes", "AP
 // on "/". Joining the parts with "/" again gives back what the file holds ("AC/DC").
 const SLASH_SPLIT_TYPES = new Set(["ID3v2.3", "ID3v2.2"]);
 
-const textValues = (values: unknown[]) => {
-  const seen = new Set<string>();
-  const result: string[] = [];
-  for (const value of values) {
-    const entry = typeof value === "string" ? value.trim() : "";
-    if (entry && !seen.has(entry)) {
-      seen.add(entry);
-      result.push(entry);
-    }
-  }
-  return result;
-};
+// Each distinct non-empty text value, in order.
+const textValues = (values: unknown[]) => [
+  ...new Set(
+    values.map((value) => (typeof value === "string" ? value.trim() : "")).filter(Boolean),
+  ),
+];
 
 function nativeValues(tags: NativeTags[string], ids: readonly string[]) {
   return textValues(
@@ -115,10 +104,9 @@ export function readArtistTags(metadata: TagMetadata | null | undefined): Artist
   const albumArtist = native?.albumArtist.display || commonText(common.albumartist);
   const artists = native ? native.artist.list : [];
   const albumArtists = native ? native.albumArtist.list : [];
-  const tags: ArtistTags = {};
-  if (artist) tags.artist = artist;
-  if (artists.length) tags.artists = artists;
-  if (albumArtist) tags.albumArtist = albumArtist;
-  if (albumArtists.length) tags.albumArtists = albumArtists;
-  return tags;
+  // Only the credits the file has.
+  const tags = { artist, artists, albumArtist, albumArtists };
+  return Object.fromEntries(
+    Object.entries(tags).filter(([, value]) => value.length > 0),
+  ) as ArtistTags;
 }

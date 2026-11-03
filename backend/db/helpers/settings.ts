@@ -8,11 +8,7 @@ import {
   validateDownloadFolderPath,
 } from "../../services/downloadFolderConfig.ts";
 import { normalizeExistingFileMode } from "../../services/downloadJobs/fileReuseMode.ts";
-import {
-  normalizeDateTimeFormat,
-  normalizeSubsonicArtistSource,
-  type SubsonicArtistSource,
-} from "../../config/constants.ts";
+import { normalizeDateTimeFormat } from "../../config/constants.ts";
 import type { defaultData } from "../../config/constants.ts";
 import {
   normalizeIntervalDays,
@@ -41,6 +37,13 @@ type SettingsMissingTrackSearch = ReturnType<typeof normalizeMissingTrackSearchS
 type SettingsInbox = typeof defaultData.settings.inbox;
 
 const flag = lenient(v.boolean());
+
+// Where Subsonic clients get artist names: "tags" serves each file's ARTIST and
+// ALBUMARTIST tags as written, the way Navidrome does; "library" serves Aurral's
+// artist entities. Artist IDs come from the library either way.
+export type SubsonicArtistSource = "tags" | "library";
+export const normalizeSubsonicArtistSource = (value: unknown): SubsonicArtistSource =>
+  value === "library" ? "library" : "tags";
 
 const securitySchema = v.looseObject({
   localNetworkBypass: lenient(v.looseObject({ enabled: flag })),
