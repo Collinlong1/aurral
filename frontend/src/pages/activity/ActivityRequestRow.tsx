@@ -17,7 +17,6 @@ import TooltipButton from "../../components/TooltipButton";
 import { DotLoader } from "../../components/DotLoader";
 import {
   canCancelActivityRequest,
-  cancellableJobIds,
   formatReviewReasonSummary,
   formatTimelineTime,
   type ActivityRequest,
@@ -25,6 +24,7 @@ import {
 import Tooltip from "../../components/Tooltip";
 import RouteLink from "../../components/RouteLink";
 import type { QueueEntry } from "../../utils/audioQueue.ts";
+import { ActivityRowSelect } from "./ActivityBulkCancel.tsx";
 import "./bulkCancel.css";
 
 export type ActivityRequestRowProps = {
@@ -167,9 +167,6 @@ export default function ActivityRequestRow({
     !!request.jobId &&
     ["pending", "processing", "failed", "cancelled"].includes(request.status) &&
     !isBlockedTrack;
-  // A row picks its own job, or every job of an album grab that can be cancelled.
-  const selectableJobIds = onSelectJobs ? cancellableJobIds([request]) : [];
-  const selectedCount = selectableJobIds.filter((jobId) => selectedJobIds?.has(jobId)).length;
   const isThisPlaying = currentTrack?.id === String(request.jobId) && isPlaying;
   const jobError = request.jobId ? jobErrors[request.jobId] : undefined;
   const reviewReasonSummary = isBlockedTrack ? formatReviewReasonSummary(request.subtitle) : null;
@@ -184,22 +181,12 @@ export default function ActivityRequestRow({
     <article className="activity-row">
       <span className="activity-row__lead">
         {onSelectJobs ? (
-          <span className="activity-row__select">
-            {selectableJobIds.length ? (
-              <input
-                type="checkbox"
-                checked={selectedCount > 0 && selectedCount === selectableJobIds.length}
-                ref={(input) => {
-                  if (input) {
-                    input.indeterminate =
-                      selectedCount > 0 && selectedCount < selectableJobIds.length;
-                  }
-                }}
-                onChange={(event) => onSelectJobs(selectableJobIds, event.target.checked)}
-                aria-label={`Select ${displayTitle}`}
-              />
-            ) : null}
-          </span>
+          <ActivityRowSelect
+            request={request}
+            title={displayTitle}
+            selectedJobIds={selectedJobIds}
+            onSelectJobs={onSelectJobs}
+          />
         ) : null}
         <Tooltip content={status.label}>
           <span
