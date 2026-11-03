@@ -10,7 +10,7 @@ description: Follow downloads, album requests, and playlist jobs, and fix missin
 
 **Wanted** in the sidebar lists Aurral tracks that need more work. It has two filters:
 
-- **Missing** lists tracks whose download failed.
+- **Missing** lists tracks whose download failed or was cancelled.
 - **Cutoff unmet** lists tracks with files below your quality cutoff.
 
 ![Aurral activity timeline](../../../../../web/screenshots/history.webp)
@@ -57,6 +57,11 @@ Aurral stores who requested each album. Activity can show the requester, and oth
 
 **Wanted** includes every Library track that Aurral manages, the tracks in your playlists, and the tracks in the flows that you can open. It leaves out [unmonitored tracks](/using/library/#albums-and-tracks).
 
+**Missing** lists the same tracks that a playlist page marks **Missing**: downloads that failed and downloads that were cancelled. It leaves out:
+
+- Tracks of an album request that you cancelled. Request the album again to search for them.
+- Tracks saved without a download, which a playlist page marks **Not downloaded**.
+
 - To search again for one missing track, select **Re-search track** on its row.
 - To search for a better file for one track, select **Search for upgrade** on its row in **Cutoff unmet**.
 - To search for every track in the current filter, select **Search all**.
@@ -80,6 +85,16 @@ A manual choice works differently from an automatic search:
 - Aurral does not check the title, artist, album, or duration of the file.
 - Aurral still requires readable audio with a known quality. It accepts quality tiers that your profile turns off.
 - Search results expire after 10 minutes. If they expire, search again.
+
+### Link a Library file
+
+When the Library already has the file for a missing track, for example under another title or on another album, link it instead of downloading it again.
+
+1. In **Wanted > Missing**, select **Link a Library file** on a track. In a static playlist or flow, right-click a **Missing** or **Not downloaded** track and select **Link a Library file**.
+2. Aurral searches the Library for the track's artist and title. Change the words and select **Search** to look for something else. Files whose title, artist, or album match more of the words come first, so a file under a slightly different name still shows up.
+3. Select a file, then select **Link file**.
+
+The track is available at once and Aurral stops searching for it. The file stays where it is. Aurral treats it as a reused file, so removing the track or its playlist does not delete it.
 
 ## Download client setup
 

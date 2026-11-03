@@ -31,18 +31,22 @@ const MAX_TERMS = 6;
 
 const escapeLike = (value: string) => value.replace(/[\\%_]/g, (match) => `\\${match}`);
 
-// Finds available Library files whose title, artist, or album contains every
-// word of the query.
+// Finds available Library files for a query, best match first: files whose
+// title, artist, or album contain more of the query's words rank higher, so
+// "Neon Coast (Radio Edit)" still finds "Neon Coast". Punctuation is ignored.
 export function searchLibraryFiles(query: string, limit = SEARCH_LIMIT): LibraryFileMatch[] {
-  const terms = String(query || "")
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, MAX_TERMS);
+  const terms = [
+    ...new Set(
+      String(query || "")
+        .toLowerCase()
+        .split(/[^\p{L}\p{N}']+/u)
+        .filter((term) => term.length > 1 || /\p{N}/u.test(term)),
+    ),
+  ].slice(0, MAX_TERMS);
   if (terms.length === 0) return [];
-  const clauses = terms.map(
+  const matches = terms.map(
     () =>
-      "(t.title LIKE ? ESCAPE '\\' OR COALESCE(f.artist_tag, t.artist_name, '') LIKE ? ESCAPE '\\' OR COALESCE(a.title, '') LIKE ? ESCAPE '\\')",
+      "(CASE WHEN t.title LIKE ? ESCAPE '\\' OR COALESCE(f.artist_tag, t.artist_name, '') LIKE ? ESCAPE '\\' OR COALESCE(a.title, '') LIKE ? ESCAPE '\\' THEN 1 ELSE 0 END)",
   );
   const params = terms.flatMap((term) => {
     const pattern = `%${escapeLike(term)}%`;
@@ -50,14 +54,17 @@ export function searchLibraryFiles(query: string, limit = SEARCH_LIMIT): Library
   });
   return db
     .prepare<unknown[], LibraryFileMatch>(
-      `SELECT f.id AS fileId, t.title AS title,
-              COALESCE(f.artist_tag, t.artist_name) AS artistName,
-              a.title AS albumTitle, f.format AS format, f.duration_ms AS durationMs
-         FROM library_media_files f
-         JOIN library_tracks t ON t.id = f.track_id
-         LEFT JOIN library_albums a ON a.id = f.album_id
-        WHERE f.available = 1 AND ${clauses.join(" AND ")}
-        ORDER BY t.title COLLATE NOCASE, artistName COLLATE NOCASE, f.id
+      `SELECT fileId, title, artistName, albumTitle, format, durationMs FROM (
+         SELECT f.id AS fileId, t.title AS title,
+                COALESCE(f.artist_tag, t.artist_name) AS artistName,
+                a.title AS albumTitle, f.format AS format, f.duration_ms AS durationMs,
+                ${matches.join(" + ")} AS score
+           FROM library_media_files f
+           JOIN library_tracks t ON t.id = f.track_id
+           LEFT JOIN library_albums a ON a.id = f.album_id
+          WHERE f.available = 1)
+        WHERE score > 0
+        ORDER BY score DESC, title COLLATE NOCASE, artistName COLLATE NOCASE, fileId
         LIMIT ?`,
     )
     .all(...params, Math.max(1, Math.min(limit, 100)));

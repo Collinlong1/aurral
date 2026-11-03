@@ -364,6 +364,8 @@ The routes call a static playlist a shared playlist.
 | `GET`    | `/api/playlists/jobs/:jobId/manual-search/sources`                   | List the download clients available for a manual search                                               |
 | `POST`   | `/api/playlists/jobs/:jobId/manual-search`                           | Search one download client for a track. Send `sourceId`, and `mode` set to `missing` or `replacement` |
 | `POST`   | `/api/playlists/jobs/:jobId/manual-search/select`                    | Queue one result from a manual search                                                                 |
+| `GET`    | `/api/playlists/jobs/:jobId/library-files?q=`                        | Search the Library's files for a missing track to link                                                |
+| `POST`   | `/api/playlists/jobs/:jobId/link-file`                               | Link a Library file to a missing track, with `{ "fileId": 12 }`                                       |
 | `POST`   | `/api/playlists/start/:flowId`                                       | Run a flow                                                                                            |
 | `GET`    | `/api/playlists/flow-templates`                                      | List flow templates                                                                                   |
 | `POST`   | `/api/playlists/flows`                                               | Create a flow, optionally from a template with `templateId`                                           |
@@ -382,6 +384,7 @@ The routes call a static playlist a shared playlist.
 | `POST`   | `/api/playlists/shared-playlists`                                    | Create a static playlist                                                                              |
 | `PUT`    | `/api/playlists/shared-playlists/:playlistId`                        | Update a static playlist                                                                              |
 | `PUT`    | `/api/playlists/shared-playlists/:playlistId/record-history`         | Enable or disable listening history for a static playlist                                             |
+| `PUT`    | `/api/playlists/shared-playlists/:playlistId/track-order`            | Reorder a static playlist, with `{ "jobIds": [...] }` naming every track in its new order             |
 | `PUT`    | `/api/playlists/shared-playlists/:playlistId/track-availability`     | Show or hide track availability for a static playlist, with `{ "enabled": true \| false }`            |
 | `DELETE` | `/api/playlists/shared-playlists/:playlistId`                        | Delete a static playlist                                                                              |
 | `POST`   | `/api/playlists/shared-playlists/:playlistId/tracks`                 | Add a static playlist track                                                                           |

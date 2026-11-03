@@ -134,6 +134,20 @@ test("links a missing track to a Library file it finds by name", async () => {
   assert.equal(job?.reusedLibraryFile, true);
 });
 
+test("finds a file under a slightly different name, best match first", async () => {
+  await addLibraryFile("The Lanterns", "Night Drive", "Neon Coast");
+  await addLibraryFile("The Lanterns", "Night Drive", "Harbor Song");
+  await addLibraryFile("Neon Choir", "Hymns", "Morning");
+  const jobId = addFailedJob("Neon Coast (Radio Edit)");
+
+  const files = await searchFiles(jobId, "The Lanterns Neon Coast (Radio Edit)");
+  assert.equal(files[0].title, "Neon Coast");
+  assert.deepEqual(
+    new Set(files.map((file) => file.title)),
+    new Set(["Neon Coast", "Harbor Song", "Morning"]),
+  );
+});
+
 test("treats LIKE wildcards in a search as text", async () => {
   await addLibraryFile("Link Artist", "Album", "Plain Title");
   const jobId = addFailedJob("Plain Title");

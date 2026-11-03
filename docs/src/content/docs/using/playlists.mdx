@@ -41,6 +41,16 @@ To see the download state of each track in a static playlist, open its playlist 
 - The playlist header shows how many tracks are available.
 - To search again for a missing track, use **Re-search** in its track menu.
 
+## Reorder tracks
+
+To change the order of a static playlist, open it and select **Reorder tracks** above the track list.
+
+- Drag a track by its handle, or select **Move to the top** or **Move to the bottom** on its row.
+- To move a track with the keyboard, focus its handle, press Space, move it with the arrow keys, and press Space again.
+- Select **Save order** to keep the order, or **Cancel** to discard it.
+
+The new order applies to playback and to the playlist's [playlist file](#playlist-files). If the playlist changed since you opened it, Aurral does not save the order; reload the page and try again. A synced import can bring back the order of its source the next time it syncs. Flows keep the order that they generate.
+
 ## Playlist files
 
 Aurral writes an M3U file for each enabled flow and each static playlist. Navidrome and Jellyfin import these files as playlists. **Settings > Library > Playlist files** shows the folder and whether file names start with the owner's username. See [Navidrome](/integrations/navidrome/#playlists), [Plex](/integrations/plex/#playlists), and [Jellyfin](/integrations/jellyfin/#playlists).
@@ -48,6 +58,8 @@ Aurral writes an M3U file for each enabled flow and each static playlist. Navidr
 ## Retry or replace a track
 
 If every download source fails, the track stays failed, also after a restart. To search again, right-click the track and select **Re-search**. A file or release that already failed Aurral's checks for the track, or failed to download, is not offered again.
+
+If the Library already has the file, right-click the track and select **Link a Library file** instead. See [Link a Library file](/using/activity/#link-a-library-file).
 
 To replace a finished track that Aurral downloaded, right-click it and select **Re-search**. Then select **Automatic** to let Aurral choose, or **Manual** to choose a result yourself. The current file stays available until the replacement passes Aurral's checks.
 
