@@ -20,8 +20,6 @@ import {
 } from "react-router";
 import {
   ArrowDownAZ,
-  ArrowLeft,
-  ArrowRight,
   ArrowUpZA,
   Download,
   Eye,
@@ -144,6 +142,7 @@ import { libraryPreviewData, libraryPreviewFavorites } from "./libraryPreviewDat
 import {
   LIBRARY_DEFAULT_SORT,
   LIBRARY_PAGE_SIZE,
+  LIBRARY_PAGE_SIZES,
   LIBRARY_SORT_OPTIONS,
   libraryListParams,
   libraryTabForSection,
@@ -171,6 +170,8 @@ import { queryClient, queryKeys } from "../queryClient.ts";
 import Tooltip from "../components/Tooltip";
 import { showFavoriteRemoved } from "../utils/favoriteUndo.ts";
 import ArtworkEditorModal from "../components/ArtworkEditorModal.tsx";
+import { albumDiscHeadings } from "../utils/albumDiscs.ts";
+import { Pagination } from "../components/Pagination.tsx";
 import type { WebSocketChannelMessage } from "../../../backend/services/websocketService.ts";
 import type { ActivityRequest } from "./activity/activityListUtils.ts";
 
@@ -188,41 +189,17 @@ const fileAlbumTitle = (track: LibraryPageTrack) => {
 // A heading at each disc of an album with several, named after the disc's
 // own album title when it has one, as box sets do.
 function discSections(album: LibraryAlbum, tracks: LibraryPageTrack[]) {
-  const discs = tracks.map((track) => ({
-    disc: Number(
-      track.albums?.find((entry) => String(entry.albumId) === String(album.id))?.discNumber || 0,
-    ),
-    title: fileAlbumTitle(track),
-  }));
-  // A track with no file of its own, such as one still missing, carries no
-  // disc title and sometimes no disc number: it belongs to the disc of the
-  // tracks around it rather than starting a disc of its own.
-  const fill = <T,>(values: T[]) => {
-    const forward = values.reduce<T[]>((out, value, index) => {
-      out.push(value || (index ? out[index - 1] : value));
-      return out;
-    }, []);
-    return forward.reduceRight<T[]>((out, value, index) => {
-      out[index] = value || (index < forward.length - 1 ? out[index + 1] : value);
-      return out;
-    }, []);
-  };
-  const discNumbers = fill(discs.map(({ disc }) => disc));
-  const discTitles = fill(discs.map(({ title }) => title));
-  discs.forEach((entry, index) => {
-    entry.disc = discNumbers[index];
-    entry.title = discTitles[index];
-  });
-  if (new Set(discs.map(({ disc, title }) => `${disc}\u0000${title}`)).size < 2) return null;
-  return (_track: LibraryPageTrack, index: number) => {
-    const current = discs[index];
-    const previous = discs[index - 1];
-    if (previous && previous.disc === current.disc && previous.title === current.title) {
-      return null;
-    }
-    const title = current.title && current.title !== album.title ? current.title : "";
-    return [current.disc ? `Disc ${current.disc}` : "", title].filter(Boolean).join(" · ") || null;
-  };
+  const headings = albumDiscHeadings(
+    tracks.map((track) => ({
+      disc: Number(
+        track.albums?.find((entry) => String(entry.albumId) === String(album.id))?.discNumber || 0,
+      ),
+      title: fileAlbumTitle(track),
+    })),
+    album.title,
+  );
+  if (headings.every((heading) => heading === null)) return null;
+  return (_track: LibraryPageTrack, index: number) => headings[index] ?? null;
 }
 
 type LibraryData = LibraryViewLibrary;
@@ -739,6 +716,7 @@ function LibraryPage() {
     sort: sortMode,
     direction: sortDirection,
     pageIndex,
+    pageSize: listPageSize,
   } = libraryListParams(section, searchParams);
   const viewMode = searchParams.get("view") === "list" ? "list" : "grid";
   const normalizedQuery = query.trim() ? urlQuery.trim().toLocaleLowerCase() : "";
@@ -796,6 +774,7 @@ function LibraryPage() {
         albumId: routeAlbumId || null,
         artistId: routeArtistId || null,
         pageIndex,
+        pageSize: listPageSize,
         query: normalizedQuery,
         genre: selectedGenre,
         sort: sortMode,
@@ -805,6 +784,7 @@ function LibraryPage() {
       forcePreview,
       normalizedQuery,
       pageIndex,
+      listPageSize,
       routeAlbumId,
       routeArtistId,
       section,
@@ -855,9 +835,11 @@ function LibraryPage() {
     const { nextData } = queryData;
     return nextData && "kind" in nextData ? nextData : null;
   }, [isDetail, isPreviewLibrary, queryData, section]);
+  // Pages at the chosen size: the total is the same at any size, so a new size
+  // counts its pages before its first page arrives.
   const totalPages =
     pageData && "pageSize" in pageData && pageData.kind === tab && tab !== "genres"
-      ? Math.ceil(pageData.total / pageData.pageSize)
+      ? Math.ceil(pageData.total / listPageSize)
       : 0;
   const lastPage = Math.max(totalPages, 1);
 
@@ -867,14 +849,18 @@ function LibraryPage() {
     }
   }, [lastPage, pageData, pageIndex]);
 
-  // Goes to the page typed into the pagination's page box, kept within the pages
-  // there are; anything that is not a number puts back the current page.
-  const goToTypedPage = (input: HTMLInputElement) => {
-    const typed = Math.round(Number(input.value));
-    const nextPage = Number.isFinite(typed) && input.value.trim() ? typed : pageIndex;
-    const clamped = Math.min(Math.max(nextPage, 1), lastPage);
-    input.value = String(clamped);
-    if (clamped !== pageIndex) setPageIndex(clamped);
+  const listTotal =
+    pageData && "pageSize" in pageData && pageData.kind === tab && tab !== "genres"
+      ? Number(pageData.total) || 0
+      : 0;
+  // A new page size keeps the first item of the current page in view.
+  const changePageSize = (nextSize: number) => {
+    const firstItem = (pageIndex - 1) * listPageSize;
+    const nextPage = Math.floor(firstItem / nextSize) + 1;
+    updateViewParams({
+      size: nextSize === LIBRARY_PAGE_SIZE ? null : nextSize,
+      page: nextPage > 1 ? nextPage : null,
+    });
   };
 
   const setLibrary = useCallback(
@@ -3807,46 +3793,17 @@ function LibraryPage() {
           {content}
         </div>
       )}
-      {!loading && !error && totalPages > 1 && (
-        <nav className="native-library-pagination" aria-label={sectionLabel + " pages"}>
-          <TooltipButton
-            className="native-library-icon-button"
-            onClick={() => setPageIndex(pageIndex - 1)}
-            disabled={pageIndex === 1}
-            label="Previous page"
-            aria-label="Previous page"
-          >
-            <ArrowLeft aria-hidden="true" />
-          </TooltipButton>
-          <label className="native-library-pagination__page">
-            Page
-            <input
-              key={pageIndex}
-              type="number"
-              inputMode="numeric"
-              min={1}
-              max={totalPages}
-              defaultValue={pageIndex}
-              aria-label={`Page number, 1 to ${totalPages}`}
-              onFocus={(event) => event.currentTarget.select()}
-              onBlur={(event) => goToTypedPage(event.currentTarget)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") goToTypedPage(event.currentTarget);
-                if (event.key === "Escape") event.currentTarget.value = String(pageIndex);
-              }}
-            />
-            of {totalPages}
-          </label>
-          <TooltipButton
-            className="native-library-icon-button"
-            onClick={() => setPageIndex(Math.min(totalPages, pageIndex + 1))}
-            disabled={pageIndex === totalPages}
-            label="Next page"
-            aria-label="Next page"
-          >
-            <ArrowRight aria-hidden="true" />
-          </TooltipButton>
-        </nav>
+      {!loading && !error && listTotal > LIBRARY_PAGE_SIZES[0] && (
+        <Pagination
+          label={sectionLabel + " pages"}
+          page={pageIndex}
+          totalPages={totalPages}
+          total={listTotal}
+          pageSize={listPageSize}
+          pageSizes={LIBRARY_PAGE_SIZES}
+          onPage={(nextPage) => setPageIndex(Math.min(Math.max(nextPage, 1), lastPage))}
+          onPageSize={changePageSize}
+        />
       )}
     </div>
   );
