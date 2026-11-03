@@ -866,6 +866,17 @@ function LibraryPage() {
       updateViewParamsRef.current({ page: lastPage > 1 ? lastPage : null }, { replace: true });
     }
   }, [lastPage, pageData, pageIndex]);
+
+  // Goes to the page typed into the pagination's page box, kept within the pages
+  // there are; anything that is not a number puts back the current page.
+  const goToTypedPage = (input: HTMLInputElement) => {
+    const typed = Math.round(Number(input.value));
+    const nextPage = Number.isFinite(typed) && input.value.trim() ? typed : pageIndex;
+    const clamped = Math.min(Math.max(nextPage, 1), lastPage);
+    input.value = String(clamped);
+    if (clamped !== pageIndex) setPageIndex(clamped);
+  };
+
   const setLibrary = useCallback(
     (updater: LibraryData | ((current: LibraryData) => LibraryData)) => {
       queryClient.setQueryData(libraryQueryKey, (current) => {
@@ -3807,9 +3818,25 @@ function LibraryPage() {
           >
             <ArrowLeft aria-hidden="true" />
           </TooltipButton>
-          <span>
-            Page {pageIndex} of {totalPages}
-          </span>
+          <label className="native-library-pagination__page">
+            Page
+            <input
+              key={pageIndex}
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={totalPages}
+              defaultValue={pageIndex}
+              aria-label={`Page number, 1 to ${totalPages}`}
+              onFocus={(event) => event.currentTarget.select()}
+              onBlur={(event) => goToTypedPage(event.currentTarget)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") goToTypedPage(event.currentTarget);
+                if (event.key === "Escape") event.currentTarget.value = String(pageIndex);
+              }}
+            />
+            of {totalPages}
+          </label>
           <TooltipButton
             className="native-library-icon-button"
             onClick={() => setPageIndex(Math.min(totalPages, pageIndex + 1))}
