@@ -194,6 +194,25 @@ function discSections(album: LibraryAlbum, tracks: LibraryPageTrack[]) {
     ),
     title: fileAlbumTitle(track),
   }));
+  // A track with no file of its own, such as one still missing, carries no
+  // disc title and sometimes no disc number: it belongs to the disc of the
+  // tracks around it rather than starting a disc of its own.
+  const fill = <T,>(values: T[]) => {
+    const forward = values.reduce<T[]>((out, value, index) => {
+      out.push(value || (index ? out[index - 1] : value));
+      return out;
+    }, []);
+    return forward.reduceRight<T[]>((out, value, index) => {
+      out[index] = value || (index < forward.length - 1 ? out[index + 1] : value);
+      return out;
+    }, []);
+  };
+  const discNumbers = fill(discs.map(({ disc }) => disc));
+  const discTitles = fill(discs.map(({ title }) => title));
+  discs.forEach((entry, index) => {
+    entry.disc = discNumbers[index];
+    entry.title = discTitles[index];
+  });
   if (new Set(discs.map(({ disc, title }) => `${disc}\u0000${title}`)).size < 2) return null;
   return (_track: LibraryPageTrack, index: number) => {
     const current = discs[index];
