@@ -163,6 +163,7 @@ import { queryClient, queryKeys } from "../queryClient.ts";
 import Tooltip from "../components/Tooltip";
 import { showFavoriteRemoved } from "../utils/favoriteUndo.ts";
 import ArtworkEditorModal from "../components/ArtworkEditorModal.tsx";
+import { albumDiscSections } from "../utils/albumDiscs.ts";
 import type { WebSocketChannelMessage } from "../../../backend/services/websocketService.ts";
 import type { ActivityRequest } from "./activity/activityListUtils.ts";
 
@@ -2379,7 +2380,10 @@ function LibraryPage() {
   const renderTrackList = (
     tracks: LibraryPageTrack[],
     label: string,
-    { variant = "collection" }: { variant?: "collection" | "release" } = {},
+    {
+      variant = "collection",
+      sections,
+    }: { variant?: "collection" | "release"; sections?: (string | null)[] } = {},
   ) => (
     <TrackList
       label={label}
@@ -2517,6 +2521,7 @@ function LibraryPage() {
         ];
         return {
           key: track.id,
+          section: sections?.[index],
           number: variant === "release" && trackNumber ? trackNumber : index + 1,
           title: track.title || "Unknown Track",
           badge: !trackMonitoring.isMonitored(track) ? (
@@ -3118,6 +3123,7 @@ function LibraryPage() {
         />
         {renderTrackList(albumTracks, libraryAlbum.title + " tracks", {
           variant: "release",
+          sections: albumDiscSections(libraryAlbum, albumTracks),
         })}
         {albumMonitoring.dialog}
       </section>
