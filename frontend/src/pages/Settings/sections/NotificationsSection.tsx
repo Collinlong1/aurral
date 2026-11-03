@@ -514,23 +514,7 @@ export function NotificationsSection() {
           />
         </SettingsGroup>
       ) : null}
-      <ScriptsGroups
-        eventToggles={(scriptEvents) => (
-          <EventToggles
-            idPrefix="script-event"
-            values={scriptEvents}
-            onChange={(key, enabled) =>
-              updateSettings({
-                ...settings,
-                integrations: {
-                  ...settings.integrations,
-                  scriptEvents: { ...scriptEvents, [key]: enabled },
-                },
-              })
-            }
-          />
-        )}
-      />
+      <ScriptsGroups EventToggles={EventToggles} />
     </SettingsPage>
   );
 }

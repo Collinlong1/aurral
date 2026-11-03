@@ -1,6 +1,5 @@
 import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
-import * as v from "valibot";
 import { requireAdmin, requireAuth } from "../../middleware/guards.ts";
 import type { AppEnv } from "../../middleware/requestUser.ts";
 import { validate } from "../../middleware/validate.ts";
@@ -10,19 +9,14 @@ import {
   getScriptsDir,
   listScriptFiles,
   scriptSucceeded,
+  scriptTargetSchema,
+  sendScriptTest,
 } from "../../services/scriptHooks.ts";
 
 // Without AURRAL_SCRIPTS_DIR these routes answer like any unknown API path.
 const requireScriptsEnabled = createMiddleware<AppEnv>(async (c, next) => {
   if (!getScriptsDir()) return c.json({ error: "Not found" }, 404);
   await next();
-});
-
-const scriptTarget = v.object({
-  name: v.optional(v.string()),
-  file: v.string(),
-  args: v.optional(v.array(v.string())),
-  timeoutSec: v.optional(v.number()),
 });
 
 export default new Hono<AppEnv>()
@@ -39,10 +33,9 @@ export default new Hono<AppEnv>()
     requireScriptsEnabled,
     requireAuth,
     requireAdmin,
-    validate("json", scriptTarget),
+    validate("json", scriptTargetSchema),
     async (c) => {
       try {
-        const { sendScriptTest } = await import("../../services/notificationService.ts");
         const result = await sendScriptTest(c.req.valid("json"));
         return c.json({ success: scriptSucceeded(result), ...result }, 200);
       } catch (error) {

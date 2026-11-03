@@ -1,4 +1,4 @@
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useState, type ComponentType, type FormEvent } from "react";
 import { parseResponse } from "hono/client";
 import { useQuery } from "@tanstack/react-query";
 import PillToggle from "../../../components/PillToggle";
@@ -16,21 +16,25 @@ import {
   SettingsRow,
   SettingsServiceRow,
 } from "../SettingsLayout";
+import "./scripts.css";
 
 // Custom script hooks. The server only sends script settings while
 // AURRAL_SCRIPTS_DIR is set, so none of this renders without it.
 
-type Integrations = SettingsState["integrations"];
-type Script = NonNullable<Integrations["scripts"]>[number];
+type Script = NonNullable<SettingsState["integrations"]["scripts"]>[number];
 type ScriptRun = Awaited<ReturnType<typeof runTest>>;
+type TestResult = { tone: "success" | "error"; message: string; run?: ScriptRun };
+type EventTogglesProps = {
+  idPrefix: string;
+  values: Partial<Record<string, boolean>>;
+  onChange: (key: string, enabled: boolean) => void;
+};
 
 const MAX_SCRIPTS = 10;
 const OUTPUT_TAIL = 4000;
 
 const runTest = (json: { name: string; file: string; args: string[]; timeoutSec: number }) =>
   parseResponse(scriptSettingsClient.test.$post({ json }));
-
-export const scriptsEnabled = (integrations: Integrations) => Array.isArray(integrations.scripts);
 
 export function resolveScriptItem(scripts: Script[] | undefined, item: string | null) {
   if (!scripts) return null;
@@ -52,83 +56,69 @@ export function ScriptDetail({ index }: { index: number | null }) {
   const route = useSettingsRoute();
   const scripts = settings.integrations.scripts ?? [];
   const existing = index === null ? undefined : scripts[index];
-  const [name, setName] = useState(existing?.name ?? "");
-  const [file, setFile] = useState(existing?.file ?? "");
-  const [args, setArgs] = useState((existing?.args ?? []).join("\n"));
-  const [timeoutSec, setTimeoutSec] = useState(String(existing?.timeoutSec ?? 60));
+  const [form, setForm] = useState({
+    name: existing?.name ?? "",
+    file: existing?.file ?? "",
+    args: (existing?.args ?? []).join("\n"),
+    timeoutSec: String(existing?.timeoutSec ?? 60),
+  });
   const [enabled, setEnabled] = useState(existing?.enabled !== false);
   const [missingFile, setMissingFile] = useState(false);
   const [testing, setTesting] = useState(false);
-  const [run, setRun] = useState<ScriptRun | null>(null);
-  const [testError, setTestError] = useState<string | null>(null);
+  // The last test's outcome, shown until the next edit.
+  const [result, setResult] = useState<TestResult | null>(null);
   const files = useQuery({
     queryKey: ["settings", "scripts", "files"],
     queryFn: () => parseResponse(scriptSettingsClient.files.$get()),
   });
 
   const draft = {
-    name: name.trim(),
-    file: file.trim(),
-    args: args.split("\n").filter((arg) => arg !== ""),
-    timeoutSec: Math.max(1, Math.floor(Number(timeoutSec)) || 60),
+    name: form.name.trim(),
+    file: form.file.trim(),
+    args: form.args.split("\n").filter((arg) => arg !== ""),
+    timeoutSec: Math.max(1, Math.floor(Number(form.timeoutSec)) || 60),
   };
 
-  const edited =
-    <T,>(set: (value: T) => void) =>
-    (value: T) => {
-      setRun(null);
-      setTestError(null);
-      set(value);
-    };
+  const edit = (patch: Partial<typeof form>) => {
+    setResult(null);
+    setForm({ ...form, ...patch });
+  };
 
-  const save = (next: Script[]) =>
+  const save = (next: Script[]) => {
     updateSettings({ ...settings, integrations: { ...settings.integrations, scripts: next } });
+    route.back();
+  };
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!draft.file) {
-      setMissingFile(true);
-      return;
-    }
+    if (!draft.file) return setMissingFile(true);
     const script = { ...draft, enabled };
     save(
       index === null
         ? [...scripts, script]
         : scripts.map((entry, i) => (i === index ? script : entry)),
     );
-    route.back();
-  };
-
-  const remove = () => {
-    if (index === null) return;
-    save(scripts.filter((_entry, i) => i !== index));
-    route.back();
   };
 
   const test = async () => {
     setTesting(true);
-    setRun(null);
-    setTestError(null);
+    setResult(null);
     try {
-      setRun(await runTest(draft));
+      const run = await runTest(draft);
+      setResult({ tone: run.success ? "success" : "error", message: describeRun(run), run });
     } catch (error) {
       const reason = readApiError(error);
-      setTestError(reason.message || reason.error || reason.text || "Test failed.");
+      const message = reason.message || reason.error || reason.text || "Test failed.";
+      setResult({ tone: "error", message });
     } finally {
       setTesting(false);
     }
   };
 
+  const run = result?.run;
   const status = missingFile
     ? { tone: "error" as const, message: "Choose a script file." }
-    : testError
-      ? { tone: "error" as const, message: testError }
-      : run
-        ? {
-            tone: run.success ? ("success" as const) : ("error" as const),
-            message: describeRun(run),
-          }
-        : null;
+    : result;
 
   return (
     <SettingsPage title={index === null ? "Add script" : "Script"} back="Notifications">
@@ -139,8 +129,8 @@ export function ScriptDetail({ index }: { index: number | null }) {
               id="script-name"
               placeholder="Tag new albums"
               autoComplete="off"
-              value={name}
-              onChange={(event) => edited(setName)(event.target.value)}
+              value={form.name}
+              onChange={(event) => edit({ name: event.target.value })}
             />
           </SettingsRow>
           <SettingsRow
@@ -154,10 +144,10 @@ export function ScriptDetail({ index }: { index: number | null }) {
               placeholder="script.sh"
               spellCheck={false}
               autoComplete="off"
-              value={file}
+              value={form.file}
               onChange={(event) => {
                 setMissingFile(false);
-                edited(setFile)(event.target.value);
+                edit({ file: event.target.value });
               }}
             />
             <datalist id="script-files">
@@ -179,8 +169,8 @@ export function ScriptDetail({ index }: { index: number | null }) {
               rows={3}
               spellCheck={false}
               autoComplete="off"
-              value={args}
-              onChange={(event) => edited(setArgs)(event.target.value)}
+              value={form.args}
+              onChange={(event) => edit({ args: event.target.value })}
             />
           </SettingsRow>
           <SettingsRow label="Timeout (seconds)" htmlFor="script-timeout">
@@ -189,8 +179,8 @@ export function ScriptDetail({ index }: { index: number | null }) {
               type="number"
               min={1}
               max={3600}
-              value={timeoutSec}
-              onChange={(event) => edited(setTimeoutSec)(event.target.value)}
+              value={form.timeoutSec}
+              onChange={(event) => edit({ timeoutSec: event.target.value })}
             />
           </SettingsRow>
           <SettingsRow label="Enabled" htmlFor="script-enabled">
@@ -219,7 +209,11 @@ export function ScriptDetail({ index }: { index: number | null }) {
                 Cancel
               </button>
             ) : (
-              <button type="button" className="btn btn-ghost btn-sm" onClick={remove}>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={() => save(scripts.filter((_entry, i) => i !== index))}
+              >
                 Delete
               </button>
             )}
@@ -239,12 +233,14 @@ export function ScriptDetail({ index }: { index: number | null }) {
   );
 }
 
+// The scripts list and their event switches, drawn with the Notifications
+// page's own EventToggles.
 export function ScriptsGroups({
-  eventToggles,
+  EventToggles,
 }: {
-  eventToggles: (scriptEvents: NonNullable<Integrations["scriptEvents"]>) => ReactNode;
+  EventToggles: ComponentType<EventTogglesProps>;
 }) {
-  const { settings } = useServerSettings();
+  const { settings, updateSettings } = useServerSettings();
   const { scripts, scriptEvents } = settings.integrations;
   if (!scripts || !scriptEvents) return null;
   return (
@@ -273,7 +269,21 @@ export function ScriptsGroups({
         )}
       </SettingsGroup>
       {scripts.length > 0 ? (
-        <SettingsGroup title="Script events">{eventToggles(scriptEvents)}</SettingsGroup>
+        <SettingsGroup title="Script events">
+          <EventToggles
+            idPrefix="script-event"
+            values={scriptEvents}
+            onChange={(key, enabled) =>
+              updateSettings({
+                ...settings,
+                integrations: {
+                  ...settings.integrations,
+                  scriptEvents: { ...scriptEvents, [key]: enabled },
+                },
+              })
+            }
+          />
+        </SettingsGroup>
       ) : null}
     </>
   );

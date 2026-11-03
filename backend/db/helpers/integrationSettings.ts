@@ -44,13 +44,6 @@ const webhookSettings = {
 
 export const webhookSettingsSchema = v.looseObject(webhookSettings);
 
-const notificationEvents = service({
-  notifyDiscoveryUpdated: flag,
-  notifyWeeklyFlowDone: flag,
-  notifyRequestMade: flag,
-  notifyRequestAvailable: flag,
-});
-
 export const scriptSettingsSchema = v.looseObject({
   name: text,
   file: v.string(),
@@ -62,7 +55,8 @@ export const scriptSettingsSchema = v.looseObject({
 export const integrationSettingsSchema = v.looseObject({
   ...webhookSettings,
   scripts: lenient(listOf(scriptSettingsSchema)),
-  scriptEvents: notificationEvents,
+  // Scripts run on the same events as webhooks.
+  scriptEvents: webhookSettings.webhookEvents,
   navidrome: service({ url: text, username: text, password: text, prefixOwnerUsername: flag }),
   plex: service({
     url: text,

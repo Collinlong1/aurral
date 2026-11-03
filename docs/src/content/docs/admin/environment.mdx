@@ -7,14 +7,13 @@ Set most options in the web UI. Use these variables for deployment settings.
 
 ## Mounts and permissions
 
-| Variable             | Purpose                                                                                                                                                                                                                                                                |
-| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PUID`, `PGID`       | The user and group that run Aurral in the container. Set them to the owner of the mounted folders.                                                                                                                                                                     |
-| `AURRAL_DATA_DIR`    | The app data folder. Default `/config`.                                                                                                                                                                                                                                |
-| `DOWNLOAD_FOLDER`    | The first Library folder path. Use an absolute path under your media mount. After setup, change it in **Settings > Library > Library folder > Path**.                                                                                                                  |
-| `FILE_BROWSE_ROOTS`  | Comma-separated folders that **Browse folders** can open, and where Aurral can create a Library folder. By default these are `/data`, the app data folder, and the Library folder. Set this variable when your media mount is not under `/data`, for example `/music`. |
-| `PORT`               | The port that Aurral listens on inside the container. Default `3001`.                                                                                                                                                                                                  |
-| `AURRAL_SCRIPTS_DIR` | Turns on [custom scripts](/integrations/scripts/) and sets the folder that holds them. Aurral runs only files inside this folder. Unset by default, which hides the feature.                                                                                           |
+| Variable            | Purpose                                                                                                                                                                                                                                                                |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PUID`, `PGID`      | The user and group that run Aurral in the container. Set them to the owner of the mounted folders.                                                                                                                                                                     |
+| `AURRAL_DATA_DIR`   | The app data folder. Default `/config`.                                                                                                                                                                                                                                |
+| `DOWNLOAD_FOLDER`   | The first Library folder path. Use an absolute path under your media mount. After setup, change it in **Settings > Library > Library folder > Path**.                                                                                                                  |
+| `FILE_BROWSE_ROOTS` | Comma-separated folders that **Browse folders** can open, and where Aurral can create a Library folder. By default these are `/data`, the app data folder, and the Library folder. Set this variable when your media mount is not under `/data`, for example `/music`. |
+| `PORT`              | The port that Aurral listens on inside the container. Default `3001`.                                                                                                                                                                                                  |
 
 ## Path mappings
 
@@ -107,6 +106,12 @@ These variables change the shared Spotify OAuth proxy that Lidarr also uses. The
 | `SPOTIFY_CLIENT_ID`          | The OAuth client ID.                                                      |
 | `SPOTIFY_OAUTH_REDIRECT_URI` | The authorization redirect. Default `https://spotify.lidarr.audio/auth`.  |
 | `SPOTIFY_OAUTH_RENEW_URI`    | The token refresh endpoint. Default `https://spotify.lidarr.audio/renew`. |
+
+## Custom scripts
+
+| Variable             | Purpose                                                                                                                           |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `AURRAL_SCRIPTS_DIR` | Turns on [custom scripts](/integrations/scripts/) and sets the folder that holds them. Unset by default, which hides the feature. |
 
 ## Example
 
