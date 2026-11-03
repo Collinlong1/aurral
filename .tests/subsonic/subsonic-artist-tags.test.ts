@@ -163,9 +163,10 @@ test("the library setting serves Aurral's artist names as before", () => {
   setArtistSource("library");
   try {
     const hit = songNamed("Hit 1");
-    assert.equal(hit.artist, "Various Artists");
+    assert.equal(hit.artist, "Band One");
     assert.equal(hit.displayArtist, undefined);
-    assert.deepEqual(names(hit.artists), ["Various Artists"]);
+    assert.deepEqual(names(hit.artists), ["Band One"]);
+    assert.deepEqual(names(hit.albumArtists), ["Various Artists"]);
     assert.equal(getAlbum(getAlbumList({ size: "50" })[0].id)?.displayArtist, undefined);
   } finally {
     setArtistSource("tags");
@@ -175,12 +176,13 @@ test("the library setting serves Aurral's artist names as before", () => {
 test("a rescan fills artist tags for files indexed before they were stored", async () => {
   setArtistSource("tags");
   db.prepare("UPDATE library_media_files SET artist_tags_json = NULL").run();
-  assert.equal(songNamed("Hit 1").artist, "Various Artists");
+  assert.notDeepEqual(names(songNamed("Das himmlische Leben").artists), CLASSICAL_ARTISTS);
 
   await scanMusicRoot({ rootPath: root, source: "aurral" });
 
   assert.equal(songNamed("Hit 1").artist, "Band One");
   assert.equal(songNamed("Das himmlische Leben").artist, CLASSICAL);
+  assert.deepEqual(names(songNamed("Das himmlische Leben").artists), CLASSICAL_ARTISTS);
   const stored = db
     .prepare<[], { missing: number }>(
       "SELECT COUNT(*) AS missing FROM library_media_files WHERE artist_tags_json IS NULL",

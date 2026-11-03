@@ -403,14 +403,14 @@ const toSong = (
     const tags = file?.artistTags || {};
     const albumTags =
       !tags.albumArtist && album ? albumArtistTags(album, albumTracks(library, album)) : tags;
-    const display = tags.artist || artistValue.name;
+    const display = tags.artist || trackArtistValue.name;
     const albumDisplay = albumTags?.albumArtist || artistValue.name;
     song.artist = display;
     song.displayArtist = display;
     song.displayAlbumArtist = albumDisplay;
     song.artists = tags.artist
       ? taggedArtists(library, tags.artists, display, artistValue)
-      : [artistValue];
+      : [trackArtistValue];
     song.albumArtists = taggedArtists(library, albumTags?.albumArtists, albumDisplay, artistValue);
   }
   const bitRate = bitRateKbps(file?.quality);
