@@ -20,17 +20,11 @@ import {
   useSettingsItem,
 } from "../SettingsLayout";
 import { ScriptDetail, ScriptsGroups, resolveScriptItem } from "./ScriptsSettings";
+import { WebhookEventBodies, editableEventBodies, filledEventBodies } from "./WebhookEventBodies";
 
 type Integrations = SettingsState["integrations"];
 type Webhook = Integrations["webhooks"][number];
 type WebhookHeader = NonNullable<Webhook["headers"]>[number];
-type EventBodies = Partial<Record<EventKey, string>>;
-type WebhookDraft = {
-  url: string;
-  body: string | null;
-  headers: WebhookHeader[];
-  eventBodies: EventBodies;
-};
 type TestStatus = { tone: "success" | "error"; message: string };
 
 const MAX_WEBHOOKS = 5;
@@ -113,72 +107,6 @@ function EventToggles({
   ));
 }
 
-// Only the event bodies that hold text, so an empty one falls back to the
-// default body.
-function filledEventBodies(eventBodies: EventBodies): EventBodies {
-  return Object.fromEntries(
-    Object.entries(eventBodies)
-      .map(([key, value]) => [key, (value ?? "").trim()])
-      .filter(([, value]) => value),
-  );
-}
-
-function EventBodyRow({
-  event,
-  label,
-  draft,
-  value,
-  onChange,
-}: {
-  event: EventKey;
-  label: string;
-  draft: WebhookDraft;
-  value: string;
-  onChange: (value: string) => void;
-}) {
-  const test = useTest(
-    () =>
-      parseResponse(
-        downloadClientSettingsClient.webhook.test.$post({ json: { ...draft, testEvent: event } }),
-      ),
-    `Test ${label.toLowerCase()} webhook sent.`,
-    "Test failed. Check the URL, body, and headers, then retry.",
-    "Webhook",
-  );
-  return (
-    <SettingsRow
-      label={`${label} body`}
-      htmlFor={`webhook-body-${event}`}
-      help="Optional. Leave blank to send the default body for this event."
-      stack
-    >
-      <SettingsTextarea
-        id={`webhook-body-${event}`}
-        rows={3}
-        maxLength={1000}
-        spellCheck={false}
-        autoComplete="off"
-        value={value}
-        onChange={(changeEvent) => {
-          test.reset();
-          onChange(changeEvent.target.value);
-        }}
-      />
-      <SettingsActions status={test.status}>
-        <button
-          type="button"
-          className="btn btn-secondary btn-sm"
-          onClick={test.run}
-          disabled={test.testing || !draft.url}
-        >
-          {test.testing ? <DotLoader size="xs" label={null} /> : null}
-          Test
-        </button>
-      </SettingsActions>
-    </SettingsRow>
-  );
-}
-
 function GotifyDetail() {
   const { settings, updateSettings } = useServerSettings();
   const { gotify } = settings.integrations;
@@ -251,13 +179,9 @@ function WebhookDetail({ index }: { index: number | null }) {
   const [url, setUrl] = useState(existing?.url ?? "");
   const [body, setBody] = useState(existing?.body ?? "");
   const [headers, setHeaders] = useState<WebhookHeader[]>(existing?.headers ?? []);
-  const [eventBodies, setEventBodies] = useState<EventBodies>(
-    Object.fromEntries(
-      Object.entries(existing?.eventBodies ?? {}).map(([key, value]) => [key, value ?? ""]),
-    ),
-  );
+  const [eventBodies, setEventBodies] = useState(() => editableEventBodies(existing?.eventBodies));
   const [missingUrl, setMissingUrl] = useState(false);
-  const draft: WebhookDraft = {
+  const draft = {
     url: url.trim(),
     body: body.trim() || null,
     headers,
@@ -342,19 +266,16 @@ function WebhookDetail({ index }: { index: number | null }) {
               }}
             />
           </SettingsRow>
-          {EVENTS.map(([key, label]) => (
-            <EventBodyRow
-              key={key}
-              event={key}
-              label={label}
-              draft={draft}
-              value={eventBodies[key] ?? ""}
-              onChange={(value) => {
-                test.reset();
-                setEventBodies({ ...eventBodies, [key]: value });
-              }}
-            />
-          ))}
+          <WebhookEventBodies
+            events={EVENTS}
+            draft={draft}
+            values={eventBodies}
+            useTest={useTest}
+            onChange={(next) => {
+              test.reset();
+              setEventBodies(next);
+            }}
+          />
           <SettingsRow label="Headers" stack>
             {headers.map((header, headerIndex) => (
               <div key={headerIndex} className="settings-webhook-header">

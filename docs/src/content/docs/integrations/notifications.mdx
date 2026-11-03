@@ -50,13 +50,14 @@ Under **Webhook events** in **Settings > Notifications**, turn on the events tha
 
 Open the webhook and select **Send test** to send the default body, or select **Test** under an event body to send that event's body. Aurral sends the current URL, body, and headers at once. For an event body test, `$event` is that event's name. The test ignores the event switches and does not save the webhook. It fills the placeholders with these values:
 
-| Placeholder   | Test value                      |
-| ------------- | ------------------------------- |
-| `$event`      | `webhookTest`                   |
-| `$flowName`   | `Aurral webhook test`           |
-| `$flowPath`   | `/aurral/test-webhook`          |
-| `$albumName`  | `Test album`                    |
-| `$artistName` | `Test artist`                   |
-| `$albumPath`  | `/music/Test artist/Test album` |
-| `$username`   | `webhook-test-user`             |
-| `$userId`     | `webhook-test-user`             |
+| Placeholder   | Test value             |
+| ------------- | ---------------------- |
+| `$event`      | `webhookTest`          |
+| `$flowName`   | `Aurral webhook test`  |
+| `$flowPath`   | `/aurral/test-webhook` |
+| `$albumName`  | `Test album`           |
+| `$artistName` | `Test artist`          |
+| `$username`   | `webhook-test-user`    |
+| `$userId`     | `webhook-test-user`    |
+
+`$albumPath` is `/music/Test artist/Test album` in a test.
