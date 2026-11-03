@@ -1110,7 +1110,7 @@ function LibraryPage() {
   const canChangeMonitoring = hasPermission("changeMonitoring");
   const canEditArtwork = !isPreviewLibrary && (canAddTracks || canChangeMonitoring);
   const libraryDestination = useLibraryDestination();
-  const { isAlbumDownloading, isTrackDownloading } = useActiveDownloads();
+  const { isAlbumDownloading, isMissingTrackDownloading } = useActiveDownloads();
   const canEditArtistMbid = hasPermission("addArtist");
 
   const openArtworkEditor = useCallback(
@@ -2467,8 +2467,13 @@ function LibraryPage() {
         const downloadState = trackDownloadStates[downloadKey];
         const backgroundDownload =
           !file &&
-          (isTrackDownloading({ ...track, artistName: artist?.name || track.artistName }) ||
-            isAlbumDownloading(album?.releaseGroupMbid || album?.mbid));
+          isMissingTrackDownloading(
+            { ...track, artistName: artist?.name || track.artistName },
+            {
+              albumMbid: album?.releaseGroupMbid || album?.mbid,
+              manager: resolveAlbumManager(album),
+            },
+          );
         const downloadPending =
           TRACK_DOWNLOAD_ACTIVE_STATUSES.has(downloadState?.status) || backgroundDownload;
         const downloadLabel = trackDownloadActionLabel(

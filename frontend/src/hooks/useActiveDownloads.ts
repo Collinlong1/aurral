@@ -11,6 +11,7 @@ import {
   indexActiveDownloads,
   isAlbumDownloading,
   isArtistDownloading,
+  isMissingTrackDownloading,
   isTrackDownloading,
   normalizeActiveDownloads,
 } from "../utils/activeDownloads.ts";
@@ -51,6 +52,10 @@ export function useActiveDownloads() {
         isArtistDownloading(index, artistMbid),
       isTrackDownloading: (track: ActiveDownloadTrack | null | undefined) =>
         isTrackDownloading(index, track),
+      isMissingTrackDownloading: (
+        track: ActiveDownloadTrack | null | undefined,
+        album: Parameters<typeof isMissingTrackDownloading>[2],
+      ) => isMissingTrackDownloading(index, track, album),
     };
   }, [data]);
 }
