@@ -88,6 +88,16 @@ const favoriteIdsFromFavorites = (favorites: LibraryFavoritesResponse) =>
     ),
   );
 
+// The address for a new page size: the page that keeps the first item of the
+// current page in view.
+export const pageSizeParams = (pageIndex: number, pageSize: number, nextSize: number) => {
+  const nextPage = Math.floor(((pageIndex - 1) * pageSize) / nextSize) + 1;
+  return {
+    size: nextSize === LIBRARY_PAGE_SIZE ? null : nextSize,
+    page: nextPage > 1 ? nextPage : null,
+  };
+};
+
 type LibraryViewRequest = {
   section?: LibraryViewId;
   albumId?: string | null;

@@ -138,6 +138,7 @@ import {
   LIBRARY_SORT_OPTIONS,
   libraryListParams,
   libraryTabForSection,
+  pageSizeParams,
   libraryViewQueryOptions,
   resolveLibrarySection,
   type LibraryViewLibrary,
@@ -823,15 +824,6 @@ function LibraryPage() {
     pageData && "pageSize" in pageData && pageData.kind === tab && tab !== "genres"
       ? Number(pageData.total) || 0
       : 0;
-  // A new page size keeps the first item of the current page in view.
-  const changePageSize = (nextSize: number) => {
-    const firstItem = (pageIndex - 1) * listPageSize;
-    const nextPage = Math.floor(firstItem / nextSize) + 1;
-    updateViewParams({
-      size: nextSize === LIBRARY_PAGE_SIZE ? null : nextSize,
-      page: nextPage > 1 ? nextPage : null,
-    });
-  };
 
   const setLibrary = useCallback(
     (updater: LibraryData | ((current: LibraryData) => LibraryData)) => {
@@ -3768,7 +3760,7 @@ function LibraryPage() {
           pageSize={listPageSize}
           pageSizes={LIBRARY_PAGE_SIZES}
           onPage={(nextPage) => setPageIndex(Math.min(Math.max(nextPage, 1), lastPage))}
-          onPageSize={changePageSize}
+          onPageSize={(size) => updateViewParams(pageSizeParams(pageIndex, listPageSize, size))}
         />
       )}
     </div>

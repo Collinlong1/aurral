@@ -24,3 +24,12 @@ test("the range names the items a page shows", () => {
   assert.equal(paginationRange(30, 72, 2117), "2,089–2,117 of 2,117");
   assert.equal(paginationRange(1, 100, 0), "0 of 0");
 });
+
+test("a new page size keeps the first item of the current page in view", async () => {
+  const { pageSizeParams } = await import("../../frontend/src/pages/libraryViewQuery.ts");
+  // Items 201–300 at 100 a page; at 25 a page item 201 is on page 9.
+  assert.deepEqual(pageSizeParams(3, 100, 25), { size: 25, page: 9 });
+  // Back to the default size drops both from the address.
+  assert.deepEqual(pageSizeParams(2, 25, 100), { size: null, page: null });
+  assert.deepEqual(pageSizeParams(5, 25, 50), { size: 50, page: 3 });
+});
