@@ -57,6 +57,7 @@ const DOWNLOAD_OWNER_COMMAND_NAMES = [
   "syncStaticPlaylistImport",
   "enqueueManualMissingSelection",
   "enqueueManualReplacementSelection",
+  "linkLibraryFileToJob",
   "approveBlockedJob",
   "denyBlockedJob",
   "cancelTrackDownload",
@@ -98,6 +99,9 @@ async function handleDownloadOwnerCommand(
     } else if (method === "enqueueManualReplacementSelection") {
       const { downloadTracker } = await import("./downloadJobs/downloadTracker.ts");
       result = downloadTracker.enqueueManualReplacementSelection(args[0], args[1]);
+    } else if (method === "linkLibraryFileToJob") {
+      const { runLinkLibraryFile } = await import("./downloadJobs/linkLibraryFile.ts");
+      result = await runLinkLibraryFile(args[0], args[1]);
     } else if (method === "approveBlockedJob" || method === "denyBlockedJob") {
       const review = await import("./downloadJobs/blockedJobReview.ts");
       result = await review[method](args[0]);

@@ -365,7 +365,7 @@ export function jobDownloadedItsFile(job: DownloadJob | null | undefined) {
   );
 }
 
-function noPlaylistDownloadedFile(filePath: string, jobId: string, downloadRoot: string) {
+export function noPlaylistDownloadedFile(filePath: string, jobId: string, downloadRoot: string) {
   const resolved = path.resolve(filePath);
   return !downloadTracker
     .getAll()
@@ -1133,7 +1133,7 @@ export async function moveHandedOverTracksToLidarr(
   return { moved, deleted };
 }
 
-async function refreshPlaylistAfterReuse(
+export async function refreshPlaylistAfterReuse(
   playlistType: string,
   shouldScheduleLibraryScan = false,
   changedPaths: string[] | null = null,
