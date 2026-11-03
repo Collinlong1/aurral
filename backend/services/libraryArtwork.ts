@@ -24,8 +24,9 @@ import { getArtistImage } from "./imageService.ts";
 import { getCustomArtwork } from "./customArtworkService.ts";
 import { logger, safeLogDiagnostic } from "./logger.ts";
 import getSharp from "./sharpConfig.ts";
-import { readLibraryMetadata } from "./libraryMetadata.ts";
+import { readLibraryMetadata, readRawLibraryMetadata } from "./libraryMetadata.ts";
 import { fetchReleaseGroupCoverUrl } from "./releaseGroupCoverService.ts";
+import { albumSharedFolder } from "./libraryAlbumTitles.ts";
 
 export type LibraryArtworkKind = "album" | "artist";
 type Artwork = { buffer: Uint8Array; contentType: string };
@@ -63,8 +64,10 @@ const albumVersionsStmt = db.prepare<
     files: number;
     bytes: number;
     modified: number;
+    box_title: string | null;
   }
 >(`SELECT album.id, album.mbid, album.release_group_mbid,
+    json_extract(album.metadata_json, '$.canonicalTitle') AS box_title,
     COUNT(media.id) AS files,
     COALESCE(SUM(media.size), 0) AS bytes,
     COALESCE(MAX(media.mtime_ms), 0) AS modified
@@ -145,6 +148,7 @@ const albumVersions = (json: string, revision: string) =>
           row.bytes,
           row.modified,
           row.release_group_mbid ?? row.mbid ?? "",
+          row.box_title ?? "",
         ),
       ]),
   );
@@ -279,7 +283,42 @@ async function findArtistPhoto(mbid: string, artistName: string): Promise<Artwor
   return { artwork: null, transient: Boolean(photo?.transient || image.transientError) };
 }
 
+// The folder that holds every disc of a box set, unless that is its
+// artist's folder.
+function boxSetFolder(albumId: number, artistName: string) {
+  const folder = albumSharedFolder(albumId);
+  const artist = String(artistName || "")
+    .trim()
+    .toLowerCase();
+  return folder && path.basename(folder).toLowerCase() !== artist ? folder : null;
+}
+
+// A box set Aurral named after its release group shows the set's own cover,
+// not the first disc's: a cover image in the set's folder, then the release
+// group's cover. It is never written into the disc folders, which keep
+// their own covers for players that list each disc.
+async function findBoxSetCover(
+  albumId: number,
+  album: NonNullable<ReturnType<typeof albumStmt.get>>,
+): Promise<ArtworkLookup | null> {
+  const metadata = readRawLibraryMetadata(album.metadata_json);
+  if (typeof metadata.canonicalTitle !== "string") return null;
+  const folder = boxSetFolder(albumId, album.artist_name);
+  const sidecar = folder ? await readSidecarCover(folder) : null;
+  if (sidecar) return { artwork: sidecar, fromFiles: true };
+  if (!album.release_group_mbid) return null;
+  const cover = await fetchReleaseGroupCoverUrl(album.release_group_mbid, {
+    artistName: album.artist_name,
+    albumTitle: album.title,
+  });
+  const download = cover?.imageUrl ? await downloadArtwork(cover.imageUrl) : null;
+  return download?.artwork ? { ...download, fromFiles: true } : null;
+}
+
 async function findAlbumCover(albumId: number): Promise<ArtworkLookup> {
+  const boxSet = albumStmt.get(albumId);
+  const boxSetCover = boxSet ? await findBoxSetCover(albumId, boxSet) : null;
+  if (boxSetCover) return boxSetCover;
   const fileArtwork = await readFileArtwork(albumId);
   if (fileArtwork) return { artwork: fileArtwork, fromFiles: true };
   const album = albumStmt.get(albumId);
