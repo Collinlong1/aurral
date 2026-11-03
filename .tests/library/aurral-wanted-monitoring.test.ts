@@ -345,3 +345,35 @@ function getJob(id: Parameters<typeof downloadTracker.getJob>[0]) {
   assert.ok(job, `Expected download job ${id}`);
   return job;
 }
+
+test("Wanted lists cancelled tracks, except those of a cancelled album request", async () => {
+  const { cancelDownloadJob } =
+    await import("../../backend/services/downloadJobs/downloadCancellation.ts");
+  const addCancelled = (name: string, requestGroupId: string | null = null) => {
+    const jobId = downloadTracker.addJob(
+      { artistName: "Cancel Artist", trackName: name, managedBy: "aurral", requestGroupId },
+      "library",
+    );
+    assert.ok(jobId != null);
+    assert.equal(downloadTracker.setCancelled(jobId), true);
+    return jobId;
+  };
+  const cancelledTrack = addCancelled("Cancelled Track");
+  const albumTrack = addCancelled("Cancelled Album Track", "group-1");
+  cancelDownloadJob(albumTrack);
+
+  const jobs = new Map(
+    (await request<{ id: string; albumCancelled?: boolean }[]>("/api/playlists/jobs")).map(
+      (job) => [job.id, job],
+    ),
+  );
+  assert.equal(jobs.get(cancelledTrack)?.albumCancelled, undefined);
+  assert.equal(jobs.get(albumTrack)?.albumCancelled, true);
+
+  const result = await request<{ requeued: number }>("/api/playlists/research-missing", {
+    method: "POST",
+  });
+  assert.equal(result.requeued, 1);
+  assert.equal(getJob(cancelledTrack).status, "pending");
+  assert.equal(getJob(albumTrack).status, "cancelled");
+});

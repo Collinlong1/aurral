@@ -414,7 +414,7 @@ export class DownloadWorker {
     const isUnmonitored = indexUnmonitoredJobs();
     let requeued = 0;
     for (const job of jobs) {
-      if (job.status !== "failed" || isUnmonitored(job)) continue;
+      if (!downloadTracker.isWantedMissing(job) || isUnmonitored(job)) continue;
       const priorError = String(job?.error || "").trim();
       const reason = ["Manual re-search", priorError].filter(Boolean).join(" • ");
       if (downloadTracker.setPending(job.id, reason || null, { asRetryCycle: true })) {

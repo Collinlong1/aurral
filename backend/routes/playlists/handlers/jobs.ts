@@ -104,8 +104,7 @@ function getAccessibleManualSearchJob(
     }
     return job;
   }
-  if (job.status !== "failed" || job.upgradeForJobId) return null;
-  return job;
+  return downloadTracker.isWantedMissing(job) ? job : null;
 }
 
 function toPublicJob(job: DownloadJob, profile: ReturnType<typeof getQualityProfile>) {
@@ -277,6 +276,9 @@ export default new Hono<AppEnv>()
         jobs.map((job) => ({
           ...toPublicJob(job, profile),
           monitored: !isUnmonitored(job),
+          ...(job.status === "cancelled" && !downloadTracker.isWantedMissing(job)
+            ? { albumCancelled: true }
+            : {}),
           ...(customArtwork.has(String(job.id))
             ? {
                 artworkUrl: buildCustomArtworkUrl(
