@@ -31,26 +31,6 @@ export const defaultData = {
       artistSource: "tags" as "tags" | "library",
     },
     integrations: {
-      navidrome: {
-        url: "",
-        username: "",
-        password: "",
-        prefixOwnerUsername: true,
-      },
-      plex: {
-        url: "",
-        token: "",
-        clientId: "",
-        machineIdentifier: "",
-        downloadsPath: "",
-        plexUsername: "",
-        mainLibrarySectionId: "",
-      },
-      jellyfin: {
-        url: "",
-        apiKey: "",
-        userId: "",
-      },
       lastfm: {
         apiKey: "",
         apiSecret: "",

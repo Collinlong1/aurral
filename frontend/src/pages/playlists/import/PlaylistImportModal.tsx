@@ -8,6 +8,8 @@ import { Select } from "../../../components/Select";
 import { parseResponse, type InferRequestType, type InferResponseType } from "hono/client";
 import { playlistImportsClient } from "../../../utils/api/clients/playlistImports.ts";
 import { shareLinksClient } from "../../../utils/api/clients/shareLinks.ts";
+import { staticPlaylistsClient } from "../../../utils/api/clients/staticPlaylists.ts";
+import { parseM3u, type M3uTrack } from "../../../../../lib/m3u.ts";
 import { scrobblingClient } from "../../../utils/api/clients/scrobbling.ts";
 import { formatTrackTotal } from "../playlistPageUtils.ts";
 import { getAppBasePath, normalizeBasePathWithTrailingSlash } from "../../../utils/basePath";
@@ -25,7 +27,8 @@ declare global {
   }
 }
 
-type ImportSource = "spotify" | "listenbrainz" | "lastfm" | "youtube" | "aurral" | "m3u";
+type ImportSource = "spotify" | "listenbrainz" | "lastfm" | "youtube" | "aurral" | "file" | "m3u";
+type FilePlaylist = { name: string; tracks: M3uTrack[]; skipped: number };
 type ImportPlaylist = {
   id: string;
   name: string;
@@ -337,6 +340,8 @@ export function PlaylistImportModal({
   const [lastfmUsernameDraft, setLastfmUsernameDraft] = useState<string | null>(null);
   const [lastfmRequestedUsername, setLastfmRequestedUsername] = useState<string | null>(null);
   const [youtubeUrl, setYoutubeUrl] = useState("");
+  const [filePlaylist, setFilePlaylist] = useState<FilePlaylist | null>(null);
+  const [fileError, setFileError] = useState("");
   const [playlistQuery, setPlaylistQuery] = useState("");
   const [pickedPlaylist, setPickedPlaylist] = useState<ImportPlaylist | null>(null);
   const [playlistNameDraft, setPlaylistNameDraft] = useState<string | null>(null);
@@ -361,6 +366,8 @@ export function PlaylistImportModal({
     setLastfmUsernameDraft(null);
     setLastfmRequestedUsername(null);
     setYoutubeUrl("");
+    setFilePlaylist(null);
+    setFileError("");
     setPlaylistQuery("");
     setPickedPlaylist(null);
     setPlaylistNameDraft(null);
@@ -544,7 +551,13 @@ export function PlaylistImportModal({
       parseResponse(shareLinksClient.import.$post({ json })),
   });
 
-  const importing = externalImport.isPending || shareImport.isPending;
+  const fileImport = useMutation({
+    mutationFn: (
+      json: InferRequestType<(typeof staticPlaylistsClient)["shared-playlists"]["$post"]>["json"],
+    ) => parseResponse(staticPlaylistsClient["shared-playlists"].$post({ json })),
+  });
+
+  const importing = externalImport.isPending || shareImport.isPending || fileImport.isPending;
   const spotifyLoading =
     connectSpotify.isPending ||
     disconnectSpotifyAccount.isPending ||
@@ -569,7 +582,9 @@ export function PlaylistImportModal({
             name: sharedPlaylist.manifest.title,
             trackCount: sharedPlaylist.tracks.length,
           }
-        : pickedPlaylist;
+        : source === "file"
+          ? filePlaylist && { id: filePlaylist.name, name: filePlaylist.name }
+          : pickedPlaylist;
   const previewPayload = source === "youtube" ? youtubePreview.data : previewQuery.data;
   const previewLoading = source === "youtube" ? youtubePreview.isPending : previewQuery.isLoading;
   const previewTrackCount = Number(previewPayload?.trackCount || 0);
@@ -606,6 +621,8 @@ export function PlaylistImportModal({
     setPlaylistNameDraft(null);
     setYoutubeUrl("");
     youtubePreview.reset();
+    setFilePlaylist(null);
+    setFileError("");
     setShareUrl("");
     setRequestedShareUrl("");
   };
@@ -707,6 +724,42 @@ export function PlaylistImportModal({
     });
   };
 
+  const handleChooseFile = async (file: File | undefined) => {
+    if (!file) return;
+    setPlaylistNameDraft(null);
+    const { name, tracks, skipped } = parseM3u(await file.text());
+    if (!tracks.length) {
+      setFilePlaylist(null);
+      setFileError("No tracks with an artist and title in this file.");
+      return;
+    }
+    setFileError("");
+    setFilePlaylist({ name: name || file.name.replace(/\.m3u8?$/i, ""), tracks, skipped });
+  };
+
+  const handleImportFile = () => {
+    if (!filePlaylist || importing) return;
+    const baseName = String(playlistName || filePlaylist.name).trim();
+    if (!baseName) {
+      showError?.("Playlist name is required");
+      return;
+    }
+    const name = reserveUniqueName(new Set(reservedNameKeys), baseName);
+    fileImport.mutate(
+      { name, sourceName: "M3U file", tracks: filePlaylist.tracks },
+      {
+        onSuccess: () => {
+          showSuccess?.(`Queued import of ${name}`);
+          onImported?.();
+          onClose?.();
+        },
+        onError: (error) => {
+          showError?.(getApiErrorMessage(error, "Could not import this file."));
+        },
+      },
+    );
+  };
+
   const handleLoadShare = () => {
     const url = shareUrl.trim();
     if (!url || importing) return;
@@ -772,7 +825,9 @@ export function PlaylistImportModal({
               ? "Paste a share link or code from aurral.org."
               : source === "m3u"
                 ? "Import .m3u and .m3u8 playlists from a folder on the server."
-                : undefined
+                : source === "file"
+                  ? "Choose an M3U playlist exported from any player."
+                  : undefined
       }
       onClose={onClose}
       disableClose={importing}
@@ -789,9 +844,22 @@ export function PlaylistImportModal({
           {source === "m3u" ? null : (
             <button
               type="button"
-              onClick={source === "aurral" ? handleImportShare : handleImportExternal}
+              onClick={
+                source === "aurral"
+                  ? handleImportShare
+                  : source === "file"
+                    ? handleImportFile
+                    : handleImportExternal
+              }
               className="btn btn-primary"
-              disabled={importing || !(source === "aurral" ? sharedPlaylist : canImportExternal)}
+              disabled={
+                importing ||
+                !(source === "aurral"
+                  ? sharedPlaylist
+                  : source === "file"
+                    ? filePlaylist
+                    : canImportExternal)
+              }
             >
               {importing ? (
                 <DotLoader size="sm" label={null} />
@@ -817,7 +885,8 @@ export function PlaylistImportModal({
               { id: "listenbrainz", label: "ListenBrainz" },
               { id: "youtube", label: "YouTube Music" },
               { id: "aurral", label: "Aurral share" },
-              ...(user?.role === "admin" ? [{ id: "m3u", label: "M3U files" } as const] : []),
+              { id: "file", label: "M3U" },
+              ...(user?.role === "admin" ? [{ id: "m3u", label: "M3U folder" } as const] : []),
             ] as const
           ).map((option) => (
             <button
@@ -841,6 +910,69 @@ export function PlaylistImportModal({
               onClose();
             }}
           />
+        ) : source === "file" ? (
+          <div className="playlist-import__share">
+            <div className="playlist-modal__fields">
+              <label className="playlist-import__field-label" htmlFor="playlist-import-file">
+                Playlist file
+              </label>
+              <input
+                id="playlist-import-file"
+                type="file"
+                className="input"
+                accept=".m3u,.m3u8,audio/x-mpegurl,audio/mpegurl"
+                onChange={(event) => void handleChooseFile(event.target.files?.[0])}
+                disabled={importing}
+                aria-describedby={fileError ? "playlist-import-file-error" : undefined}
+              />
+              {fileError ? (
+                <p id="playlist-import-file-error" className="settings-page__error" role="alert">
+                  {fileError}
+                </p>
+              ) : null}
+            </div>
+            {filePlaylist ? (
+              <>
+                <div className="playlist-modal__fields">
+                  <label
+                    className="playlist-import__field-label"
+                    htmlFor="playlist-import-file-name"
+                  >
+                    Name in Aurral
+                  </label>
+                  <input
+                    id="playlist-import-file-name"
+                    type="text"
+                    className="input"
+                    value={playlistName}
+                    onChange={(event) => setPlaylistNameDraft(event.target.value)}
+                    disabled={importing}
+                  />
+                </div>
+                <div className="playlist-import__summary" aria-live="polite">
+                  <div className="playlist-import__summary-top">
+                    <span className="flow-page__badge flow-page__badge--count">
+                      {filePlaylist.tracks.length} importable
+                    </span>
+                    {filePlaylist.skipped > 0 ? (
+                      <span className="playlist-import__summary-note">
+                        {filePlaylist.skipped} skipped
+                      </span>
+                    ) : null}
+                  </div>
+                  <p className="playlist-import__summary-sample">
+                    {filePlaylist.tracks
+                      .slice(0, 3)
+                      .map((track) => `${track.artistName} · ${track.trackName}`)
+                      .join(", ")}
+                    {filePlaylist.tracks.length > 3
+                      ? `, +${filePlaylist.tracks.length - 3} more`
+                      : ""}
+                  </p>
+                </div>
+              </>
+            ) : null}
+          </div>
         ) : source === "aurral" ? (
           <div className="playlist-import__share">
             {sharedPlaylist ? (
