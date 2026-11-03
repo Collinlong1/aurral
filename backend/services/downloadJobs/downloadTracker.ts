@@ -1747,7 +1747,7 @@ export class DownloadTracker {
   // Wanted > Missing: a failed track, or a cancelled one that can be searched
   // again. Tracks of a cancelled album request stay out until the album is
   // requested again.
-  isWantedMissing(job: DownloadJob | null | undefined) {
+  isWantedMissing(job: DownloadJob | null | undefined): job is DownloadJob {
     if (!job || job.upgradeForJobId) return false;
     if (job.status === "failed") return true;
     return job.status === "cancelled" && !this._isCancelledAlbumJob(job);

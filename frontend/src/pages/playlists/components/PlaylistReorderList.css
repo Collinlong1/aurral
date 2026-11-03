@@ -1,0 +1,99 @@
+.playlist-reorder {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.playlist-reorder__item {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.375rem 0.5rem;
+  border: 1px solid var(--aurral-border);
+  border-radius: var(--aurral-radius-sm);
+  background: var(--aurral-surface);
+}
+
+.playlist-reorder__item.is-dragging {
+  z-index: var(--aurral-z-raised);
+  border-color: var(--aurral-border-strong);
+  box-shadow: var(--aurral-shadow-popover);
+}
+
+.playlist-reorder__handle,
+.playlist-reorder__move {
+  display: inline-flex;
+  width: 1.75rem;
+  height: 1.75rem;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--aurral-radius-sm);
+  background: transparent;
+  color: var(--aurral-text-subtle);
+}
+
+.playlist-reorder__handle {
+  cursor: grab;
+  touch-action: none;
+}
+
+.playlist-reorder__handle svg,
+.playlist-reorder__move svg {
+  width: 1rem;
+  height: 1rem;
+}
+
+.playlist-reorder__handle:focus-visible,
+.playlist-reorder__move:focus-visible {
+  color: var(--aurral-text);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .playlist-reorder__handle:hover,
+  .playlist-reorder__move:not(:disabled):hover {
+    color: var(--aurral-text);
+  }
+}
+
+.playlist-reorder__move:disabled {
+  opacity: 0.35;
+}
+
+.playlist-reorder__number {
+  min-width: 1.75rem;
+  color: var(--aurral-text-muted);
+  font-size: var(--aurral-font-xs);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.playlist-reorder__copy {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+}
+
+.playlist-reorder__name,
+.playlist-reorder__artist {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.playlist-reorder__name {
+  color: var(--aurral-text);
+  font-size: var(--aurral-font-sm);
+  font-weight: 600;
+}
+
+.playlist-reorder__artist {
+  color: var(--aurral-text-muted);
+  font-size: var(--aurral-font-xs);
+}

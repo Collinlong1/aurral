@@ -1,6 +1,7 @@
 import { useEffect, useRef, useMemo, useState, useCallback, type MouseEvent } from "react";
 import type { IconComponent } from "../../../components/icons";
 import {
+  ArrowUpDown,
   Download,
   Info,
   ImagePlus,
@@ -32,6 +33,7 @@ import {
 } from "../../ArtistDetails/components/TrackPlaylistMenu";
 import { LibraryItemMenu } from "../../../components/LibraryItemMenu";
 import { TrackList } from "../../../components/TrackList";
+import { PlaylistReorderList } from "./PlaylistReorderList.tsx";
 import { useAlbumTrackListToolbar } from "../../../hooks/useAlbumTrackListToolbar";
 import { useQueueTrackActions } from "../../../hooks/useQueueTrackActions";
 import {
@@ -460,6 +462,8 @@ export interface PlaylistTracksPanelProps<T extends PlaylistPanelTrack> {
   onBulkAddToLibrary?: (tracks: T[]) => unknown;
   onBulkMoveToPlaylist?: (tracks: T[], target: PlaylistTrackTarget) => unknown;
   bulkActionLoading?: boolean;
+  // Saves a new track order. Resolves true once it is saved.
+  onReorder?: (tracks: T[]) => Promise<boolean>;
 }
 
 export function PlaylistTracksPanel<T extends PlaylistPanelTrack>({
@@ -509,11 +513,14 @@ export function PlaylistTracksPanel<T extends PlaylistPanelTrack>({
   onBulkAddToLibrary,
   onBulkMoveToPlaylist,
   bulkActionLoading = false,
+  onReorder,
 }: PlaylistTracksPanelProps<T>) {
   const [sortKey, setSortKey] = useState("index");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
   const [editMode, setEditMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [reorderDraft, setReorderDraft] = useState<T[] | null>(null);
+  const [reorderSaving, setReorderSaving] = useState(false);
   const trackOrderKey = useMemo(() => tracks.map((track) => track.id).join("\n"), [tracks]);
 
   useEffect(() => {
@@ -521,7 +528,24 @@ export function PlaylistTracksPanel<T extends PlaylistPanelTrack>({
     setSortDirection("asc");
     setEditMode(false);
     setSelectedIds(new Set());
+    setReorderDraft(null);
   }, [trackOrderKey]);
+
+  const reorderChanged =
+    reorderDraft !== null && reorderDraft.some((track, index) => track.id !== tracks[index]?.id);
+  const handleSaveOrder = async () => {
+    if (!reorderDraft || !onReorder) return;
+    if (!reorderChanged) {
+      setReorderDraft(null);
+      return;
+    }
+    setReorderSaving(true);
+    try {
+      if (await onReorder(reorderDraft)) setReorderDraft(null);
+    } finally {
+      setReorderSaving(false);
+    }
+  };
 
   const {
     playTrack,
@@ -751,9 +775,32 @@ export function PlaylistTracksPanel<T extends PlaylistPanelTrack>({
 
   return (
     <div className="collection-tracks">
-      {allowBulkEdit && tracks.length > 0 ? (
+      {(allowBulkEdit || onReorder) && tracks.length > 0 ? (
         <div className="collection-tracks__toolbar">
-          {editMode ? (
+          {reorderDraft ? (
+            <>
+              <span className="flow-page__bulk-count" role="status">
+                Drag tracks into a new order
+              </span>
+              <button
+                type="button"
+                onClick={() => setReorderDraft(null)}
+                className="btn btn-secondary btn-sm"
+                disabled={reorderSaving}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveOrder}
+                className="btn btn-primary btn-sm"
+                disabled={reorderSaving}
+              >
+                {reorderSaving ? <DotLoader size="sm" label={null} /> : null}
+                Save order
+              </button>
+            </>
+          ) : editMode ? (
             <>
               <span className="flow-page__bulk-count" role="status">
                 {selectedCount} selected
@@ -815,14 +862,28 @@ export function PlaylistTracksPanel<T extends PlaylistPanelTrack>({
               </button>
             </>
           ) : (
-            <TooltipButton
-              onClick={() => setEditMode(true)}
-              className="native-library-icon-button"
-              label="Select tracks"
-              aria-label="Select tracks"
-            >
-              <Pencil aria-hidden="true" />
-            </TooltipButton>
+            <>
+              {onReorder && tracks.length > 1 ? (
+                <TooltipButton
+                  onClick={() => setReorderDraft(tracks)}
+                  className="native-library-icon-button"
+                  label="Reorder tracks"
+                  aria-label="Reorder tracks"
+                >
+                  <ArrowUpDown aria-hidden="true" />
+                </TooltipButton>
+              ) : null}
+              {allowBulkEdit ? (
+                <TooltipButton
+                  onClick={() => setEditMode(true)}
+                  className="native-library-icon-button"
+                  label="Select tracks"
+                  aria-label="Select tracks"
+                >
+                  <Pencil aria-hidden="true" />
+                </TooltipButton>
+              ) : null}
+            </>
           )}
         </div>
       ) : null}
@@ -840,6 +901,13 @@ export function PlaylistTracksPanel<T extends PlaylistPanelTrack>({
           {activityHint ? <DotLoader size="sm" label={null} /> : null}
           <span>{activityHint || emptyMessage}</span>
         </div>
+      ) : reorderDraft ? (
+        <PlaylistReorderList
+          label={label}
+          tracks={reorderDraft}
+          disabled={reorderSaving}
+          onChange={setReorderDraft}
+        />
       ) : (
         <TrackList
           label={label}

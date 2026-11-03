@@ -34,6 +34,10 @@ import {
   isDownloadJobCancelled,
   restoreDownloadJobCancellations,
 } from "../../../services/downloadJobs/downloadCancellation.ts";
+import {
+  PlaylistOrderError,
+  reorderStaticPlaylistTracks,
+} from "../../../services/playlists/playlistTrackOrder.ts";
 import { asAppError } from "../../../../lib/errors.ts";
 import { validate } from "../../../middleware/validate.ts";
 import { errorStatus } from "../../shared/errorStatus.ts";
@@ -312,6 +316,26 @@ export default new Hono<AppEnv>()
           { error: "Failed to add playlist tracks", message: asAppError(error)?.message },
           500,
         );
+      }
+    },
+  )
+  .put(
+    "/shared-playlists/:playlistId/track-order",
+    requireFlowAccess,
+    validate("json", v.object({ jobIds: v.array(v.string()) })),
+    (c) => {
+      const playlistId = c.req.param("playlistId");
+      if (!getAccessibleStaticPlaylist(c.var.user, playlistId)) {
+        return c.json({ error: "Playlist not found" }, 404);
+      }
+      try {
+        reorderStaticPlaylistTracks(playlistId, c.req.valid("json").jobIds);
+        return c.json({ success: true }, 200);
+      } catch (error) {
+        if (error instanceof PlaylistOrderError) {
+          return c.json({ error: error.message }, 409);
+        }
+        throw error;
       }
     },
   )
