@@ -3,6 +3,8 @@ import { useMutation } from "@tanstack/react-query";
 import { parseResponse, type InferResponseType } from "hono/client";
 import { Music2 } from "../../../components/icons";
 import { DotLoader } from "../../../components/DotLoader";
+import PillToggle from "../../../components/PillToggle";
+import { SettingsGroup, SettingsNote, SettingsRow } from "../../Settings/SettingsLayout.tsx";
 import { playlistImportsClient } from "../../../utils/api/clients/playlistImports.ts";
 import { getApiErrorMessage } from "../../../utils/api/errors.ts";
 
@@ -104,84 +106,103 @@ export function M3uImportPanel({
     setSelected(next);
   };
 
+  const selectable = playlists.filter((playlist) => !playlist.alreadyImported);
+  const allSelected = selectable.length > 0 && selectable.every((p) => selected.has(p.path));
+
   return (
-    <div className="playlist-import__share">
-      <label className="playlist-import__field-label" htmlFor="m3u-import-folder">
-        Playlists folder on the server
-      </label>
-      <form
-        className="playlist-import__selected"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (folder.trim()) scan.mutate(folder.trim());
-        }}
-      >
-        <input
-          id="m3u-import-folder"
-          className="input"
-          value={folder}
-          spellCheck={false}
-          autoComplete="off"
-          placeholder="/data/media/playlists"
-          onChange={(event) => setFolder(event.target.value)}
-          disabled={busy}
-        />
-        <button
-          type="submit"
-          className="btn btn-secondary btn-sm"
-          disabled={busy || !folder.trim()}
+    <>
+      <SettingsGroup>
+        <SettingsRow
+          label="Playlists folder"
+          htmlFor="m3u-import-folder"
+          help="A folder on the server. Aurral reads it and its subfolders for .m3u and .m3u8 files."
+          stack
         >
-          {scan.isPending ? <DotLoader size="xs" label={null} /> : null}
-          Scan
-        </button>
-      </form>
+          <form
+            className="playlist-import__load"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (folder.trim()) scan.mutate(folder.trim());
+            }}
+          >
+            <input
+              id="m3u-import-folder"
+              type="text"
+              className="input"
+              value={folder}
+              spellCheck={false}
+              autoComplete="off"
+              placeholder="/data/media/playlists"
+              onChange={(event) => setFolder(event.target.value)}
+              disabled={busy}
+            />
+            <button type="submit" className="btn btn-secondary" disabled={busy || !folder.trim()}>
+              {scan.isPending ? <DotLoader size="sm" label={null} /> : null}
+              Scan
+            </button>
+          </form>
+        </SettingsRow>
+      </SettingsGroup>
 
-      {scan.data ? (
-        playlists.length === 0 ? (
-          <p className="playlist-import__choice-hint">No .m3u or .m3u8 files in that folder.</p>
-        ) : (
-          <>
-            <div className="playlist-import__list-panel">
-              <div className="playlist-import__playlist-list">
-                {playlists.map((playlist) => (
-                  <label key={playlist.path} className="playlist-import__playlist-option">
-                    <span className="playlist-import__selected-copy">
-                      <span className="playlist-import__playlist-name">{playlist.name}</span>
-                      <span className="playlist-import__playlist-meta">
-                        {playlist.alreadyImported ? "Already imported" : playlistMeta(playlist)}
-                      </span>
-                    </span>
-                    <input
-                      type="checkbox"
-                      className="artist-checkbox"
-                      aria-label={`Import ${playlist.name}`}
-                      checked={selected.has(playlist.path)}
-                      disabled={busy || playlist.alreadyImported}
-                      onChange={() => toggle(playlist.path)}
-                    />
-                  </label>
-                ))}
-              </div>
-            </div>
+      {scan.data && playlists.length === 0 ? (
+        <SettingsNote>No .m3u or .m3u8 files in that folder.</SettingsNote>
+      ) : null}
 
-            <div className="playlist-import__choices">
-              {OPTIONS.map(([key, label, hint]) => (
-                <label key={key} className="playlist-import__choice">
+      {playlists.length > 0 ? (
+        <>
+          <SettingsGroup
+            title="Playlists"
+            actions={
+              selectable.length > 0 ? (
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={() =>
+                    setSelected(allSelected ? new Set() : new Set(selectable.map((p) => p.path)))
+                  }
+                  disabled={busy}
+                >
+                  {allSelected ? "Select none" : "Select all"}
+                </button>
+              ) : null
+            }
+          >
+            {playlists.map((playlist, index) => {
+              const id = `m3u-import-playlist-${index}`;
+              return (
+                <SettingsRow
+                  key={playlist.path}
+                  label={playlist.name}
+                  htmlFor={id}
+                  help={playlist.alreadyImported ? "Already imported" : playlistMeta(playlist)}
+                >
                   <input
+                    id={id}
                     type="checkbox"
                     className="artist-checkbox"
-                    checked={options[key]}
-                    onChange={(event) => setOptions({ ...options, [key]: event.target.checked })}
-                    disabled={busy}
+                    checked={selected.has(playlist.path)}
+                    disabled={busy || playlist.alreadyImported}
+                    onChange={() => toggle(playlist.path)}
                   />
-                  <span className="playlist-import__selected-copy">
-                    <span>{label}</span>
-                    <span className="playlist-import__choice-hint">{hint}</span>
-                  </span>
-                </label>
-              ))}
-            </div>
+                </SettingsRow>
+              );
+            })}
+          </SettingsGroup>
 
+          <SettingsGroup title="Options">
+            {OPTIONS.map(([key, label, hint]) => (
+              <SettingsRow key={key} label={label} help={hint}>
+                <PillToggle
+                  checked={options[key]}
+                  aria-label={label}
+                  onChange={(event) => setOptions({ ...options, [key]: event.target.checked })}
+                  disabled={busy}
+                />
+              </SettingsRow>
+            ))}
+          </SettingsGroup>
+
+          <div>
             <button
               type="button"
               className="btn btn-primary"
@@ -195,9 +216,9 @@ export function M3uImportPanel({
               )}
               Import {selected.size} playlist{selected.size === 1 ? "" : "s"}
             </button>
-          </>
-        )
+          </div>
+        </>
       ) : null}
-    </div>
+    </>
   );
 }
