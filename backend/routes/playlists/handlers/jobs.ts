@@ -64,6 +64,7 @@ import {
   listDiskFiles,
   type ImportDiskFileResult,
 } from "../../../services/downloadJobs/importDiskFile.ts";
+import { getLibraryCoverUrlsForJobs } from "../../../services/playlists/playlistTrackCovers.ts";
 import { asAppError } from "../../../../lib/errors.ts";
 import { validate } from "../../../middleware/validate.ts";
 import { isErrorStatus } from "../../shared/errorStatus.ts";
@@ -234,6 +235,7 @@ export default new Hono<AppEnv>()
       const profile = getQualityProfile();
       const accessibleJobs = filterJobsForUser(user, jobs);
       const libraryOwnership = getLibraryTrackOwnershipBatch(accessibleJobs);
+      const libraryCovers = getLibraryCoverUrlsForJobs(accessibleJobs);
       const customArtwork = getCustomArtworkMap(
         "playlist-track",
         accessibleJobs.map((job) => job.id),
@@ -242,6 +244,7 @@ export default new Hono<AppEnv>()
         accessibleJobs.map((job, index) => ({
           ...toPublicJob(job, profile),
           libraryOwned: libraryOwnership[index] === true,
+          libraryCoverUrl: libraryCovers.get(String(job.id)) ?? null,
           ...(customArtwork.has(String(job.id))
             ? {
                 artworkUrl: buildCustomArtworkUrl(

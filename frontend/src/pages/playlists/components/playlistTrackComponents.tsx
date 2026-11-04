@@ -618,8 +618,13 @@ export function PlaylistTracksPanel<T extends PlaylistPanelTrack>({
     setSelectedIds(new Set());
   };
 
+  // Custom art first, then the album's online cover, then the Library album's
+  // own cover, which a track imported or linked from a file often relies on.
   const trackCover = (track: T) =>
-    track.artworkUrl || artworkByAlbumMbid[String(track.albumMbid || "")] || "";
+    track.artworkUrl ||
+    artworkByAlbumMbid[String(track.albumMbid || "")] ||
+    track.libraryCoverUrl ||
+    "";
   const toQueueTrack = (track: T) =>
     normalizePlaylistQueueTrack(
       { ...track, artworkUrl: trackCover(track) },

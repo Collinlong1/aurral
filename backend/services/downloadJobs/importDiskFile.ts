@@ -1,3 +1,4 @@
+import { constants } from "fs";
 import fs from "fs/promises";
 import path from "path";
 import { parseFile } from "music-metadata";
@@ -25,12 +26,14 @@ import {
   resolveExistingBrowsePath,
 } from "../downloadFolderConfig.ts";
 import { AUDIO_EXTENSIONS } from "../libraryFileScanner.ts";
+import { ALBUM_IMAGE_EXTENSIONS } from "../libraryFiles/fileTransfer.ts";
 import { resolveLocalPath } from "../pathMappings.ts";
 import { logger, safeLogDiagnostic } from "../logger.ts";
 
 // A missing track can be filled with an audio file from anywhere Aurral can
 // read, such as a folder Lidarr also uses. Aurral copies the file into the
-// Library like a download, tags it, and leaves the original where it is.
+// Library like a download, tags it, and leaves the original where it is. The
+// album art beside it, such as cover.jpg, comes along the same way.
 
 export type ImportDiskFileResult =
   | { ok: true; path: string }
@@ -65,6 +68,41 @@ export async function listDiskFiles(requestedPath: unknown) {
         left.name.localeCompare(right.name, undefined, { numeric: true }),
     );
   return { path: current, displayPath: formatBrowseDisplayPath(current), parent, roots, entries };
+}
+
+// More images than this in the source folder means it is not one album's
+// folder, so none are copied.
+const MAX_ALBUM_IMAGES = 10;
+
+// Copies the album art in a track's source folder into its Library folder,
+// like a Library ingest does. Images already in the Library folder are kept.
+export async function copyAlbumImages(sourceDir: string, targetDir: string) {
+  const entries = await fs.readdir(sourceDir, { withFileTypes: true }).catch(() => []);
+  const images = entries.filter(
+    (entry) =>
+      entry.isFile() &&
+      !entry.name.startsWith(".") &&
+      ALBUM_IMAGE_EXTENSIONS.has(path.extname(entry.name).toLowerCase()),
+  );
+  if (images.length > MAX_ALBUM_IMAGES) return [];
+  const copied: string[] = [];
+  for (const image of images) {
+    try {
+      await fs.copyFile(
+        path.join(sourceDir, image.name),
+        path.join(targetDir, image.name),
+        constants.COPYFILE_EXCL,
+      );
+      copied.push(image.name);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code === "EEXIST") continue;
+      logger.warn("downloads", "Could not copy album art for an imported file", {
+        file: path.join(sourceDir, image.name),
+        reason: safeLogDiagnostic(error),
+      });
+    }
+  }
+  return copied;
 }
 
 export async function importDiskFileToJob(
@@ -135,6 +173,7 @@ export async function importDiskFileToJob(
       const committedPath = await commitDownloadedFile(sourcePath, finalPath, {
         preserveSource: true,
       });
+      await copyAlbumImages(path.dirname(sourcePath), path.dirname(committedPath));
       await writeImportedFileMetadata(committedPath, current, {
         source: "manual-import",
         jobId: job.id,

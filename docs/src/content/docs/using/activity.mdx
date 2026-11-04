@@ -97,11 +97,11 @@ When you already have the file for a missing track, use it instead of downloadin
 
 A linked Library file stays where it is. Aurral treats it as a reused file, so removing the track or its playlist does not delete it.
 
-An imported file is copied into the Library like a download, named and tagged for the track. The original is not changed or moved. Aurral checks that the file is readable audio with a known quality, but not that its title or artist match, as with a manual download.
+An imported file is copied into the Library like a download, named and tagged for the track. Album art in the same folder, such as `cover.jpg`, is copied into the track's Library folder too, unless that folder already has an image with the same name. A folder with more than 10 images is treated as not being an album folder, and its images are not copied. The originals are not changed or moved. Aurral checks that the file is readable audio with a known quality, but not that its title or artist match, as with a manual download.
 
 The browser shows the storage paths Aurral can browse, such as `/data`. To browse another folder, such as Lidarr's music folder, mount it into Aurral and add it to the `FILE_BROWSE_ROOTS` environment variable, or paste the file's path.
 
-The track is available at once and Aurral stops searching for it.
+The track is available at once and Aurral stops searching for it. In a playlist, a track without its own artwork or an online album cover shows the cover of its Library album, such as the album folder's `cover.jpg` or the art in the file.
 
 ## Download client setup
 

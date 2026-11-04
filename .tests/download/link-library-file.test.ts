@@ -188,6 +188,9 @@ test("imports an audio file from disk for a missing track and keeps the original
   const source = path.join(externalRoot, "Link Artist", "Song Two.flac");
   await fs.mkdir(path.dirname(source), { recursive: true });
   await writeFlacFixture(source, { title: "Something Else", artist: "Someone" }, { seconds: 2 });
+  await fs.writeFile(path.join(path.dirname(source), "cover.jpg"), "front");
+  await fs.writeFile(path.join(path.dirname(source), "back.png"), "back");
+  await fs.writeFile(path.join(path.dirname(source), "notes.txt"), "not art");
   const jobId = addFailedJob("Song Two");
 
   const response = await importFile(jobId, source);
@@ -200,6 +203,14 @@ test("imports an audio file from disk for a missing track and keeps the original
   assert.equal(path.extname(job.finalPath), ".flac");
   await fs.access(job.finalPath);
   await fs.access(source);
+  const libraryFolder = path.dirname(job.finalPath);
+  assert.equal(await fs.readFile(path.join(libraryFolder, "cover.jpg"), "utf8"), "front");
+  assert.equal(await fs.readFile(path.join(libraryFolder, "back.png"), "utf8"), "back");
+  await fs.access(path.join(libraryFolder, "notes.txt")).then(
+    () => assert.fail("notes.txt was copied"),
+    () => {},
+  );
+  await fs.access(path.join(path.dirname(source), "cover.jpg"));
   const { parseFile } = await import("music-metadata");
   const tags = (await parseFile(job.finalPath)).common;
   assert.equal(tags.title, "Song Two");
@@ -269,4 +280,58 @@ test("lists folders and audio files under the browse roots", async () => {
     if (previousRoots === undefined) delete process.env.FILE_BROWSE_ROOTS;
     else process.env.FILE_BROWSE_ROOTS = previousRoots;
   }
+});
+
+test("keeps album art already in the Library folder and skips crowded folders", async () => {
+  const { copyAlbumImages } = await import("../../backend/services/downloadJobs/importDiskFile.ts");
+  const source = path.join(externalRoot, "Art Source");
+  const target = path.join(managedRoot, "Art Target");
+  await fs.mkdir(source, { recursive: true });
+  await fs.mkdir(target, { recursive: true });
+  await fs.writeFile(path.join(source, "cover.jpg"), "new");
+  await fs.writeFile(path.join(target, "cover.jpg"), "existing");
+  assert.deepEqual(await copyAlbumImages(source, target), []);
+  assert.equal(await fs.readFile(path.join(target, "cover.jpg"), "utf8"), "existing");
+
+  const crowded = path.join(externalRoot, "Crowded");
+  await fs.mkdir(crowded, { recursive: true });
+  for (let index = 0; index < 11; index += 1) {
+    await fs.writeFile(path.join(crowded, `image-${index}.jpg`), "x");
+  }
+  assert.deepEqual(await copyAlbumImages(crowded, target), []);
+});
+
+test("a playlist track linked to a Library file gets that album's cover", async () => {
+  const { flowPlaylistConfig } =
+    await import("../../backend/services/playlists/flowPlaylistConfig.ts");
+  await addLibraryFile("Link Artist", "Cover Album", "Covered Song");
+  const playlist = flowPlaylistConfig.createStaticPlaylist({
+    name: `Covers ${Date.now()}`,
+    tracks: [
+      { artistName: "Link Artist", trackName: "Covered Song" },
+      { artistName: "Link Artist", trackName: "Still Missing" },
+    ],
+  });
+  const [coveredJob, missingJob] = playlist.tracks.map((track) => {
+    const jobId = downloadTracker.addJob({ ...track, managedBy: "aurral" }, playlist.id);
+    assert.ok(jobId != null);
+    downloadTracker.setFailed(jobId, "No matching source result");
+    return jobId;
+  });
+  const [file] = await searchFiles(coveredJob, "covered song");
+  assert.equal((await linkFile(coveredJob, file.fileId)).status, 200);
+  const albumId = (
+    db.prepare("SELECT id FROM library_albums WHERE title = ?").get("Cover Album") as {
+      id: number;
+    }
+  ).id;
+
+  const response = await fetch(`${baseUrl}/api/playlists/jobs/${playlist.id}`);
+  assert.equal(response.status, 200);
+  const jobs = (await response.json()) as { id: string; libraryCoverUrl: string | null }[];
+  assert.match(
+    String(jobs.find((job) => job.id === coveredJob)?.libraryCoverUrl),
+    new RegExp(`^/api/library/albums/${albumId}/cover`),
+  );
+  assert.equal(jobs.find((job) => job.id === missingJob)?.libraryCoverUrl, null);
 });

@@ -177,9 +177,13 @@ export function PlaylistTracks({
       id: track.id,
       title: track.trackName || "Track",
       currentArtwork:
-        track.artworkUrl || trackArtworkByAlbumMbid[String(track.albumMbid || "")] || "",
+        track.artworkUrl ||
+        trackArtworkByAlbumMbid[String(track.albumMbid || "")] ||
+        track.libraryCoverUrl ||
+        "",
       hasCustomArtwork: Boolean(track.customArtworkUrl),
-      fallbackArtwork: trackArtworkByAlbumMbid[String(track.albumMbid || "")] || "",
+      fallbackArtwork:
+        trackArtworkByAlbumMbid[String(track.albumMbid || "")] || track.libraryCoverUrl || "",
     });
   };
 
