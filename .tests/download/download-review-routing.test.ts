@@ -28,7 +28,7 @@ const [
   { processYtdlpPipelinePayload, isYtdlpLiveResult, hasEnoughCandidates },
   { processUsenetPipelinePayload, collectDownloadedAudioFiles },
   { processDeemixPipelinePayload },
-  { dbOps },
+  { dbOps, userOps },
   { db },
   pipelineHelpersModule,
   ,
@@ -337,6 +337,36 @@ test("yt-dlp sends plausible duration mismatches to review", async (t) => {
 
   assert.equal(result, null);
   await assertReviewable(jobId, "ytdlp");
+});
+
+test("a flow track fails instead of waiting for review", async (t) => {
+  useOnlySources(t, "ytdlp");
+  const { flowPlaylistConfig } =
+    await import("../../backend/services/playlists/flowPlaylistConfig.ts");
+  const owner = userOps.createUser("listener", "hash");
+  assert.ok(owner);
+  const flow = flowPlaylistConfig.createFlow({ name: "Weekly", ownerUserId: owner.id });
+  const jobId = addDurationMismatchJob(flow.id);
+  const filePath = path.join(
+    process.env.DOWNLOAD_FOLDER!,
+    ".ytdlp-staging",
+    jobId,
+    "Artist Name - Correct Track.mp3",
+  );
+  await writeOneSecondMp3(filePath);
+
+  const result = await processPipelinePayload({
+    phase: "finalize",
+    source: "ytdlp",
+    jobId,
+    downloadedPath: filePath,
+    candidate: { raw: { id: "video-1", title: "Artist Name - Correct Track" } },
+    candidateIndex: 0,
+  });
+
+  assert.equal(result, null);
+  assert.equal(trackedJob(downloadTracker, jobId).status, "failed");
+  await assert.rejects(access(filePath));
 });
 
 test("yt-dlp auto-rejects weak title matches instead of reviewing them", async () => {
@@ -970,6 +1000,27 @@ test("denying a held file starts a stopped worker to search again", async () => 
   assert.equal((await denyBlockedJob(jobId)).status, 200);
   assert.equal(trackedJob(downloadTracker, jobId).status, "pending");
   assert.equal(start.mock.calls.length, 1);
+});
+
+test("denying a held plugin download skips that result next time", async () => {
+  vi.spyOn(downloadWorker, "start").mockImplementation(async () => {});
+  const jobId = addDurationMismatchJob("deny-plugin");
+  assert.ok(jobId != null);
+  const staged = path.join(isolatedState.baseDir, "deny-plugin", "held.mp3");
+  await writeOneSecondMp3(staged);
+  downloadTracker.updateDownloadMetadata(jobId, {
+    downloadSource: "plugin:tapes",
+    releaseGuid: "t1",
+    remoteFilename: "t1.flac",
+  });
+  downloadTracker.setBlocked(jobId, "downloaded file is too short", staged);
+  const { denyBlockedJob } =
+    await import("../../backend/services/downloadJobs/blockedJobReview.ts");
+  await denyBlockedJob(jobId);
+  assert.deepEqual(trackedJob(downloadTracker, jobId).deniedRemoteSources?.at(-1), [
+    "plugin:tapes",
+    "t1",
+  ]);
 });
 
 async function waitUntilGone(filePath: string) {

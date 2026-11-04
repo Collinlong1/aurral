@@ -128,9 +128,7 @@ export default new Hono<AppEnv>()
         return c.json({ error: passwordValidation.error }, 400);
       }
       const hash = hashPassword(password);
-      const perms = isValidPermissions(permissions)
-        ? { ...userOps.getDefaultPermissions(), ...permissions }
-        : null;
+      const perms = isValidPermissions(permissions) ? permissions : null;
       const created = userOps.createUser(un, hash, role, perms, true, false, password);
       if (!created) {
         return c.json({ error: "Failed to create user" }, 500);
@@ -463,22 +461,7 @@ export default new Hono<AppEnv>()
             lidarrRootFolderPath: null,
             lidarrQualityProfileId: null,
           });
-          return c.json(
-            {
-              configured: false as const,
-              rootFolders: [],
-              qualityProfiles: [],
-              savedDefaults: {
-                rootFolderPath: updated?.lidarrRootFolderPath || null,
-                qualityProfileId: updated?.lidarrQualityProfileId ?? null,
-              },
-              fallbacks: {
-                rootFolderPath: null,
-                qualityProfileId: null,
-              },
-            },
-            200,
-          );
+          return c.json(await lidarrClient.getArtistAddPreferenceSummary(updated), 200);
         }
 
         const summary = await lidarrClient.getArtistAddPreferenceSummary(user);

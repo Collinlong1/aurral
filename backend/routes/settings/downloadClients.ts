@@ -10,6 +10,7 @@ import {
   testDownloadClient,
 } from "../../services/download/downloadClientSettings.ts";
 import { asAppError, type AppError } from "../../../lib/errors.ts";
+import { NOTIFICATION_EVENTS } from "../../../lib/notificationEvents.ts";
 import { isErrorStatus } from "../shared/errorStatus.ts";
 
 function validateDownloadClientTestConfig(key: string, config: Record<string, unknown>) {
@@ -69,21 +70,15 @@ async function clientTestResponse<
 
 const clientConfig = v.record(v.string(), v.unknown());
 const gotifyTarget = v.object({ url: v.optional(v.string()), token: v.optional(v.string()) });
-const WEBHOOK_EVENTS = [
-  "notifyDiscoveryUpdated",
-  "notifyWeeklyFlowDone",
-  "notifyRequestMade",
-  "notifyRequestAvailable",
-] as const;
 const eventBody = v.optional(v.nullable(v.string()));
 const webhookTarget = v.object({
   url: v.optional(v.string()),
   headers: v.optional(v.array(v.object({ key: v.string(), value: v.string() }))),
   body: v.optional(v.nullable(v.string())),
   eventBodies: v.optional(
-    v.object(Object.fromEntries(WEBHOOK_EVENTS.map((key) => [key, eventBody]))),
+    v.object(Object.fromEntries(NOTIFICATION_EVENTS.map((key) => [key, eventBody]))),
   ),
-  testEvent: v.optional(v.picklist(WEBHOOK_EVENTS)),
+  testEvent: v.optional(v.picklist(NOTIFICATION_EVENTS)),
 });
 
 export default new Hono<AppEnv>()

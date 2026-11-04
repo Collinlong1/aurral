@@ -826,3 +826,49 @@ test("getEvents reads the download completions slskd stores as JSON text", async
     await mock.close();
   }
 });
+
+test("getEvents names the field that made slskd's download event unreadable", async () => {
+  const { SlskdClient } = await import("../../backend/services/slskdClient.ts");
+  const { logger } = await import("../../backend/services/logger.ts");
+  const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+  const mock = await createMockHttpServer((request, response) => {
+    request.resume();
+    response.setHeader("content-type", "application/json");
+    response.end(
+      JSON.stringify([
+        { type: "DownloadFileComplete", data: JSON.stringify({ transfer: { id: null } }) },
+      ]),
+    );
+  });
+  try {
+    await new SlskdClient({ url: mock.url }).getEvents();
+    const skipped = warn.mock.calls.find(([, message]) => message.startsWith("Skipped slskd"));
+    assert.match(JSON.stringify(skipped), /at data\.transfer\.id/);
+  } finally {
+    warn.mockRestore();
+    await mock.close();
+  }
+});
+
+test("a search that reaches its deadline mid-request does not report slskd as failing", async () => {
+  const { onRequestFailure } = await import("../../lib/axiosFetch.ts");
+  const failures: string[] = [];
+  onRequestFailure(({ url }) => failures.push(url));
+  const server = await createMockHttpServer((req, res) => {
+    if (req.method === "GET") return;
+    res.writeHead(204);
+    res.end();
+  });
+  const { SlskdClient } = await import("../../backend/services/slskdClient.ts");
+  const client = new SlskdClient({ enabled: true, url: server.url });
+  try {
+    assert.equal(
+      await client.waitForSearch("deadline", 50, { queued: false, deadline: Date.now() + 50 }),
+      null,
+    );
+    assert.deepEqual(failures, []);
+  } finally {
+    onRequestFailure(() => {});
+    await server.close();
+  }
+});

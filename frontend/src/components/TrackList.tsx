@@ -22,6 +22,7 @@ const SORTABLE_HEADINGS = {
   title: "song",
   artist: "artist",
   album: "album",
+  year: "year",
 } as const;
 
 type SortableHeading = keyof typeof SORTABLE_HEADINGS;
@@ -53,6 +54,7 @@ export type TrackListRow = {
   section?: ReactNode;
   title: string;
   number: ReactNode;
+  year?: string | null;
   time?: ReactNode;
   timeMissing?: boolean;
   badge?: ReactNode;
@@ -243,9 +245,11 @@ export function TrackList({
   sort = null,
   selection = null,
   highlightKey = null,
+  showYear = false,
 }: {
   label: string;
   rows: TrackListRow[];
+  showYear?: boolean;
   variant?: "collection" | "release";
   sort?: TrackSort | null;
   selection?: TrackSelection | null;
@@ -265,7 +269,9 @@ export function TrackList({
   }, [highlightKey, rows.length]);
 
   return (
-    <div className={`native-library-track-list native-library-track-list--${variant}`}>
+    <div
+      className={`native-library-track-list native-library-track-list--${variant}${showYear ? " native-library-track-list--year" : ""}`}
+    >
       <div
         className="native-library-track native-library-track--heading"
         aria-hidden={sort || selection ? undefined : "true"}
@@ -287,6 +293,9 @@ export function TrackList({
         <HeadingCell id="title" label="Title" sort={sort} />
         {isCollection ? <HeadingCell id="artist" label="Artist" sort={sort} /> : null}
         {isCollection ? <HeadingCell id="album" label="Album" sort={sort} /> : null}
+        {showYear ? (
+          <HeadingCell id="year" label="Year" sort={sort} className="native-library-track__year" />
+        ) : null}
         <span className="native-library-track__time">Time</span>
         <span />
         <span />
@@ -404,6 +413,7 @@ export function TrackList({
               {isCollection ? (
                 <TrackLink link={row.album} className="native-library-track__album" />
               ) : null}
+              {showYear ? <span className="native-library-track__year">{row.year}</span> : null}
               <span
                 className={"native-library-track__time" + (row.timeMissing ? " is-missing" : "")}
               >

@@ -200,6 +200,30 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_play_events_user_played_at
     ON play_events(user_id, played_at DESC);
 
+  CREATE TABLE IF NOT EXISTS plugins (
+    id TEXT PRIMARY KEY NOT NULL,
+    manifest TEXT,
+    enabled INTEGER NOT NULL DEFAULT 0,
+    settings TEXT NOT NULL DEFAULT '',
+    priority INTEGER NOT NULL DEFAULT 30,
+    last_error TEXT,
+    disabled TEXT NOT NULL DEFAULT '[]',
+    source_url TEXT,
+    scheduled_at INTEGER,
+    broken_in_a_row INTEGER NOT NULL DEFAULT 0,
+    update_manifest TEXT,
+    updated_at INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS plugin_dev_keys (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    key_hash TEXT NOT NULL UNIQUE,
+    hint TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    last_used_at INTEGER
+  );
+
   CREATE TABLE IF NOT EXISTS history_servers (
     user_id INTEGER NOT NULL,
     provider TEXT NOT NULL,
@@ -708,6 +732,11 @@ tryAddColumn("ALTER TABLE share_links ADD COLUMN manifest TEXT");
 tryAddColumn("ALTER TABLE share_links ADD COLUMN share_files INTEGER NOT NULL DEFAULT 1");
 tryAddColumn("ALTER TABLE play_events ADD COLUMN album_key TEXT");
 tryAddColumn("ALTER TABLE play_events ADD COLUMN external_id TEXT");
+tryAddColumn("ALTER TABLE plugins ADD COLUMN disabled TEXT NOT NULL DEFAULT '[]'");
+tryAddColumn("ALTER TABLE plugins ADD COLUMN source_url TEXT");
+tryAddColumn("ALTER TABLE plugins ADD COLUMN scheduled_at INTEGER");
+tryAddColumn("ALTER TABLE plugins ADD COLUMN broken_in_a_row INTEGER NOT NULL DEFAULT 0");
+tryAddColumn("ALTER TABLE plugins ADD COLUMN update_manifest TEXT");
 db.exec(`
   CREATE UNIQUE INDEX IF NOT EXISTS idx_play_events_external
     ON play_events(user_id, source, external_id) WHERE external_id IS NOT NULL;
@@ -832,6 +861,32 @@ db.transaction(() => {
     };
   });
   db.prepare("UPDATE settings SET value = ? WHERE key = 'flows'").run(JSON.stringify(migrated));
+}).immediate();
+
+const webhookEventsMigrationKey = "migration:webhook-events-per-webhook-v1";
+db.transaction(() => {
+  const claimed = db
+    .prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)")
+    .run(webhookEventsMigrationKey, "1");
+  if (claimed.changes === 0) return;
+  const stored = db
+    .prepare<[], Pick<SettingsRow, "value">>(
+      "SELECT value FROM settings WHERE key = 'integrations' AND json_valid(value)",
+    )
+    .get();
+  const integrations = v.safeParse(
+    v.looseObject({
+      webhooks: v.optional(v.array(v.looseObject({})), []),
+      webhookEvents: v.optional(v.record(v.string(), v.unknown()), {}),
+    }),
+    stored ? JSON.parse(stored.value) : null,
+  );
+  if (!integrations.success) return;
+  const { webhookEvents, webhooks, ...rest } = integrations.output;
+  const events = Object.keys(webhookEvents).filter((event) => webhookEvents[event] === true);
+  db.prepare("UPDATE settings SET value = ? WHERE key = 'integrations'").run(
+    JSON.stringify({ ...rest, webhooks: webhooks.map((webhook) => ({ ...webhook, events })) }),
+  );
 }).immediate();
 
 const perUserDiscoveryMigrationKey = "migration:per-user-discovery-v1";
@@ -1567,6 +1622,32 @@ db.exec(`
 `);
 initializeLibraryGenreIndex(db);
 initializeLibrarySearchIndex(db);
+
+// A MusicBrainz "[silence]" place is not a track an album is missing, so
+// the ones listed without a file go. Silence files stay.
+const silenceTracksMigrationKey = "migration:silence-tracks-v1";
+db.transaction(() => {
+  const claimed = db
+    .prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)")
+    .run(silenceTracksMigrationKey, "1");
+  if (claimed.changes === 0) return;
+  const silentTracks = `
+    SELECT track.id FROM library_tracks AS track
+    WHERE lower(trim(track.title)) = '[silence]'
+      AND NOT EXISTS (SELECT 1 FROM library_media_files AS media WHERE media.track_id = track.id)
+  `;
+  db.prepare(`
+    UPDATE library_albums SET updated_at = ?
+    WHERE id IN (SELECT album_id FROM library_album_tracks WHERE track_id IN (${silentTracks}))
+  `).run(Date.now());
+  if (db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'library_search_documents'").get()) {
+    db.exec(`
+      DELETE FROM library_search_documents
+      WHERE entity_kind = 'track' AND entity_id IN (${silentTracks})
+    `);
+  }
+  db.exec(`DELETE FROM library_tracks WHERE id IN (${silentTracks})`);
+}).immediate();
 
 const existingDownloadFolder = db
   .prepare<[string], { value: string }>("SELECT value FROM settings WHERE key = ?")

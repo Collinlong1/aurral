@@ -157,8 +157,8 @@ export function buildLibraryTrackPath(
     root,
     buildAurralTrackDestination(
       null,
-      folderName(track?.artistName, "Unknown Artist"),
-      folderName(track?.albumName, "Unknown Album"),
+      sanitizePathPart(track?.artistName, "Unknown Artist"),
+      sanitizePathPart(track?.albumName, "Unknown Album"),
       { root },
     ),
     buildTrackFileName(track, String(ext || "").toLowerCase()),

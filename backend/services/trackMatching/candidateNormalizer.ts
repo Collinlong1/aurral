@@ -6,6 +6,7 @@ import { isOwnKey } from "../../../lib/ownKey.ts";
 // never fabricates values.
 
 import { foldDiacritics } from "../providers/brainzmashRanking.ts";
+import { isSilenceTrack } from "./titleText.ts";
 
 export const SOURCE_CAPABILITIES = {
   deemix: {
@@ -35,6 +36,15 @@ export const SOURCE_CAPABILITIES = {
     filename: true,
     directoryContext: true,
     advertisedDuration: true,
+    releaseContext: false,
+  },
+  plugin: {
+    structuredArtist: true,
+    structuredAlbum: true,
+    structuredDuration: true,
+    providerTrackId: true,
+    filename: false,
+    directoryContext: false,
     releaseContext: false,
   },
   usenet: {
@@ -73,7 +83,9 @@ const DEFAULT_CAPABILITIES: SourceCapabilities = Object.freeze({
 });
 
 export function getCapabilities(source?: string): SourceCapabilities {
-  const key = String(source || "").toLowerCase();
+  const key = String(source || "")
+    .toLowerCase()
+    .replace(/^plugin:.*/, "plugin");
   return (
     (isOwnKey(SOURCE_CAPABILITIES, key) ? SOURCE_CAPABILITIES[key] : undefined) || {
       ...DEFAULT_CAPABILITIES,
@@ -145,7 +157,6 @@ export type RawCandidate = {
   track?: unknown;
   discNumber?: unknown;
   disc?: unknown;
-  isrc?: unknown;
   recordingMbid?: unknown;
   trackMbid?: unknown;
   releaseMbid?: unknown;
@@ -199,7 +210,7 @@ export function implausibleBitrateKbps({
   durationMs?: unknown;
   trackTitle?: unknown;
 }) {
-  if (/^\s*\[silence\]\s*$/iu.test(String(trackTitle || ""))) return null;
+  if (isSilenceTrack(trackTitle)) return null;
   const extension = getFileExtension(filePath);
   const kind =
     lossless === true || (lossless == null && LOSSLESS_EXTENSIONS.has(extension))
@@ -301,7 +312,6 @@ export function normalizeCandidate<Raw extends RawCandidate = RawCandidate>(
     discNumber: positiveNumber(raw.discNumber ?? raw.disc)
       ? Math.round(Number(raw.discNumber ?? raw.disc))
       : null,
-    isrc: cleanText(raw.isrc),
     recordingMbid: cleanText(raw.recordingMbid || raw.trackMbid),
     releaseMbid: cleanText(raw.releaseMbid),
     filename: fileName,

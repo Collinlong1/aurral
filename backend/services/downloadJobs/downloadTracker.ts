@@ -24,7 +24,6 @@ import { isPlaylistOwnerActive } from "./playlistOwnerStatus.ts";
 import { logger } from "../logger.ts";
 import { getShareDownload } from "../shareLinks/downloadStore.ts";
 import { recordAlbumGrabQueued, recordAlbumTrackState } from "../albumGrabActivity.ts";
-import { recordAurralRequestOutcome } from "../aurralRequestCompletion.ts";
 import { mapRequest, type ReleaseManifest } from "../releaseManifest.ts";
 import {
   cancelDownloadJob,
@@ -113,6 +112,9 @@ const persistedRevisionStmt = db.prepare<[], Pick<PlaylistDownloadJobsRevisionRo
 );
 const liveJobStmt = db.prepare<unknown[], PlaylistDownloadJobsRow>(
   `SELECT * FROM ${JOBS_TABLE} WHERE id = ?`,
+);
+const requestGroupStatusesStmt = db.prepare<[string], Pick<PlaylistDownloadJobsRow, "status">>(
+  `SELECT status FROM ${JOBS_TABLE} WHERE request_group_id = ? AND upgrade_for_job_id IS NULL`,
 );
 const livePlaylistJobsStmt = db.prepare<unknown[], PlaylistDownloadJobsRow>(
   `SELECT * FROM ${JOBS_TABLE} WHERE playlist_type = ? ORDER BY created_at, id`,
@@ -1278,9 +1280,6 @@ export class DownloadTracker {
     );
     if (ENDED_STATUSES.has(job.status)) this._dropHeldForReview(job);
     recordAlbumTrackState(job);
-    if (job.requestGroupId && ENDED_STATUSES.has(job.status)) {
-      recordAurralRequestOutcome(job, this.jobs.values());
-    }
     this._touchRevision();
   }
 
@@ -2018,6 +2017,14 @@ export class DownloadTracker {
 
   getAll() {
     return sortByCreatedAt(Array.from(this.jobs.values()));
+  }
+
+  isRequestGroupDone(requestGroupId: string) {
+    const statuses = requestGroupStatusesStmt
+      .all(requestGroupId)
+      .map(({ status }) => status)
+      .filter((status) => status !== "cancelled");
+    return statuses.length > 0 && statuses.every((status) => status === "done");
   }
 
   hasPersistedJob(id: string | null | undefined) {

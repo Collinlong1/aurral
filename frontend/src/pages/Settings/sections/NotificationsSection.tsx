@@ -10,6 +10,10 @@ import { useServerSettings } from "../SettingsProviders";
 import { SettingsLink, useSettingsRoute } from "../settingsRoute";
 import type { SettingsState } from "../utils";
 import { readApiError } from "../utils/apiError.ts";
+import {
+  NOTIFICATION_EVENTS,
+  type NotificationEvent,
+} from "../../../../../lib/notificationEvents.ts";
 import { configuredStatus } from "../utils/serviceStatus";
 import {
   SettingsActions,
@@ -30,14 +34,14 @@ type TestStatus = { tone: "success" | "error"; message: string };
 const MAX_WEBHOOKS = 5;
 const MAX_HEADERS = 10;
 
-const EVENTS = [
-  ["notifyDiscoveryUpdated", "Discover updated"],
-  ["notifyWeeklyFlowDone", "Flow finished"],
-  ["notifyRequestMade", "Request made"],
-  ["notifyRequestAvailable", "Request available"],
-] as const;
-
-type EventKey = (typeof EVENTS)[number][0];
+const EVENT_LABELS: Record<NotificationEvent, string> = {
+  notifyDiscoveryUpdated: "Discover updated",
+  notifyWeeklyFlowDone: "Flow finished",
+  notifyRequestMade: "Request made",
+  notifyRequestAvailable: "Request available",
+  notifyArtistAdded: "Artist added",
+  notifyTrackAdded: "Track added",
+};
 
 const INBOX_ITEMS = [
   ["releases", "Upcoming releases"],
@@ -88,19 +92,19 @@ function useTest(send: () => Promise<unknown>, success: string, failure: string,
 
 function EventToggles({
   idPrefix,
-  values,
+  isOn,
   onChange,
 }: {
   idPrefix: string;
-  values: Partial<Record<EventKey, boolean>>;
-  onChange: (key: EventKey, enabled: boolean) => void;
+  isOn: (event: NotificationEvent) => boolean;
+  onChange: (event: NotificationEvent, enabled: boolean) => void;
 }) {
-  return EVENTS.map(([key, label]) => (
-    <SettingsRow key={key} label={label} htmlFor={`${idPrefix}-${key}`}>
+  return NOTIFICATION_EVENTS.map((key) => (
+    <SettingsRow key={key} label={EVENT_LABELS[key]} htmlFor={`${idPrefix}-${key}`}>
       <PillToggle
         id={`${idPrefix}-${key}`}
-        checked={values[key] === true}
-        aria-label={label}
+        checked={isOn(key)}
+        aria-label={EVENT_LABELS[key]}
         onChange={(event) => onChange(key, event.target.checked)}
       />
     </SettingsRow>
@@ -163,7 +167,7 @@ function GotifyDetail() {
       <SettingsGroup title="Events">
         <EventToggles
           idPrefix="gotify"
-          values={gotify}
+          isOn={(key) => gotify[key] === true}
           onChange={(key, enabled) => update({ [key]: enabled })}
         />
       </SettingsGroup>
@@ -179,6 +183,7 @@ function WebhookDetail({ index }: { index: number | null }) {
   const [url, setUrl] = useState(existing?.url ?? "");
   const [body, setBody] = useState(existing?.body ?? "");
   const [headers, setHeaders] = useState<WebhookHeader[]>(existing?.headers ?? []);
+  const [events, setEvents] = useState<NotificationEvent[]>(existing?.events ?? []);
   const [eventBodies, setEventBodies] = useState(() => editableEventBodies(existing?.eventBodies));
   const [missingUrl, setMissingUrl] = useState(false);
   const draft = {
@@ -214,6 +219,7 @@ function WebhookDetail({ index }: { index: number | null }) {
     const webhook = {
       ...draft,
       headers: headers.filter((header) => header.key.trim() && header.value.trim()),
+      events: NOTIFICATION_EVENTS.filter((event) => events.includes(event)),
     };
     save(
       index === null
@@ -231,8 +237,8 @@ function WebhookDetail({ index }: { index: number | null }) {
 
   return (
     <SettingsPage title={index === null ? "Add webhook" : "Webhook"} back="Notifications">
-      <SettingsGroup>
-        <form onSubmit={submit}>
+      <form onSubmit={submit}>
+        <SettingsGroup>
           <SettingsRow label="URL" htmlFor="webhook-url">
             <SettingsInput
               id="webhook-url"
@@ -250,7 +256,7 @@ function WebhookDetail({ index }: { index: number | null }) {
           <SettingsRow
             label="Default body"
             htmlFor="webhook-body"
-            help="Optional. With a body Aurral sends a POST, otherwise a GET. $event, $artistName, $albumName, $albumPath, $flowName, and $username are filled in. Events without their own body below use this one."
+            help="Optional. With a body Aurral sends a POST, otherwise a GET. $message, $event, $artistName, $albumName, $trackName, $path, $albumPath, $username, and $flowName are filled in. Events without their own body below use this one."
             stack
           >
             <SettingsTextarea
@@ -267,7 +273,7 @@ function WebhookDetail({ index }: { index: number | null }) {
             />
           </SettingsRow>
           <WebhookEventBodies
-            events={EVENTS}
+            events={NOTIFICATION_EVENTS.map((event) => [event, EVENT_LABELS[event]] as const)}
             draft={draft}
             values={eventBodies}
             useTest={useTest}
@@ -313,6 +319,15 @@ function WebhookDetail({ index }: { index: number | null }) {
               Add header
             </button>
           </SettingsRow>
+        </SettingsGroup>
+        <SettingsGroup title="Events">
+          <EventToggles
+            idPrefix="webhook"
+            isOn={(key) => events.includes(key)}
+            onChange={(key, enabled) =>
+              setEvents(enabled ? [...events, key] : events.filter((event) => event !== key))
+            }
+          />
           <SettingsActions
             status={missingUrl ? { tone: "error", message: "Enter a URL." } : test.status}
           >
@@ -338,8 +353,8 @@ function WebhookDetail({ index }: { index: number | null }) {
               </button>
             )}
           </SettingsActions>
-        </form>
-      </SettingsGroup>
+        </SettingsGroup>
+      </form>
     </SettingsPage>
   );
 }
@@ -376,9 +391,9 @@ function InboxGroup() {
 }
 
 export function NotificationsSection() {
-  const { settings, updateSettings } = useServerSettings();
+  const { settings } = useServerSettings();
   const item = useSettingsItem();
-  const { gotify, webhooks, webhookEvents } = settings.integrations;
+  const { gotify, webhooks } = settings.integrations;
   const webhookItem = resolveWebhookItem(webhooks, item);
   const scriptItem = resolveScriptItem(settings.integrations.scripts, item);
 
@@ -414,27 +429,15 @@ export function NotificationsSection() {
               key={`${webhook.url}-${index}`}
               to={`notifications/webhook-${index}`}
               name={webhookName(webhook.url)}
+              detail={
+                webhook.events?.length
+                  ? webhook.events.map((event) => EVENT_LABELS[event]).join(", ")
+                  : "No events"
+              }
             />
           ))
         )}
       </SettingsGroup>
-      {webhooks.length > 0 ? (
-        <SettingsGroup title="Webhook events">
-          <EventToggles
-            idPrefix="webhook-event"
-            values={webhookEvents}
-            onChange={(key, enabled) =>
-              updateSettings({
-                ...settings,
-                integrations: {
-                  ...settings.integrations,
-                  webhookEvents: { ...webhookEvents, [key]: enabled },
-                },
-              })
-            }
-          />
-        </SettingsGroup>
-      ) : null}
       <ScriptsGroups EventToggles={EventToggles} />
     </SettingsPage>
   );

@@ -199,28 +199,68 @@ test("playlist fetch rejects a response that stops before Spotify's declared tot
   );
 });
 
-test("playlist listing reads the current Spotify items total", async () => {
+const saveConnection = (scope: string | null) =>
   spotifyConnectionStore.saveConnection(7, {
     accessToken: "valid-access-token",
     refreshToken: "valid-refresh-token",
     expiresAt: Date.now() + 60 * 60 * 1000,
+    scope,
   });
-  globalThis.fetch = async () =>
-    new Response(
-      JSON.stringify({
-        items: [{ id: "playlist", name: "Large Playlist", items: { total: 1001 } }],
-        next: null,
-      }),
-      {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      },
-    );
 
-  const result = await spotifyClient.listPlaylists(7);
-  assert.deepEqual(result.playlists, [
+test("playlist listing puts Liked Songs first and counts it only when the connection can read it", async () => {
+  const paths: string[] = [];
+  globalThis.fetch = async (url) => {
+    const path = new URL(String(url)).pathname;
+    paths.push(path);
+    return path === "/v1/me/tracks"
+      ? jsonResponse(200, { items: [], total: 2400, next: null })
+      : jsonResponse(200, {
+          items: [{ id: "playlist", name: "Large Playlist", items: { total: 1001 } }],
+          next: null,
+        });
+  };
+
+  saveConnection("playlist-read-private user-library-read");
+  assert.deepEqual((await spotifyClient.listPlaylists(7)).playlists, [
+    { id: "liked", name: "Liked Songs", trackCount: 2400 },
     { id: "playlist", name: "Large Playlist", trackCount: 1001 },
   ]);
+
+  saveConnection(null);
+  paths.length = 0;
+  assert.deepEqual((await spotifyClient.listPlaylists(7)).playlists, [
+    { id: "liked", name: "Liked Songs", trackCount: undefined },
+    { id: "playlist", name: "Large Playlist", trackCount: 1001 },
+  ]);
+  assert.deepEqual(paths, ["/v1/me/playlists"]);
+});
+
+test("Liked Songs reads saved tracks, and an older connection is asked to reconnect without calling Spotify", async () => {
+  const urls: string[] = [];
+  globalThis.fetch = async (url) => {
+    urls.push(String(url));
+    return jsonResponse(200, {
+      items: [{ added_at: "2026-01-01T00:00:00Z", track: { type: "track", name: "Song" } }],
+      total: 1,
+      offset: 0,
+      next: null,
+    });
+  };
+
+  saveConnection("playlist-read-private user-library-read");
+  const items = await spotifyClient.listPlaylistTracks(7, "liked", { forceRefresh: true });
+  assert.equal(requireFixture(items[0]?.track).name, "Song");
+  assert.equal(new URL(requireFixture(urls[0])).pathname, "/v1/me/tracks");
+  assert.equal(await spotifyClient.getPlaylistArtworkUrl(7, "liked"), null);
+  assert.equal(urls.length, 1);
+
+  saveConnection(null);
+  await assert.rejects(
+    spotifyClient.listPlaylistTracks(7, "liked", { forceRefresh: true }),
+    (error: Error) => isAuthRequired(error) && /Liked Songs/.test(error.message),
+  );
+  assert.equal(urls.length, 1);
+  assert.equal(spotifyConnectionStore.getPublicStatus(7).connected, true);
 });
 
 test("stale refresh failures cannot clear a newly connected account", async () => {

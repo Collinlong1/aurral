@@ -4,7 +4,7 @@ import fs from "fs/promises";
 import path from "path";
 import * as v from "valibot";
 import { asAppError } from "../../lib/errors.ts";
-import { defaultData } from "../config/constants.ts";
+import { NOTIFICATION_EVENTS } from "../../lib/notificationEvents.ts";
 import type { StoredIntegrations } from "../db/helpers/settings.ts";
 import { isPathInsideRoot } from "./downloadPaths.ts";
 import { enqueueNotification } from "./honkerDb.ts";
@@ -32,9 +32,12 @@ const SCRIPT_VARS = [
   "albumName",
   "artistName",
   "albumPath",
+  "trackName",
+  "path",
   "username",
   "userId",
   "event",
+  "message",
 ] as const;
 
 export type ScriptVars = Partial<Record<(typeof SCRIPT_VARS)[number], string>>;
@@ -135,11 +138,14 @@ export async function listScriptFiles(scriptsDir = getScriptsDir()) {
 
 // Script settings exist only while AURRAL_SCRIPTS_DIR is set; otherwise
 // settings read and save exactly as they do without the feature. Scripts run
-// on the same events as webhooks, all off by default.
+// on the notification events switched on for them, all off by default.
 export function readableScriptSettings(integrations: StoredIntegrations): StoredIntegrations {
   const { scripts, scriptEvents, ...rest } = integrations;
   if (!scriptsEnabled()) return rest;
-  const events = { ...defaultData.settings.integrations.webhookEvents, ...scriptEvents };
+  const events = {
+    ...Object.fromEntries(NOTIFICATION_EVENTS.map((event) => [event, false])),
+    ...scriptEvents,
+  };
   return { ...rest, scripts: scripts ?? [], scriptEvents: events };
 }
 

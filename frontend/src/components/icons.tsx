@@ -91,6 +91,7 @@ export const LockOpen = createIcon(icons.LockUnlocked01);
 export const LogOut = createIcon(icons.LogOut01);
 export const MapPin = createIcon(icons.MarkerPin01);
 export const Menu = createIcon(icons.Menu01);
+export const Mic = createIcon(icons.Microphone01);
 export const Monitor = createIcon(icons.Monitor01);
 export const Moon = createIcon(icons.Moon01);
 export const MoreHorizontal = createIcon(icons.DotsHorizontal);
@@ -102,6 +103,7 @@ export const Pencil = createIcon(icons.Edit03);
 export function Play(props: IconProps) {
   return <icons.Play strokeWidth={1.5} fill="currentColor" {...props} />;
 }
+export const Puzzle = createIcon(icons.PuzzlePiece01);
 export const Plus = createIcon(icons.Plus);
 export const RefreshCw = createIcon(icons.RefreshCw01);
 export const Repeat = createIcon(icons.Repeat01);

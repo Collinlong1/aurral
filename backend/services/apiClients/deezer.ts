@@ -19,9 +19,9 @@ export const deezerPageSchema = v.looseObject({
 export const deezerArtistSchema = v.looseObject({
   id: v.number(),
   name: v.optional(v.string()),
-  picture_xl: v.optional(v.string()),
-  picture_big: v.optional(v.string()),
-  picture_medium: v.optional(v.string()),
+  picture_xl: v.nullish(v.string()),
+  picture_big: v.nullish(v.string()),
+  picture_medium: v.nullish(v.string()),
   nb_fan: v.optional(v.number()),
 });
 
@@ -30,6 +30,7 @@ export const deezerTrackSchema = v.looseObject({
   title: v.string(),
   title_short: v.optional(v.string()),
   preview: v.optional(v.string()),
+  isrc: v.optional(v.string()),
   duration: v.optional(v.number()),
   rank: v.optional(v.number()),
   track_position: v.optional(v.number()),
@@ -39,8 +40,8 @@ export const deezerTrackSchema = v.looseObject({
     v.looseObject({
       id: v.optional(v.number()),
       title: v.optional(v.string()),
-      cover_medium: v.optional(v.string()),
-      cover_xl: v.optional(v.string()),
+      cover_medium: v.nullish(v.string()),
+      cover_xl: v.nullish(v.string()),
     }),
   ),
 });
@@ -50,9 +51,9 @@ const deezerAlbumSchema = v.looseObject({
   title: v.optional(v.string()),
   record_type: v.optional(v.string()),
   release_date: v.optional(v.string()),
-  cover_xl: v.optional(v.string()),
-  cover_big: v.optional(v.string()),
-  cover_medium: v.optional(v.string()),
+  cover_xl: v.nullish(v.string()),
+  cover_big: v.nullish(v.string()),
+  cover_medium: v.nullish(v.string()),
   fans: v.optional(v.number()),
 });
 
@@ -141,10 +142,48 @@ export async function getDeezerPreviewLink(trackId: string): Promise<string | nu
   const cacheKey = `dz-preview:${trackId}`;
   return cachedOrInflight(deezerPreviewLinkCache, cacheKey, deezerInflightRequests, async () => {
     const track = await deezerGet(deezerTrackSchema, `/track/${trackId}`, { timeout: 3000 });
-    const link = track?.preview || null;
+    const link = track?.preview || (track && (await findPlayableCopy(track))?.preview) || null;
     deezerPreviewLinkCache.set(cacheKey, link);
     return link;
   });
+}
+
+type DeezerTrack = v.InferOutput<typeof deezerTrackSchema>;
+
+const nameKey = (value: unknown) =>
+  normalizeTitle(value) ||
+  String(value ?? "")
+    .trim()
+    .toLowerCase();
+
+const isSameRelease = (candidate: DeezerTrack, track: DeezerTrack) =>
+  candidate.title.toLowerCase() === track.title.toLowerCase() &&
+  [
+    [candidate.artist?.name, track.artist?.name],
+    [candidate.album?.title, track.album?.title],
+  ].every(([left, right]) => nameKey(left) && nameKey(left) === nameKey(right));
+
+async function findPlayableCopy(track: DeezerTrack) {
+  const isrc = track.isrc && /^[A-Z0-9]{12}$/i.test(track.isrc) ? track.isrc : null;
+  if (isrc) {
+    const byIsrc = await deezerLimiter.schedule(() =>
+      deezerGet(deezerTrackSchema, `/track/isrc:${isrc}`, { timeout: 3000 }),
+    );
+    if (byIsrc?.preview) return byIsrc;
+  }
+  if (!track.artist?.name) return null;
+  const candidates = await deezerLimiter.schedule(() =>
+    deezerList(deezerTrackSchema, "/search", {
+      params: { q: `${track.artist?.name} ${track.title}`, limit: 10 },
+      timeout: 3000,
+    }),
+  );
+  return (
+    candidates.find(
+      (candidate) =>
+        candidate.preview && ((isrc && candidate.isrc === isrc) || isSameRelease(candidate, track)),
+    ) ?? null
+  );
 }
 
 const artistNameKey = (value: unknown) => {

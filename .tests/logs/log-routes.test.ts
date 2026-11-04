@@ -153,3 +153,54 @@ test("failed integration calls are saved without their query string or path toke
   });
   assert.doesNotMatch(JSON.stringify(saved), /hunter2/);
 });
+
+test("a failed connection is saved with the network error behind it", async () => {
+  logOutgoingFailures();
+  const closed = await createMockHttpServer(() => {});
+  await closed.close();
+
+  await assert.rejects(axios.get(`${closed.url}/feed`));
+
+  assert.partialDeepStrictEqual(reported.at(-1), {
+    level: "warn",
+    msg: `GET ${new URL(closed.url).host} failed`,
+    data: { code: "ECONNREFUSED" },
+  });
+  assert.match(JSON.stringify(reported.at(-1)), /fetch failed: connect ECONNREFUSED/);
+});
+
+test("starting fresh hides earlier problems until it is undone", async () => {
+  const asMember = signedInAs(member).route("/", api);
+  assert.equal((await asMember.request("/logs/fresh", { method: "POST" })).status, 403);
+
+  const { freshSince } = await (await withKey("/logs/fresh", { method: "POST" })).json();
+  assert.deepEqual((await (await withKey("/logs/problems")).json()).problems, []);
+  const exported = await (await withKey("/logs/export?level=warn")).text();
+  assert.match(exported, /Started fresh at /);
+  assert.doesNotMatch(exported, /Lidarr returned 503/);
+
+  const writer = createLogWriter(join(isolatedState.dataDir, "logs"));
+  writer.append({
+    ts: new Date(Date.parse(freshSince) + 1).toISOString(),
+    level: "warn",
+    cat: "slskd",
+    msg: "slskd is unreachable",
+    proc: "main",
+    fp: "fp-slskd",
+  });
+  writer.flush();
+  const after = await (await withKey("/logs/problems")).json();
+  assert.equal(after.freshSince, freshSince);
+  assert.deepEqual(
+    after.problems.map((problem: { fp: string }) => problem.fp),
+    ["fp-slskd"],
+  );
+
+  await withKey("/logs/fresh", { method: "DELETE" });
+  const restored = await (await withKey("/logs/problems")).json();
+  assert.equal(restored.freshSince, null);
+  assert.deepEqual(restored.problems.map((problem: { fp: string }) => problem.fp).sort(), [
+    "fp-503",
+    "fp-slskd",
+  ]);
+});

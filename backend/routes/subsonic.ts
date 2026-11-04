@@ -7,7 +7,7 @@ import { hasPermission, resolveSubsonicTokenUser, resolveUser } from "../middlew
 import { getPlayQueue, savePlayQueue } from "../services/subsonicPlayQueueService.ts";
 import { streamSubsonicAudio } from "../services/subsonicTranscodeService.ts";
 import type { AppEnv } from "../middleware/requestUser.ts";
-import { getLyricsBySongId } from "../services/subsonicLyricsService.ts";
+import { getLyricsBySongId } from "../services/lyricsService.ts";
 import { sendAudioFile } from "../services/audioFileStream.ts";
 import { sendFile } from "../services/fileResponses.ts";
 import { sendViaNode } from "./shared/sendViaNode.ts";
@@ -47,6 +47,7 @@ import {
   getScheduledLibraryScanJobId,
 } from "../services/libraryScanWorker.ts";
 import { recordPlayEvent } from "../services/playEventService.ts";
+import { noteSubsonicClient } from "../services/telemetry.ts";
 import { logger } from "../services/logger.ts";
 import { asAppError } from "../../lib/errors.ts";
 
@@ -312,7 +313,10 @@ function authenticate(params: SubsonicParams, method: string) {
       ? null
       : resolveUser(getParameter(params, "u"), decodedPassword)
     : resolveSubsonicTokenUser(getParameter(params, "u"), token, salt);
-  if (user) return { format, user };
+  if (user) {
+    noteSubsonicClient(getParameter(params, "c"));
+    return { format, user };
+  }
   logger.debug("subsonic", "Authentication failed", {
     username: getParameter(params, "u"),
     method,

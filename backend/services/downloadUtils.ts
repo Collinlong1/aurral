@@ -5,6 +5,7 @@ import { isVariousArtistsCredit } from "./trackMatching/titleText.ts";
 import { asAppError } from "../../lib/errors.ts";
 import { logger, safeLogDiagnostic } from "./logger.ts";
 import { AURRAL_IDENTITY_TAG, writeAudioTags } from "./audioTags.ts";
+import { getAlbumByMbid } from "./providers/brainzmashProvider.ts";
 
 const AURRAL_IDENTITY_PREFIX = `${AURRAL_IDENTITY_TAG}=`;
 
@@ -41,9 +42,11 @@ type BlockedJobFields = {
   releaseTitle?: string | null;
 };
 
+// A leading dot hides a file or folder from most scanners, so names never start with one.
 export function sanitizePathPart(value: unknown, fallback = "Unknown") {
   const text = String(value || "")
     .replace(/[<>:"/\\|?*]/g, "_")
+    .replace(/^[\s.]+/, "")
     .trim();
   return text || fallback;
 }
@@ -305,6 +308,14 @@ export async function writeImportedFileMetadata(
 
 // A compilation's tracks keep their own performer as the artist. The download
 // job knows which track it fetched, so its identity replaces the uploader's.
+const albumGenres = async (albumMbid: string | null | undefined) =>
+  albumMbid
+    ? getAlbumByMbid(albumMbid).then(
+        (album) => album.genres.slice(0, 5),
+        () => undefined,
+      )
+    : undefined;
+
 export async function writeAudioMetadata(filePath: string, metadata: DownloadTrackFields = {}) {
   const performer = isVariousArtistsCredit(metadata.artistName, metadata.artistMbid)
     ? metadata.artistAliases?.[0]
@@ -319,10 +330,12 @@ export async function writeAudioMetadata(filePath: string, metadata: DownloadTra
       artistMbid: performer ? undefined : metadata.artistMbid,
       albumArtistMbid: metadata.artistMbid,
       releaseGroupMbid: metadata.albumMbid,
+      releaseMbid: metadata.releaseMbid,
       recordingMbid: metadata.trackMbid,
       year: metadata.releaseYear,
       trackNumber: metadata.trackNumber,
       discNumber: metadata.discNumber,
+      genres: await albumGenres(metadata.albumMbid),
     },
     { identity: buildAurralIdentity(metadata) },
   );

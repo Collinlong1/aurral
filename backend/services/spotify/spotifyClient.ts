@@ -25,6 +25,7 @@ interface SpotifyTokenPayload {
 interface SpotifyTrackItem {
   type: "track";
   name?: string;
+  duration_ms?: number;
   artists?: { name?: string }[];
   album?: { name?: string };
 }
@@ -38,6 +39,7 @@ type SpotifyTrack = SpotifyTrackItem | SpotifyEpisodeItem;
 
 interface SpotifyPlaylistItem {
   item?: SpotifyTrack | null;
+  track?: SpotifyTrack | null;
 }
 
 interface SpotifyPlaylistSummary {
@@ -76,6 +78,7 @@ interface FetchAllPagesOptions {
 
 const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000;
 export const SPOTIFY_AUTH_REQUIRED_CODE = "SPOTIFY_AUTH_REQUIRED";
+export const SPOTIFY_LIKED_SONGS_ID = "liked";
 const INVALID_GRANT = "invalid_grant";
 const playlistTrackCache = createCache(2 * 60, 200);
 const playlistTrackInflight = new Map();
@@ -95,12 +98,17 @@ const bumpPlaylistTrackGeneration = (userId: number | undefined) => {
 const playlistTrackCacheKey = (userId: number | undefined, playlistId: string) =>
   `${String(userId)}:${getPlaylistTrackGeneration(userId)}:${String(playlistId)}`;
 
-const createAuthRequiredError = (message: string) => {
+const createAuthRequiredError = (
+  message = "Your Spotify connection expired. Connect Spotify again.",
+) => {
   const error: SpotifyError = new Error(message);
   error.code = SPOTIFY_AUTH_REQUIRED_CODE;
   error.statusCode = 401;
   return error;
 };
+
+const canReadLikedSongs = (userId: number | undefined) =>
+  Boolean(spotifyConnectionStore.getConnection(userId)?.scope?.includes("user-library-read"));
 
 const createIncompletePlaylistError = (
   playlistId: string,
@@ -128,7 +136,7 @@ const disconnect = (userId: number | undefined, connection: SpotifyConnection, r
       reason: safeLogDiagnostic(reason),
     });
   }
-  return createAuthRequiredError("Spotify connection expired");
+  return createAuthRequiredError();
 };
 
 const requireReconnect = (
@@ -142,7 +150,7 @@ const requireReconnect = (
       reason: safeLogDiagnostic(reason),
     });
   }
-  return createAuthRequiredError("Spotify connection expired");
+  return createAuthRequiredError();
 };
 
 const refreshFailure = (
@@ -317,21 +325,32 @@ export const spotifyClient = {
     const playlists = await fetchAllPages<SpotifyPlaylistSummary | null>(userId, "/me/playlists", {
       searchParams: { limit: 50 },
     });
+    const liked: SpotifyPage<unknown> | null = canReadLikedSongs(userId)
+      ? await spotifyRequest(userId, "/me/tracks", { searchParams: { limit: 1 } })
+      : null;
     const connection = spotifyConnectionStore.getPublicStatus(userId);
     return {
       user: connection.displayName || "Spotify",
-      playlists: playlists
-        .map((playlist) => ({
-          id: String(playlist?.id || "").trim(),
-          name: String(playlist?.name || "").trim(),
-          trackCount: Number(playlist?.items?.total ?? playlist?.tracks?.total ?? 0),
-        }))
-        .filter((playlist) => playlist.id && playlist.name)
-        .sort((a, b) => a.name.localeCompare(b.name)),
+      playlists: [
+        {
+          id: SPOTIFY_LIKED_SONGS_ID,
+          name: "Liked Songs",
+          trackCount: liked?.total,
+        },
+        ...playlists
+          .map((playlist) => ({
+            id: String(playlist?.id || "").trim(),
+            name: String(playlist?.name || "").trim(),
+            trackCount: Number(playlist?.items?.total ?? playlist?.tracks?.total ?? 0),
+          }))
+          .filter((playlist) => playlist.id && playlist.name)
+          .sort((a, b) => a.name.localeCompare(b.name)),
+      ],
     };
   },
 
   async getPlaylistArtworkUrl(userId: number | undefined, playlistId: string) {
+    if (playlistId === SPOTIFY_LIKED_SONGS_ID) return null;
     const playlist: SpotifyPlaylistSummary = await spotifyRequest(
       userId,
       `/playlists/${encodeURIComponent(playlistId)}`,
@@ -350,6 +369,9 @@ export const spotifyClient = {
     { forceRefresh = false }: { forceRefresh?: boolean } = {},
   ): Promise<(SpotifyPlaylistItem | null)[]> {
     await getValidConnection(userId);
+    if (playlistId === SPOTIFY_LIKED_SONGS_ID && !canReadLikedSongs(userId)) {
+      throw createAuthRequiredError("Connect Spotify again to import Liked Songs.");
+    }
     const generation = getPlaylistTrackGeneration(userId);
     const cacheKey = playlistTrackCacheKey(userId, playlistId);
     if (!forceRefresh) {
@@ -360,20 +382,29 @@ export const spotifyClient = {
     }
 
     const pages: SpotifyPageSummary[] = [];
-    const request = fetchAllPages<SpotifyPlaylistItem | null>(
-      userId,
-      `/playlists/${encodeURIComponent(playlistId)}/items`,
-      {
-        searchParams: {
-          limit: 50,
-          additional_types: "episode",
-          fields: "items(item(type,name,artists(name),album(name))),next,total,offset",
-        },
-        onPage: (page) => pages.push(page),
-      },
+    const onPage = (page: SpotifyPageSummary) => pages.push(page);
+    const request = (
+      playlistId === SPOTIFY_LIKED_SONGS_ID
+        ? fetchAllPages<SpotifyPlaylistItem | null>(userId, "/me/tracks", {
+            searchParams: { limit: 50 },
+            onPage,
+          })
+        : fetchAllPages<SpotifyPlaylistItem | null>(
+            userId,
+            `/playlists/${encodeURIComponent(playlistId)}/items`,
+            {
+              searchParams: {
+                limit: 50,
+                additional_types: "episode",
+                fields:
+                  "items(item(type,name,duration_ms,artists(name),album(name))),next,total,offset",
+              },
+              onPage,
+            },
+          )
     ).then((items) => {
       if (getPlaylistTrackGeneration(userId) !== generation) {
-        throw createAuthRequiredError("Spotify connection expired");
+        throw createAuthRequiredError();
       }
       const reportedTotal = pages[0]?.total ?? null;
       const pageTotalsDiffer = pages.some((page) => page.total !== reportedTotal);

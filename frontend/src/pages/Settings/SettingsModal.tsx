@@ -1,15 +1,20 @@
-import { useEffect, useMemo, useRef, useState, type ComponentType } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { resolveSidebarStageBackdropVariant } from "../../components/SidebarStageBackdrop";
 import { Search } from "../../components/icons";
 import { useAuth } from "../../contexts/AuthContext";
 import { useStorageHealth } from "../../hooks/useStorageHealth";
+import { lidarrPreferencesQueryOptions } from "../../queryOptions.ts";
 import {
   SETTINGS_GROUPS,
   resolveSettingsPath,
   searchSettings,
   visibleSettingsSections,
+  type SettingsSearchResult,
   type SettingsSectionId,
 } from "./settingsSections";
 import { SettingsLink, useSettingsRoute } from "./settingsRoute";
+import { SettingsScrollContext, SettingsShell } from "./SettingsLayout";
 import {
   AccountSettingsProvider,
   ServerSettingsGate,
@@ -26,9 +31,9 @@ import { MonitoringSection } from "./sections/MonitoringSection";
 import { DownloadsSection } from "./sections/DownloadsSection";
 import { DiscoverySection } from "./sections/DiscoverySection";
 import { NotificationsSection } from "./sections/NotificationsSection";
+import { PluginsSection } from "./sections/PluginsSection";
 import { StatusSection } from "./sections/StatusSection";
 import { MetadataSection } from "./sections/MetadataSection";
-import { SettingsShell } from "./SettingsLayout";
 
 const SECTION_COMPONENTS: Record<SettingsSectionId, ComponentType> = {
   profile: ProfileSection,
@@ -42,6 +47,7 @@ const SECTION_COMPONENTS: Record<SettingsSectionId, ComponentType> = {
   downloads: DownloadsSection,
   discovery: DiscoverySection,
   notifications: NotificationsSection,
+  plugins: PluginsSection,
   status: StatusSection,
   metadata: MetadataSection,
 };
@@ -51,7 +57,7 @@ const isEditable = (target: EventTarget | null) =>
   (target.isContentEditable || ["INPUT", "SELECT", "TEXTAREA"].includes(target.tagName));
 
 export default function SettingsModal() {
-  const { hasPermission } = useAuth();
+  const { hasPermission, bootstrap, user } = useAuth();
   const route = useSettingsRoute();
   const isAdmin = hasPermission("accessSettings");
   const { section } = resolveSettingsPath(route.path, isAdmin);
@@ -62,7 +68,27 @@ export default function SettingsModal() {
   const { hasFailure: hasStorageFailure } = useStorageHealth({ enabled: isAdmin });
   const searchRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
-  const results = useMemo(() => searchSettings(query, isAdmin), [query, isAdmin]);
+  const lidarrConnected = useQuery(lidarrPreferencesQueryOptions(user?.id)).data?.configured;
+  const results = useMemo(
+    () =>
+      searchSettings(query, {
+        canManageServer: isAdmin,
+        lidarrConnected: lidarrConnected === true,
+        signInMethods: Boolean(bootstrap?.oidcEnabled || bootstrap?.googleLoginEnabled),
+        sidebarArt: resolveSidebarStageBackdropVariant() !== null,
+      }),
+    [query, isAdmin, lidarrConnected, bootstrap?.oidcEnabled, bootstrap?.googleLoginEnabled],
+  );
+  const [target, setTarget] = useState<SettingsSearchResult | null>(null);
+  const scrolled = useCallback(() => setTarget(null), []);
+  const scroll = useMemo(
+    () => ({ group: target?.path === route.path ? target.group : null, scrolled }),
+    [target, route.path, scrolled],
+  );
+  const choose = (result: SettingsSearchResult) => {
+    setQuery("");
+    setTarget(result.group ? result : null);
+  };
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -108,8 +134,8 @@ export default function SettingsModal() {
                 }
                 if (event.key === "Enter" && results[0]) {
                   event.preventDefault();
-                  setQuery("");
-                  route.open(results[0].section.id);
+                  choose(results[0]);
+                  route.open(results[0].path);
                 }
               }}
             />
@@ -121,9 +147,9 @@ export default function SettingsModal() {
                 results.map((result) => (
                   <li key={result.key}>
                     <SettingsLink
-                      to={result.section.id}
+                      to={result.path}
                       className="settings-dialog__result"
-                      onClick={() => setQuery("")}
+                      onClick={() => choose(result)}
                     >
                       <span>{result.label}</span>
                       {result.label !== result.section.label ? (
@@ -159,6 +185,7 @@ export default function SettingsModal() {
                         >
                           <Icon aria-hidden="true" />
                           <span>{entry.label}</span>
+                          {"beta" in entry ? <span className="settings-beta">Beta</span> : null}
                           {entry.id === "status" && hasStorageFailure ? (
                             <span className="settings-dialog__alert">
                               <span className="sr-only">Storage issues</span>
@@ -174,13 +201,15 @@ export default function SettingsModal() {
         </>
       }
     >
-      <AccountSettingsProvider>
-        {isAdmin ? (
-          <ServerSettingsProvider section={section.id}>{pane}</ServerSettingsProvider>
-        ) : (
-          pane
-        )}
-      </AccountSettingsProvider>
+      <SettingsScrollContext.Provider value={scroll}>
+        <AccountSettingsProvider>
+          {isAdmin ? (
+            <ServerSettingsProvider section={section.id}>{pane}</ServerSettingsProvider>
+          ) : (
+            pane
+          )}
+        </AccountSettingsProvider>
+      </SettingsScrollContext.Provider>
     </SettingsShell>
   );
 }

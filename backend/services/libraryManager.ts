@@ -92,6 +92,7 @@ import {
   clearArtistMonitoringExclusions,
   getAurralArtistMonitoring,
   getMonitoringDefaults,
+  getStoredArtistMonitoring,
   indexArtistExclusions,
   isAlbumMonitoringExcluded,
   listMonitoringExclusions,
@@ -115,7 +116,7 @@ import {
   getArtistByMbid as getMetadataArtistByMbid,
   selectAlbumRelease,
 } from "./providers/brainzmashProvider.ts";
-import { isVariousArtistsCredit } from "./trackMatching/titleText.ts";
+import { isSilenceTrack, isVariousArtistsCredit } from "./trackMatching/titleText.ts";
 const LIDARR_RETRY_MS = 60000;
 const metadataLookups = new PQueue({ concurrency: 4 });
 const LIDARR_MONITOR_OPTIONS = new Set([
@@ -358,6 +359,17 @@ type ArtistAddOptions = {
   tagId?: number | string | null;
   metadataProfileId?: number | string | null;
 };
+const announceArtistAdded = (artistName: string, { albumOnly, user }: ArtistAddOptions) => {
+  if (albumOnly) return;
+  import("./notificationService.ts")
+    .then(({ notifyArtistAdded }) => notifyArtistAdded({ artistName, user }))
+    .catch((error) =>
+      logger.warn("library", "Could not announce an added artist", {
+        reason: error instanceof Error ? error.message : String(error),
+      }),
+    );
+};
+
 type AlbumAddOptions = {
   managedBy?: string | null;
   user?: LibraryUser;
@@ -1229,6 +1241,7 @@ export class LibraryManager {
       monitorMode: "none",
     });
     scheduleReleaseMetadataRefresh();
+    announceArtistAdded(name, options);
     return (
       libraryArtistFallback(artist.id) ?? {
         error: "Artist was added but could not be read back",
@@ -1288,6 +1301,7 @@ export class LibraryManager {
       upsertCachedArtist(mappedArtist);
       recordLidarrOwner(lidarrArtist);
       scheduleLibraryReconciliation();
+      announceArtistAdded(mappedArtist.artistName || artistName, options);
       import("./aurralHistoryService.ts")
         .then(({ recordArtistAdded }) =>
           recordArtistAdded({
@@ -2352,7 +2366,7 @@ export class LibraryManager {
         recording: String(track?.recordingId || track?.id || "").trim(),
         title: String(track?.title || "").trim(),
       }))
-      .filter((track) => track.recording);
+      .filter((track) => track.recording && !isSilenceTrack(track.title));
   }
 
   // A release other than a studio album is skipped when every recording on it
@@ -2605,7 +2619,9 @@ export class LibraryManager {
       }
       if (!artist) {
         if (!hasPermission(user, "addArtist")) return forbidden;
-        const created: MethodResult<"_addAurralArtist"> = await this._addAurralArtist(mbid, name);
+        const created: MethodResult<"_addAurralArtist"> = await this._addAurralArtist(mbid, name, {
+          user,
+        });
         if (created?.error) return created;
       }
       return this.setAurralArtistMonitoring(mbid, resolved.request);
@@ -2722,6 +2738,7 @@ export class LibraryManager {
           .get(artistId)!;
         const metadata = readRawLibraryMetadata(storedArtist.metadata_json);
         const { addOptions } = metadata;
+        const startsMonitoring = Boolean(stored) && !getStoredArtistMonitoring(artistId);
         setAurralArtistMonitoringState(artistId, stored, defaults);
         upsertLibraryArtist({
           identityKey: storedArtist.identity_key,
@@ -2729,6 +2746,7 @@ export class LibraryManager {
           name: currentArtist.name,
           metadata: {
             ...metadata,
+            ...(startsMonitoring && { added: new Date().toISOString() }),
             monitored: Boolean(stored),
             monitor: legacyMode,
             monitorOption: legacyMode,
@@ -3548,7 +3566,7 @@ export class LibraryManager {
         trackMbid: String(track?.recordingId || track?.id || "").trim(),
         title: String(track?.title || "").trim(),
       }))
-      .filter((track) => track.trackMbid && track.title);
+      .filter((track) => track.trackMbid && track.title && !isSilenceTrack(track.title));
     if (tracks.length === 0) {
       return finishExistingOr({
         error: "Album metadata does not contain an unambiguous track list",

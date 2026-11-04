@@ -275,8 +275,13 @@ test("a real request-available event runs each script independently of webhooks"
   try {
     dbOps.updateSettings({
       integrations: {
-        webhookEvents: { notifyRequestAvailable: true },
-        webhooks: [{ url: `http://127.0.0.1:${listeningAddress(server).port}/hook`, headers: [] }],
+        webhooks: [
+          {
+            url: `http://127.0.0.1:${listeningAddress(server).port}/hook`,
+            headers: [],
+            events: ["notifyRequestAvailable"],
+          },
+        ],
         scriptEvents: { notifyRequestAvailable: true, notifyRequestMade: false },
         scripts: [
           { name: "Fails", file: "fail.sh", args: [], timeoutSec: 5, enabled: true },

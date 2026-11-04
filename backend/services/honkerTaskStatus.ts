@@ -108,7 +108,7 @@ export const QUEUE_DEFINITIONS = [
     queue: "_outbox:notifications",
     label: "Notifications",
     workerLabel: "Notification worker",
-    description: "Delivers queued Gotify and webhook notifications.",
+    description: "Delivers queued Gotify and webhook notifications and plugin events.",
     worker: "notification-outbox",
   },
 ];
@@ -175,6 +175,10 @@ export const SYSTEM_TASK_LABELS = {
   "update-check": {
     label: "Update check",
     description: "Checks aurral.org for a newer Aurral build in this channel.",
+  },
+  "telemetry-report": {
+    label: "Usage stats",
+    description: "Sends anonymous usage stats to aurral.org every 3 days when turned on.",
   },
   "trending-charts-refresh": {
     label: "Trending charts refresh",

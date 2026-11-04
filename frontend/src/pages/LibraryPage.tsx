@@ -922,6 +922,7 @@ function LibraryPage() {
                 disabled: !artist.mbid,
               },
               ...artistMbidMenuItems(artist),
+              ...actions.pluginMenuItems("artist", { artistId: artist.id }),
               ...(actions.canDeleteArtist && canRemoveLibraryArtist(artist)
                 ? [
                     {
@@ -1271,6 +1272,7 @@ function LibraryPage() {
                   },
                   ...artistMbidMenuItems(libraryArtist, { separatorBefore: true }),
                   ...libraryArtistMonitoringItems,
+                  ...actions.pluginMenuItems("artist", { artistId: libraryArtist.id }),
                   ...(actions.canDeleteArtist && canRemoveLibraryArtist(libraryArtist)
                     ? [
                         {

@@ -1,6 +1,7 @@
 import * as v from "valibot";
 import { logger } from "../../services/logger.ts";
 import { USENET_CLIENT_KEYS } from "../../services/usenetClientCommon.ts";
+import { NOTIFICATION_EVENTS, type NotificationEvent } from "../../../lib/notificationEvents.ts";
 import { lenient, listOf, recordOf } from "./storedSchemas.ts";
 
 const number = v.pipe(
@@ -17,32 +18,27 @@ const id = lenient(v.nullable(number));
 const service = <Entries extends v.ObjectEntries>(entries: Entries) =>
   lenient(v.looseObject(entries));
 
-const webhookSettings = {
-  webhooks: lenient(
-    listOf(
-      v.looseObject({
-        url: v.string(),
-        headers: lenient(listOf(v.looseObject({ key: v.string(), value: v.string() }))),
-        body: nullableText,
-        // Optional body per event; an empty one falls back to body.
-        eventBodies: service({
-          notifyDiscoveryUpdated: nullableText,
-          notifyWeeklyFlowDone: nullableText,
-          notifyRequestMade: nullableText,
-          notifyRequestAvailable: nullableText,
-        }),
-      }),
-    ),
-  ),
-  webhookEvents: service({
-    notifyDiscoveryUpdated: flag,
-    notifyWeeklyFlowDone: flag,
-    notifyRequestMade: flag,
-    notifyRequestAvailable: flag,
-  }),
-};
+// One switch per notification event.
+const eventFlags = service(
+  Object.fromEntries(NOTIFICATION_EVENTS.map((event) => [event, flag])) as Record<
+    NotificationEvent,
+    typeof flag
+  >,
+);
 
-export const webhookSettingsSchema = v.looseObject(webhookSettings);
+export const webhookSchema = v.looseObject({
+  url: v.string(),
+  headers: lenient(listOf(v.looseObject({ key: v.string(), value: v.string() }))),
+  body: nullableText,
+  events: lenient(listOf(v.picklist(NOTIFICATION_EVENTS))),
+  // Optional body per event; an empty one falls back to body.
+  eventBodies: service(
+    Object.fromEntries(NOTIFICATION_EVENTS.map((event) => [event, nullableText])) as Record<
+      NotificationEvent,
+      typeof nullableText
+    >,
+  ),
+});
 
 export const scriptSettingsSchema = v.looseObject({
   name: text,
@@ -53,10 +49,9 @@ export const scriptSettingsSchema = v.looseObject({
 });
 
 export const integrationSettingsSchema = v.looseObject({
-  ...webhookSettings,
+  webhooks: lenient(listOf(webhookSchema)),
   scripts: lenient(listOf(scriptSettingsSchema)),
-  // Scripts run on the same events as webhooks.
-  scriptEvents: webhookSettings.webhookEvents,
+  scriptEvents: eventFlags,
   lastfm: service({
     apiKey: text,
     apiSecret: text,
@@ -155,6 +150,8 @@ export const integrationSettingsSchema = v.looseObject({
     notifyWeeklyFlowDone: flag,
     notifyRequestMade: flag,
     notifyRequestAvailable: flag,
+    notifyArtistAdded: flag,
+    notifyTrackAdded: flag,
   }),
   google: service({ enabled: flag, clientId: text, clientSecret: text, redirectUri: text }),
   musicbrainz: service({ email: text, customUrl: text }),

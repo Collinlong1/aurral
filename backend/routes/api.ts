@@ -18,10 +18,13 @@ import libraryStreams from "./library/streams.ts";
 import lidarrFeed from "./lidarrFeed.ts";
 import lidarrWebhook from "./lidarrWebhook.ts";
 import logs from "./logs.ts";
+import mcp from "./mcp.ts";
 import news from "./news.ts";
 import onboarding from "./onboarding.ts";
+import lyrics from "./lyrics.ts";
 import playEvents from "./playEvents.ts";
 import plex from "./plex.ts";
+import plugins from "./plugins.ts";
 import playlistArtwork from "./playlists/handlers/artwork.ts";
 import flows from "./playlists/handlers/flows.ts";
 import playlistImports from "./playlists/handlers/imports.ts";
@@ -36,6 +39,7 @@ import search from "./search.ts";
 import settings from "./settings/index.ts";
 import shareLinks from "./shareLinks.ts";
 import starPrompt from "./starPrompt.ts";
+import telemetry from "./telemetry.ts";
 import settingsDownloadClients from "./settings/downloadClients.ts";
 import settingsScripts from "./settings/scripts.ts";
 import updates from "./updates.ts";
@@ -92,12 +96,16 @@ export const api = new Hono<AppEnv>()
   .route("/", scrobbling)
   .route("/", historyServers)
   .route("/", plex)
+  .route("/", plugins)
+  .route("/", mcp)
   .route("/", filesystem)
   .route("/", discovery)
   .route("/", news)
+  .route("/", lyrics)
   .route("/", playEvents)
   .route("/", shareLinks)
   .route("/", starPrompt)
+  .route("/", telemetry)
   .route("/", wrapped)
   .route("/", lidarrWebhook)
   .route("/", lidarrFeed)

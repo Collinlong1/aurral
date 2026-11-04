@@ -9,9 +9,11 @@ import RelativeTime from "../../../../components/RelativeTime";
 import { Select, type SelectOption } from "../../../../components/Select";
 import TooltipButton from "../../../../components/TooltipButton";
 import { queryClient, queryKeys } from "../../../../queryClient.ts";
+import { authClient } from "../../../../utils/api/clients/auth.ts";
 import { logsClient } from "../../../../utils/api/clients/logs.ts";
+import { API_BASE_URL } from "../../../../utils/api/core.ts";
 import { getApiErrorMessage } from "../../../../utils/api/errors.ts";
-import { formatDate } from "../../../../utils/dateTime.ts";
+import { formatDate, formatTime } from "../../../../utils/dateTime.ts";
 import { useServerSettings } from "../../SettingsProviders";
 import {
   SettingsGroup,
@@ -24,7 +26,8 @@ import { StatusLine } from "./StatusLine";
 
 type Tab = "problems" | "all";
 type Entry = InferResponseType<typeof logsClient.$get, 200>["entries"][number];
-type Problem = InferResponseType<typeof logsClient.problems.$get, 200>["problems"][number];
+type Problems = InferResponseType<typeof logsClient.problems.$get, 200>;
+type Problem = Problems["problems"][number];
 
 const PAGE_SIZE = 200;
 const TABS: { id: Tab; label: string }[] = [
@@ -54,6 +57,14 @@ function lineTime(ts: string) {
     : `${formatDate(date, { month: "short", day: "numeric" })} ${time}`;
 }
 
+function freshTime(ts: string) {
+  const date = new Date(ts);
+  const time = formatTime(date, { hour: "numeric", minute: "2-digit" });
+  return date.toDateString() === new Date().toDateString()
+    ? time
+    : `${formatDate(date, { month: "short", day: "numeric" })} ${time}`;
+}
+
 function entryDetails(entry: Entry) {
   const where = [
     `process ${entry.proc}`,
@@ -75,6 +86,18 @@ async function exportText(level: LogLevel) {
   return response.text();
 }
 
+function triagePrompt(apiKey: string) {
+  const link = (path: string, query: Record<string, string>) =>
+    `${new URL(`${API_BASE_URL}/logs/${path}`, window.location.origin)}?${new URLSearchParams({ ...query, api_key: apiKey })}`;
+  return [
+    "Diagnose problems in my Aurral server by following https://raw.githubusercontent.com/lklynet/aurral/main/.github/triage/PLAYBOOK.md",
+    "These links are live and carry my admin API key. Fetch them again after changes, and never post them anywhere.",
+    `Problems from the last day, grouped: ${link("problems", {})}`,
+    `Full log with version and integrations: ${link("export", { level: "warn" })}`,
+    `Start fresh, by POST, only after I say yes: ${link("fresh", {})}`,
+  ].join("\n");
+}
+
 export function useLogProblems() {
   return useQuery({
     queryKey: queryKeys.logProblems,
@@ -84,10 +107,11 @@ export function useLogProblems() {
   });
 }
 
-export function logsServiceStatus(problems: Problem[] | undefined): ServiceStatus | null {
-  if (!problems) return null;
+export function logsServiceStatus(data: Problems | undefined): ServiceStatus | null {
+  if (!data) return null;
+  const { problems, freshSince } = data;
   if (!problems.length) return { label: "No problems" };
-  const label = `${problems.length} problem${problems.length === 1 ? "" : "s"} in the last day`;
+  const label = `${problems.length} problem${problems.length === 1 ? "" : "s"} ${freshSince ? `since ${freshTime(freshSince)}` : "in the last day"}`;
   return problems.some((problem) => problem.level === "error")
     ? { label, tone: "error" }
     : { label };
@@ -115,7 +139,14 @@ function ProblemRow({ problem, onOpen }: { problem: Problem; onOpen: () => void 
 }
 
 function ProblemsView({ onOpen }: { onOpen: (fp: string) => void }) {
+  const { showError } = useServerSettings();
   const problems = useLogProblems();
+  const fresh = useMutation({
+    mutationFn: (start: boolean) =>
+      parseResponse(start ? logsClient.fresh.$post() : logsClient.fresh.$delete()),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.logsRoot }),
+    onError: (error) => showError(getApiErrorMessage(error, "Couldn't change the log view.")),
+  });
   if (problems.isPending) {
     return (
       <p className="settings-loading">
@@ -132,15 +163,50 @@ function ProblemsView({ onOpen }: { onOpen: (fp: string) => void }) {
       </SettingsGroup>
     );
   }
+  const { problems: list, freshSince } = problems.data;
   return (
     <SettingsGroup>
-      {problems.data.problems.length ? (
-        problems.data.problems.map((problem) => (
+      {list.length ? (
+        list.map((problem) => (
           <ProblemRow key={problem.fp} problem={problem} onOpen={() => onOpen(problem.fp)} />
         ))
       ) : (
-        <p className="settings-group__note">No warnings or errors in the last 24 hours.</p>
+        <p className="settings-group__note">
+          {freshSince
+            ? `No new problems since ${freshTime(freshSince)}.`
+            : "No warnings or errors in the last 24 hours."}
+        </p>
       )}
+      {list.length || freshSince ? (
+        <SettingsRow
+          help={
+            freshSince
+              ? `Started fresh at ${freshTime(freshSince)}.`
+              : "Fixed these? Hide them so only new problems show."
+          }
+        >
+          {freshSince ? (
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={() => fresh.mutate(false)}
+              disabled={fresh.isPending}
+            >
+              Show earlier
+            </button>
+          ) : null}
+          {list.length ? (
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={() => fresh.mutate(true)}
+              disabled={fresh.isPending}
+            >
+              Start fresh
+            </button>
+          ) : null}
+        </SettingsRow>
+      ) : null}
     </SettingsGroup>
   );
 }
@@ -279,6 +345,18 @@ export function LogsPage() {
     onSuccess: () => showSuccess("Copied the last day of warnings and errors."),
     onError: (error) => showError(getApiErrorMessage(error, "Couldn't copy the log.")),
   });
+  const apiKey = useQuery({
+    queryKey: queryKeys.apiKey,
+    queryFn: ({ signal }) => parseResponse(authClient["api-key"].$get({}, { init: { signal } })),
+  });
+  const copyTriage = async (key: string) => {
+    try {
+      await navigator.clipboard.writeText(triagePrompt(key));
+      showSuccess("Copied a prompt with your admin API key.");
+    } catch {
+      showError("Couldn't copy the prompt.");
+    }
+  };
   const download = useMutation({
     mutationFn: async () => {
       const url = URL.createObjectURL(new Blob([await exportText("info")]));
@@ -358,6 +436,19 @@ export function LogsPage() {
             onChange={({ target }) => toggleDebug.mutate(target.checked)}
             aria-label="Debug logging"
           />
+        </SettingsRow>
+        <SettingsRow
+          label="Agent triage"
+          help="Copies a prompt with live links to these logs. It carries your admin API key."
+        >
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            onClick={() => apiKey.data && void copyTriage(apiKey.data.apiKey)}
+            disabled={!apiKey.data}
+          >
+            Copy prompt
+          </button>
         </SettingsRow>
       </SettingsGroup>
     </SettingsPage>

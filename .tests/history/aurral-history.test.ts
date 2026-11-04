@@ -28,6 +28,7 @@ const { downloadTracker } = await import("../../backend/services/downloadJobs/do
 const { upsertLibraryArtist, upsertLibraryAlbum, upsertLibraryTrack, linkLibraryAlbumTrack } =
   await import("../../backend/services/libraryMediaStore.ts");
 const { getHonkerDb } = await import("../../backend/services/honkerDb.ts");
+const { dbOps } = await import("../../backend/db/helpers/index.ts");
 const { lidarrClient } = await import("../../backend/services/lidarrClient.ts");
 
 beforeEach(() => {
@@ -441,6 +442,56 @@ test("getAurralHistoryRequests fails orphaned download history", async () => {
   assert.equal(entry?.inQueue, false);
 });
 
+test("reading the queue does not rewrite an unchanged Review job", async () => {
+  const jobId = downloadTracker.addJob(
+    {
+      artistName: "Artist",
+      trackName: "Song",
+      albumName: "Album",
+      albumMbid: "b2222222-2222-4222-8222-222222222222",
+      requestGroupId: "group-1",
+    },
+    "playlist-1",
+  );
+  assert.ok(jobId != null);
+  downloadTracker.setBlocked(jobId, "blocked-duration-mismatch");
+  recordTrackJobBlocked(downloadTracker.getJob(jobId)!, "blocked-duration-mismatch");
+  const insert = vi.spyOn(dbOps, "insertAurralHistory");
+
+  await getAurralHistoryRequests();
+
+  assert.equal(insert.mock.calls.length, 0);
+});
+
+test("reading a Review queue bigger than history keeps older activity", async () => {
+  upsertAurralHistory({
+    referenceId: "earlier-job",
+    kind: "track_download",
+    title: "Downloaded Earlier Song",
+    status: "completed",
+    statusLabel: "Downloaded",
+    metadata: { jobId: "earlier-job", trackName: "Earlier Song", artistName: "Artist" },
+    createdAt: Date.now() - 60_000,
+  });
+  const blockedIds = Array.from({ length: 1001 }, (_, index) => {
+    const jobId = downloadTracker.addJob(
+      { artistName: "Artist", trackName: `Song ${index}` },
+      "playlist-1",
+    );
+    assert.ok(jobId != null);
+    downloadTracker.setBlocked(jobId, "blocked-duration-mismatch");
+    return jobId;
+  });
+
+  await getAurralHistoryRequests();
+  const entries = await getAurralHistoryRequests();
+
+  assert.ok(entries.some((item) => item.jobId === "earlier-job"));
+  const blocked = entries.filter((item) => item.status === "blocked");
+  assert.equal(blocked.length, blockedIds.length);
+  assert.ok(blocked.every((item) => item.subtitle === "blocked-duration-mismatch"));
+});
+
 test("blocked track download history exposes source filename", async () => {
   const jobId = downloadTracker.addJob(
     {
@@ -638,6 +689,39 @@ test("a request survives Lidarr being unreachable", async (t: import("vite-plus/
     entries.find((item) => item.albumName === "Kept Album"),
     undefined,
   );
+});
+
+test("a request without its Lidarr album ID finds it among its artist's albums, never the whole library", async (t: import("vite-plus/test").TestContext) => {
+  t.onTestFinished(() => {
+    db.prepare("DELETE FROM aurral_history").run();
+  });
+  const lookups: string[] = [];
+  const lidarrStub = lidarrWithAlbum(async (id) => {
+    lookups.push(String(id));
+    return { id: Number(id), foreignAlbumId: "found", statistics: { trackFileCount: 0 } };
+  });
+  vi.spyOn(lidarrStub, "getArtistByMbid").mockImplementation(async (mbid) =>
+    mbid === "artist-mbid" ? { id: 9, artistName: "Artist", foreignArtistId: mbid } : null,
+  );
+  const albumLists: unknown[] = [];
+  vi.spyOn(lidarrStub, "getAllAlbums").mockImplementation(async (options) => {
+    albumLists.push(options.artistIds);
+    return [
+      { id: 6161, foreignAlbumId: "other", title: "Other Album" },
+      { id: 6262, foreignAlbumId: "found", title: "Found Album" },
+    ];
+  });
+  historyModule.recordAlbumRequested({
+    albumName: "Found Album",
+    artistName: "Artist",
+    artistMbid: "artist-mbid",
+    searching: true,
+  });
+
+  await getAurralHistoryRequests(lidarrStub);
+
+  assert.deepEqual(albumLists, [[9]]);
+  assert.deepEqual(lookups, ["6262"]);
 });
 
 test("Aurral album requests are not checked against Lidarr by library album ID", async () => {

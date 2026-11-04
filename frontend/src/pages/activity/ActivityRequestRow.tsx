@@ -7,7 +7,7 @@ import {
   Pause,
   Play,
   RotateCcw,
-  Square,
+  X,
   TrendUp,
   XCircle,
   ChevronDown,
@@ -330,7 +330,7 @@ export default function ActivityRequestRow({
             {activeControl === "cancel" ? (
               <DotLoader size="sm" label={null} />
             ) : (
-              <Square aria-hidden="true" />
+              <X aria-hidden="true" />
             )}
           </TooltipButton>
         ) : null}

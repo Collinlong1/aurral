@@ -38,8 +38,8 @@ export const deezerPlaylistSchema = v.looseObject({
   title: v.optional(v.string()),
   description: v.optional(v.string()),
   nb_tracks: v.optional(v.number()),
-  picture_xl: v.optional(v.string()),
-  picture_big: v.optional(v.string()),
+  picture_xl: v.nullish(v.string()),
+  picture_big: v.nullish(v.string()),
   user: v.optional(v.looseObject({ name: v.optional(v.string()) })),
   creator: v.optional(v.looseObject({ name: v.optional(v.string()) })),
 });
@@ -142,7 +142,9 @@ const normalizePlaylistSummary = (playlist: DeezerPlaylist) => {
 
 type PlaylistSummary = NonNullable<ReturnType<typeof normalizePlaylistSummary>>;
 
-const normalizeTracks = (rows: v.InferOutput<typeof deezerTrackSchema>[]) => {
+type DeezerTrack = v.InferOutput<typeof deezerTrackSchema>;
+
+const normalizeTracks = (rows: DeezerTrack[]) => {
   const stats = {
     sourceItems: rows.length,
     unavailable: 0,
@@ -167,7 +169,7 @@ const normalizeTracks = (rows: v.InferOutput<typeof deezerTrackSchema>[]) => {
       trackName,
       albumName: String(row?.album?.title || "").trim() || null,
       durationMs: Number(row?.duration) > 0 ? Number(row.duration) * 1000 : null,
-      preview_url: row?.preview && row.id ? deezerPreviewPath(row.id) : null,
+      preview_url: deezerPreviewPath(row.id),
       artworkUrl: row?.album?.cover_medium || null,
       deezerAlbumId: row?.album?.id ? String(row.album.id) : null,
     });
@@ -210,7 +212,7 @@ export async function getDeezerPlaylist(value: unknown) {
   if (!summary) {
     throw providerError("The Deezer playlist is unavailable", 404, "DEEZER_PLAYLIST_NOT_FOUND");
   }
-  const rows: v.InferOutput<typeof deezerTrackSchema>[] = [];
+  const rows: DeezerTrack[] = [];
   let index = 0;
   while (index < MAX_TRACKS) {
     const page = await deezerList(deezerTrackSchema, `/playlist/${id}/tracks`, {

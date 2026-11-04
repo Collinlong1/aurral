@@ -1,3 +1,4 @@
+import { NOTIFICATION_EVENTS } from "../../../../lib/notificationEvents.ts";
 import { allReleaseTypes } from "./constants";
 import { normalizeDateTimeFormat } from "../../utils/dateTime.ts";
 import type {
@@ -214,25 +215,17 @@ export const normalizeSettings = (savedSettings: SavedSettings) => {
         notifyWeeklyFlowDone: false,
         notifyRequestMade: false,
         notifyRequestAvailable: false,
+        notifyArtistAdded: false,
+        notifyTrackAdded: false,
         ...(savedSettings.integrations?.gotify || {}),
       },
       webhooks: savedSettings.integrations?.webhooks || [],
-      webhookEvents: {
-        notifyDiscoveryUpdated: false,
-        notifyWeeklyFlowDone: false,
-        notifyRequestMade: false,
-        notifyRequestAvailable: false,
-        ...(savedSettings.integrations?.webhookEvents || {}),
-      },
       // Present only while the server has custom scripts enabled.
       ...(Array.isArray(savedSettings.integrations?.scripts)
         ? {
             scripts: savedSettings.integrations.scripts,
             scriptEvents: {
-              notifyDiscoveryUpdated: false,
-              notifyWeeklyFlowDone: false,
-              notifyRequestMade: false,
-              notifyRequestAvailable: false,
+              ...Object.fromEntries(NOTIFICATION_EVENTS.map((event) => [event, false])),
               ...(savedSettings.integrations?.scriptEvents || {}),
             },
           }

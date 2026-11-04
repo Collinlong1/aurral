@@ -16,6 +16,7 @@ import {
   SettingsRow,
   SettingsServiceRow,
 } from "../SettingsLayout";
+import type { NotificationEvent } from "../../../../../lib/notificationEvents.ts";
 import "./scripts.css";
 
 // Custom script hooks. The server only sends script settings while
@@ -26,8 +27,8 @@ type ScriptRun = Awaited<ReturnType<typeof runTest>>;
 type TestResult = { tone: "success" | "error"; message: string; run?: ScriptRun };
 type EventTogglesProps = {
   idPrefix: string;
-  values: Partial<Record<string, boolean>>;
-  onChange: (key: string, enabled: boolean) => void;
+  isOn: (event: NotificationEvent) => boolean;
+  onChange: (event: NotificationEvent, enabled: boolean) => void;
 };
 
 const MAX_SCRIPTS = 10;
@@ -272,7 +273,7 @@ export function ScriptsGroups({
         <SettingsGroup title="Script events">
           <EventToggles
             idPrefix="script-event"
-            values={scriptEvents}
+            isOn={(key) => scriptEvents[key] === true}
             onChange={(key, enabled) =>
               updateSettings({
                 ...settings,

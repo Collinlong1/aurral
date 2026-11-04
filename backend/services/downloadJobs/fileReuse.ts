@@ -176,21 +176,6 @@ function usesLibraryFolders(playlistType: string) {
   return key === "library" || Boolean(flowPlaylistConfig.getStaticPlaylist(key));
 }
 
-/**
- * Sanitizes a path segment to strip directory traversal sequences and invalid characters.
- *
- * @param {string|null|undefined} value - Raw path component.
- * @param {string} [fallback="Unknown"] - Safe fallback if value is empty or resolves to traversal.
- * @returns {string} Sanitized directory or file name.
- */
-function sanitizeSafeSegment(value: string | null | undefined, fallback = "Unknown") {
-  const text = sanitizePathPart(value, fallback);
-  if (!text || text === "." || text === ".." || text.startsWith(".")) {
-    return fallback;
-  }
-  return text;
-}
-
 // Downloads are named "Title" or, with a known album position, "07 - Title",
 // or "2-07 - Title" past the first disc. An album can repeat a title, so a
 // known position must match too.
@@ -222,16 +207,16 @@ async function findLocalExistingSource(
   track: DownloadTrackInput,
   options: SourceOptions = {},
 ): Promise<ReuseSource | null> {
-  const targetPlaylistType = sanitizeSafeSegment(options.targetPlaylistType, "");
+  const targetPlaylistType = sanitizePathPart(options.targetPlaylistType, "");
   if (!targetPlaylistType) return null;
 
   const root = path.resolve(options.downloadRoot || resolveDownloadRoot());
   const ephemeral = isFlowPlaylistType(targetPlaylistType);
   const libraryFolders = usesLibraryFolders(targetPlaylistType);
 
-  const artistDir = sanitizeSafeSegment(track?.artistName, "Unknown Artist");
-  const albumDir = sanitizeSafeSegment(track?.albumName, "Unknown Album");
-  const expectedBaseName = sanitizeSafeSegment(track?.trackName, "Unknown Track");
+  const artistDir = sanitizePathPart(track?.artistName, "Unknown Artist");
+  const albumDir = sanitizePathPart(track?.albumName, "Unknown Album");
+  const expectedBaseName = sanitizePathPart(track?.trackName, "Unknown Track");
   const trackNumber = normalizePositiveInteger(track?.trackNumber);
   const discNumber = normalizePositiveInteger(track?.discNumber);
 
@@ -609,21 +594,22 @@ function findMatchingTrack(tracks: ReadTrack[], track: DownloadTrackInput, stric
 }
 
 const FOLDER_SOURCES = {
+  aurral: { label: "Library", external: false, mapPath: (filePath: string) => filePath },
   lidarr: {
     label: "Lidarr",
+    external: true,
     mapPath: (filePath: string) => resolveLocalPath(filePath, getPathMappings("lidarr")),
   },
-  readonly: { label: "Read-only folder", mapPath: (filePath: string) => filePath },
+  readonly: { label: "Read-only folder", external: true, mapPath: (filePath: string) => filePath },
 };
 
-// Lidarr's files and read-only folders stay where they are, so a playlist
-// uses the file in place.
+// Indexed files stay where they are, so a playlist uses the file in place.
 async function findLibraryFolderSource(
   track: DownloadTrackInput,
   options: SourceOptions = {},
   source: FolderSource = "lidarr",
 ): Promise<ReuseSource | null> {
-  const { label, mapPath } = FOLDER_SOURCES[source];
+  const { label, external, mapPath } = FOLDER_SOURCES[source];
   const strictAlbum = options.targetPlaylistType === "library";
   const { artists, albums, tracks } = buildLibraryReadModel(
     getLibraryForArtistReferences({
@@ -687,7 +673,7 @@ async function findLibraryFolderSource(
     return {
       sourceType: source,
       sourcePath,
-      externalPath: matchedTrack.path,
+      ...(external ? { externalPath: matchedTrack.path } : {}),
       albumName: album.albumName || track.albumName || null,
     };
   }
@@ -706,9 +692,11 @@ async function findFolderSource(
   if (options.allowLidarr === false) return null;
   const { lidarrClient } = await import("../lidarrClient.ts");
   return (
+    (await findLibraryFolderSource(track, options, "aurral")) ||
     (lidarrClient.isConfigured()
       ? await findLibraryFolderSource(track, options, "lidarr")
-      : null) || findLibraryFolderSource(track, options, "readonly")
+      : null) ||
+    findLibraryFolderSource(track, options, "readonly")
   );
 }
 
