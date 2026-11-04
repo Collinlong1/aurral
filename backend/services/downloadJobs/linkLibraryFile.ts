@@ -4,6 +4,7 @@ import { db } from "../../config/db-sqlite.ts";
 import { resolveDownloadRoot } from "../downloadPaths.ts";
 import { downloadTracker, type DownloadJob } from "./downloadTracker.ts";
 import { noPlaylistDownloadedFile, refreshPlaylistAfterReuse } from "./fileReuse.ts";
+import { restoreDownloadJobCancellations } from "./downloadCancellation.ts";
 
 // A missing track can be linked to a file that is already in the Library, so
 // Aurral stops searching for it. The file stays where it is and is treated as
@@ -95,6 +96,7 @@ export async function linkLibraryFileToJob(jobId: string, fileId: number) {
   if (!stat?.isFile()) {
     throw new LinkLibraryFileError("Aurral cannot read that file. Rescan the Library.", 409);
   }
+  if (job.status === "cancelled") restoreDownloadJobCancellations([job.id]);
   const downloadRoot = path.resolve(resolveDownloadRoot());
   const linked = downloadTracker.setDone(
     job.id,

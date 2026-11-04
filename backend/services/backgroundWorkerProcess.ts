@@ -58,6 +58,7 @@ const DOWNLOAD_OWNER_COMMAND_NAMES = [
   "enqueueManualMissingSelection",
   "enqueueManualReplacementSelection",
   "linkLibraryFileToJob",
+  "importDiskFileToJob",
   "approveBlockedJob",
   "denyBlockedJob",
   "cancelTrackDownload",
@@ -102,6 +103,9 @@ async function handleDownloadOwnerCommand(
     } else if (method === "linkLibraryFileToJob") {
       const { runLinkLibraryFile } = await import("./downloadJobs/linkLibraryFile.ts");
       result = await runLinkLibraryFile(args[0], args[1]);
+    } else if (method === "importDiskFileToJob") {
+      const { importDiskFileToJob } = await import("./downloadJobs/importDiskFile.ts");
+      result = await importDiskFileToJob(args[0], args[1]);
     } else if (method === "approveBlockedJob" || method === "denyBlockedJob") {
       const review = await import("./downloadJobs/blockedJobReview.ts");
       result = await review[method](args[0]);

@@ -86,15 +86,22 @@ A manual choice works differently from an automatic search:
 - Aurral still requires readable audio with a known quality. It accepts quality tiers that your profile turns off.
 - Search results expire after 10 minutes. If they expire, search again.
 
-### Link a Library file
+### Use a file you have
 
-When the Library already has the file for a missing track, for example under another title or on another album, link it instead of downloading it again.
+When you already have the file for a missing track, use it instead of downloading the track again.
 
-1. In **Wanted > Missing**, select **Link a Library file** on a track. In a static playlist or flow, right-click a **Missing** or **Not downloaded** track and select **Link a Library file**.
-2. Aurral searches the Library for the track's artist and title. Change the words and select **Search** to look for something else. Files whose title, artist, or album match more of the words come first, so a file under a slightly different name still shows up.
-3. Select a file, then select **Link file**.
+1. In **Wanted > Missing**, select **Use a file you have** on a track. In a static playlist or flow, right-click a **Missing** or **Not downloaded** track and select **Use a file you have**.
+2. Choose where the file is:
+   - **In the Library**: Aurral searches the Library for the track's artist and title. Change the words and select **Search** to look for something else. Files whose title, artist, or album match more of the words come first, so a file under a slightly different name still shows up. Select a file, then select **Link file**.
+   - **File on disk** (admins only): browse to an audio file, or paste its full path and select **Use path**. A path as Lidarr sees it works when a [remote path mapping](/integrations/lidarr/#library-access-check) translates it. Then select **Import file**.
 
-The track is available at once and Aurral stops searching for it. The file stays where it is. Aurral treats it as a reused file, so removing the track or its playlist does not delete it.
+A linked Library file stays where it is. Aurral treats it as a reused file, so removing the track or its playlist does not delete it.
+
+An imported file is copied into the Library like a download, named and tagged for the track. The original is not changed or moved. Aurral checks that the file is readable audio with a known quality, but not that its title or artist match, as with a manual download.
+
+The browser shows the storage paths Aurral can browse, such as `/data`. To browse another folder, such as Lidarr's music folder, mount it into Aurral and add it to the `FILE_BROWSE_ROOTS` environment variable, or paste the file's path.
+
+The track is available at once and Aurral stops searching for it.
 
 ## Download client setup
 

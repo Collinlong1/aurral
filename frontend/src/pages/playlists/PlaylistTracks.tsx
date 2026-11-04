@@ -592,8 +592,12 @@ export function PlaylistTracks({
         job={linkFileTrack}
         playlistId={linkFileTrack ? entry.id : null}
         onClose={() => setLinkFileTrack(null)}
-        onLinked={(track) => {
-          showSuccess(`Linked ${track.trackName || "the track"} to a Library file`);
+        onLinked={(track, how) => {
+          showSuccess(
+            how === "imported"
+              ? `Imported a file for ${track.trackName || "the track"}`
+              : `Linked ${track.trackName || "the track"} to a Library file`,
+          );
           void refresh();
         }}
       />

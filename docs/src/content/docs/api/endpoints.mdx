@@ -366,6 +366,8 @@ The routes call a static playlist a shared playlist.
 | `POST`   | `/api/playlists/jobs/:jobId/manual-search/select`                    | Queue one result from a manual search                                                                 |
 | `GET`    | `/api/playlists/jobs/:jobId/library-files?q=`                        | Search the Library's files for a missing track to link                                                |
 | `POST`   | `/api/playlists/jobs/:jobId/link-file`                               | Link a Library file to a missing track, with `{ "fileId": 12 }`                                       |
+| `GET`    | `/api/playlists/jobs/:jobId/disk-files?path=`                        | Admin: list the folders and audio files in a folder Aurral can browse                                 |
+| `POST`   | `/api/playlists/jobs/:jobId/import-file`                             | Admin: copy an audio file into the Library for a missing track, with `{ "path": "/music/..." }`       |
 | `POST`   | `/api/playlists/start/:flowId`                                       | Run a flow                                                                                            |
 | `GET`    | `/api/playlists/flow-templates`                                      | List flow templates                                                                                   |
 | `POST`   | `/api/playlists/flows`                                               | Create a flow, optionally from a template with `templateId`                                           |

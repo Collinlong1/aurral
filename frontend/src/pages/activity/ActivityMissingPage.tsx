@@ -185,7 +185,7 @@ function MissingJobRow({
             className="native-library-icon-button"
             onClick={() => onLinkFile(job)}
             disabled={isWorking}
-            label="Link a Library file"
+            label="Use a file you have"
           >
             <Link aria-hidden="true" />
           </TooltipButton>
@@ -567,14 +567,18 @@ export default function ActivityMissingPage() {
       <LinkLibraryFileModal
         job={linkFileJob}
         onClose={() => setLinkFileJob(null)}
-        onLinked={(job) => {
+        onLinked={(job, how) => {
           const id = getMissingJobKey(job);
           queryClient.setQueryData(jobsQueryKey, (current) =>
             (Array.isArray(current) ? current : []).filter(
               (entry) => getMissingJobKey(entry) !== id,
             ),
           );
-          showSuccess(`Linked ${job.trackName || "the track"} to a Library file`);
+          showSuccess(
+            how === "imported"
+              ? `Imported a file for ${job.trackName || "the track"}`
+              : `Linked ${job.trackName || "the track"} to a Library file`,
+          );
         }}
       />
       <ManualMissingSearchModal

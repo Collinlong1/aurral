@@ -305,7 +305,7 @@ function PlaylistTrackKebabMenu<T extends PlaylistPanelTrack>({
     onLinkFile && canLinkLibraryFile(track)
       ? {
           id: "link-file",
-          label: "Link a Library file",
+          label: "Use a file you have",
           icon: LinkIcon,
           separatorBefore: !canReSearch && !canManualReSearch,
           onSelect: () => onLinkFile(track),
@@ -884,14 +884,14 @@ export function PlaylistTracksPanel<T extends PlaylistPanelTrack>({
           ) : (
             <>
               {onReorder && tracks.length > 1 ? (
-                <TooltipButton
+                <button
+                  type="button"
                   onClick={() => setReorderDraft(tracks)}
-                  className="native-library-icon-button"
-                  label="Reorder tracks"
-                  aria-label="Reorder tracks"
+                  className="btn btn-secondary btn-sm"
                 >
-                  <ArrowUpDown aria-hidden="true" />
-                </TooltipButton>
+                  <ArrowUpDown className="artist-icon-sm" aria-hidden="true" />
+                  <span>Reorder</span>
+                </button>
               ) : null}
               {allowBulkEdit ? (
                 <TooltipButton
