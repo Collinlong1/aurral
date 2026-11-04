@@ -78,7 +78,7 @@ const sample = <T>(items: T[], count: number) =>
     : Array.from(
         { length: count },
         (_, index) => items[Math.round((index * (items.length - 1)) / (count - 1))],
-      );
+      ).filter((item): item is T => item !== undefined);
 
 // Albums from before titles were kept stable never had their files compared;
 // check each likely box set once.
@@ -104,8 +104,8 @@ export async function findMixedTitleAlbums() {
     if (metadata.canonicalTitle || metadata.mixedTitles || metadata.titlesChecked) continue;
     const folders = new Set(album.paths.map((filePath) => path.dirname(filePath)));
     if (folders.size < 2 && album.paths.length <= LARGE_ALBUM_FILES) continue;
-    const firstPerFolder = [...folders].map((folder) =>
-      album.paths.find((filePath) => path.dirname(filePath) === folder)!,
+    const firstPerFolder = [...folders].flatMap(
+      (folder) => album.paths.find((filePath) => path.dirname(filePath) === folder) ?? [],
     );
     const titles = new Set<string>();
     for (const filePath of sample(folders.size > 1 ? firstPerFolder : album.paths, SAMPLE_FILES)) {
@@ -139,10 +139,11 @@ export function albumSharedFolder(albumId: number) {
   ];
   if (folders.length < 2) return null;
   const parts = folders.map((folder) => folder.split(path.sep));
+  const [first = []] = parts;
   const shared: string[] = [];
-  for (let index = 0; index < parts[0].length; index++) {
-    if (!parts.every((segments) => segments[index] === parts[0][index])) break;
-    shared.push(parts[0][index]);
+  for (const [index, part] of first.entries()) {
+    if (!parts.every((segments) => segments[index] === part)) break;
+    shared.push(part);
   }
   return shared.join(path.sep) || null;
 }

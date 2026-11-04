@@ -16,7 +16,7 @@ import {
 import TooltipButton from "../../components/TooltipButton";
 import { DotLoader } from "../../components/DotLoader";
 import {
-  canCancelActivityRequest,
+  isCancelableDownload,
   formatReviewReasonSummary,
   formatTimelineTime,
   type ActivityRequest,
@@ -161,7 +161,7 @@ export default function ActivityRequestRow({
   const isApproving = reviewingJob === "approve";
   const isDenying = reviewingJob === "deny";
   const activeControl = request.jobId ? controllingJobs[request.jobId] : undefined;
-  const canCancel = canCancelActivityRequest(request) && !isBlockedTrack;
+  const canCancel = isCancelableDownload(request) && !isBlockedTrack;
   const canRetry =
     request.kind === "track_download" &&
     !!request.jobId &&

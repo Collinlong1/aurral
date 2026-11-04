@@ -85,8 +85,9 @@ test("single-track removal retains the job and provider work needed by another l
     0,
   );
   assert.equal(
-    requireFixture(config.flowPlaylistConfig.getStaticPlaylist(survivor.id)).tracks[0]
-      .canonicalJobId,
+    requireFixture(
+      requireFixture(config.flowPlaylistConfig.getStaticPlaylist(survivor.id)).tracks[0],
+    ).canonicalJobId,
     jobId,
   );
   assert.equal(
@@ -438,6 +439,7 @@ async function createPlaylist(
       syncIntervalHours: number;
       keepRemovedTracks: boolean;
     };
+    downloadMissing?: boolean;
   } = {},
 ) {
   const result = await operations.processPlaylistOperation({
@@ -460,7 +462,7 @@ async function finishDownload(
 ) {
   const file = path.join(
     requireFixture(process.env.WEEKLY_FLOW_FOLDER),
-    requireFixture(requireFixture(job).artistName),
+    requireFixture(job).artistName,
     requireFixture(job).albumName!,
     `${requireFixture(job).trackName}.flac`,
   );
@@ -489,6 +491,53 @@ test("deleting a playlist keeps the Library files it reused and deletes the file
   assert.equal(config.flowPlaylistConfig.getStaticPlaylist(playlist!.id), null);
   await assert.rejects(fs.access(downloadedFile), { code: "ENOENT" });
   await assertStillInLibrary(libraryFile);
+});
+
+test("a playlist that skips downloads reuses Library files and saves the rest", async () => {
+  const reused = { artistName: "Reuse Band", albumName: "Only Local", trackName: "On Disk" };
+  const missing = { artistName: "Fresh Band", albumName: "Not Here", trackName: "Elsewhere" };
+  const libraryFile = await addLibraryFile(reused);
+  mockPlaylistServices();
+  const { jobFor } = await createPlaylist([reused, missing], { downloadMissing: false });
+
+  assert.equal(requireFixture(jobFor(reused)).status, "done");
+  assert.equal(requireFixture(jobFor(reused)).finalPath, libraryFile);
+  assert.equal(requireFixture(jobFor(missing)).status, "saved");
+});
+
+test("an imported track links the Library file at its path even when its names differ", async () => {
+  const library = { artistName: "N.E.R.D", albumName: "Fly or Die", trackName: "Thrasher" };
+  const libraryFile = await addLibraryFile(library);
+  mockPlaylistServices();
+  const result = await operations.processPlaylistOperation({
+    kind: "shared-playlist-create",
+    name: "From an M3U",
+    tracks: [{ artistName: "N.E.R.D.", trackName: "Thrasher", path: libraryFile }],
+  });
+  assert.ok(result && typeof result === "object" && "playlist" in result);
+  const [job] = downloadTracker.getByPlaylistType(requireFixture(result.playlist).id);
+
+  assert.equal(requireFixture(job).status, "done");
+  assert.equal(requireFixture(job).finalPath, libraryFile);
+  assert.equal(requireFixture(job).artistName, "N.E.R.D");
+  assert.equal(requireFixture(job).albumName, "Fly or Die");
+});
+
+test("an imported track does not link an indexed file that is gone from disk", async () => {
+  const library = { artistName: "Gone Band", albumName: "Gone Record", trackName: "Vanished" };
+  const libraryFile = await addLibraryFile(library);
+  await fs.rm(libraryFile);
+  mockPlaylistServices();
+  const result = await operations.processPlaylistOperation({
+    kind: "shared-playlist-create",
+    name: "Stale M3U",
+    tracks: [{ ...library, path: libraryFile }],
+    downloadMissing: false,
+  });
+  assert.ok(result && typeof result === "object" && "playlist" in result);
+  const [job] = downloadTracker.getByPlaylistType(requireFixture(result.playlist).id);
+
+  assert.equal(requireFixture(job).status, "saved");
 });
 
 test("removing a reused track from a playlist keeps its Library file", async () => {

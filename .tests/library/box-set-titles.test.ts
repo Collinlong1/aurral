@@ -78,7 +78,7 @@ const boxSetAlbum = () => {
     )
     .all(RELEASE_GROUP);
   assert.equal(rows.length, 1, "one album per release group");
-  return { ...rows[0], metadata: JSON.parse(rows[0].metadata_json || "{}") || {} };
+  return { ...rows[0]!, metadata: JSON.parse(rows[0]!.metadata_json || "{}") || {} };
 };
 
 const notFound = async () => {
@@ -102,7 +102,7 @@ test("a box set is named after its release group, and keeps that name on later s
   assert.equal(boxSetAlbum().title, "The Decca Sound: The Analogue Years");
 
   // A disc retagged later is read again, and the album keeps its name.
-  await writeFlacFixture(path.join(root, DECCA[1].folder, "01 - Track.flac"), {
+  await writeFlacFixture(path.join(root, DECCA[1]!.folder, "01 - Track.flac"), {
     album: "Holst: The Planets (Remastered)",
     album_artist: "Various Artists",
     artist: "Various Artists",

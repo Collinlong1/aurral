@@ -280,13 +280,14 @@ export async function cancelTrackDownload(jobId: string) {
         (peer): peer is DownloadJob =>
           peer?.status === "downloading" && !downloadTracker.isSlskdDispatched(peer.id),
       );
-    if (grab && peers.length > 0) {
+    const [peer] = peers;
+    if (grab && peer) {
       if (grab.jobId === jobId) {
         const { db } = await import("../config/db-sqlite.ts");
         const { replaceAlbumDownloadLeaderInTransaction } =
           await import("./downloadJobs/downloadOwnership.ts");
         const redirect = db.transaction(() =>
-          replaceAlbumDownloadLeaderInTransaction(jobId, peers[0].id, { retainCancelled: true }),
+          replaceAlbumDownloadLeaderInTransaction(jobId, peer.id, { retainCancelled: true }),
         )();
         downloadTracker.reconcileCommittedJobs([redirect]);
       }
@@ -299,6 +300,21 @@ export async function cancelTrackDownload(jobId: string) {
     const cancelled = downloadTracker.getJob(jobId);
     if (!cancelled) return { statusCode: 404, error: "Track not found" };
     return { jobId, status: cancelled.status, cleanupFailed };
+  });
+}
+
+export async function cancelTrackDownloads(jobIds: string[]) {
+  const { withPlaylistMutationLock } = await import("./downloadJobs/mutationGuards.ts");
+  const activeJobs = () =>
+    jobIds
+      .map((jobId) => downloadTracker.getJob(jobId))
+      .filter((job): job is DownloadJob => !!job && ACTIVE_JOB_STATUSES.has(job.status));
+  const owners = activeJobs().map((job) => job.playlistId || job.playlistType);
+  return withPlaylistMutationLock(owners, async () => {
+    const { cancelledJobIds, cleanupFailed } = await cancelActiveAurralJobs(activeJobs(), null, {
+      lock: false,
+    });
+    return { cancelled: cancelledJobIds.length, cleanupFailed };
   });
 }
 

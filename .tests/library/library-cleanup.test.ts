@@ -22,6 +22,7 @@ import {
   resetDatabase,
   setupIsolatedBackend,
 } from "../helpers/backendTestHarness.ts";
+import { requireFixture } from "../playlists/fixtures.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -190,7 +191,7 @@ test("rename gives a file Aurral's name and keeps its Library row, jobs, and lyr
     preview.map((item) => [item.status, item.target]),
     [["pending", path.relative(root, newPath)]],
   );
-  assert.equal(items[0].status, "done");
+  assert.equal(items[0]?.status, "done");
   assert.equal(await exists(newPath), true);
   assert.equal(await exists(path.join(root, "odd folder")), false);
   assert.equal(
@@ -236,7 +237,7 @@ test("a second-disc file takes the disc in its name once, and first-disc and und
   assert.deepEqual(renames((await cleanUp()).items), []);
 });
 
-test("a rename a restart interrupted still refreshes the playlists that use the file", async () => {
+test("a rename a restart interrupted still rewrites every playlist file", async () => {
   const oldPath = await makeTrack(path.join(root, "loose", "track.flac"), {
     artist: "Resume Artist",
     album: "Resume Album",
@@ -252,7 +253,7 @@ test("a rename a restart interrupted still refreshes the playlists that use the 
   downloadTracker.setDone(jobId, oldPath, "Resume Album");
   const refreshed: unknown[] = [];
   vi.spyOn(playlistManager, "requestPlaylistSync").mockImplementation((playlistIds) => {
-    refreshed.push(...(playlistIds ?? []));
+    refreshed.push(playlistIds ?? "every playlist");
   });
 
   const operation = await operations.startCleanup();
@@ -267,9 +268,9 @@ test("a rename a restart interrupted still refreshes the playlists that use the 
   assert.ok(finished != null);
 
   assert.equal(finished.status, "complete");
-  assert.equal(operations.describeLibraryFileOperationItems(finished, {})[0].status, "done");
+  assert.equal(operations.describeLibraryFileOperationItems(finished, {})[0]?.status, "done");
   assert.ok(mediaAt(newPath));
-  assert.deepEqual(refreshed, ["static-mix"]);
+  assert.deepEqual(refreshed, ["every playlist"]);
 });
 
 test("rename never takes a name another file has", async () => {
@@ -290,7 +291,7 @@ test("rename never takes a name another file has", async () => {
 
   const { items } = await cleanUp();
 
-  assert.equal(items[0].status, "conflict");
+  assert.equal(items[0]?.status, "conflict");
   assert.equal(await exists(oldPath), true);
   assert.deepEqual(await readFile(occupant), occupantBytes);
 });
@@ -351,7 +352,7 @@ test("a second copy of a track is a duplicate, removed only when asked, and play
   downloadTracker.setDone(jobId, second, "Album");
   const refreshed: unknown[] = [];
   vi.spyOn(playlistManager, "requestPlaylistSync").mockImplementation((playlistIds) => {
-    refreshed.push(...(playlistIds ?? []));
+    refreshed.push(playlistIds ?? "every playlist");
   });
 
   const { id, items } = await cleanUp();
@@ -394,7 +395,7 @@ test("a second copy of a track is a duplicate, removed only when asked, and play
     requireValue(track).identity_key,
   );
   assert.equal(requireValue(downloadTracker.getJob(jobId)).finalPath, named);
-  assert.ok(refreshed.includes("static-mix"));
+  assert.ok(refreshed.includes("every playlist"));
   assert.deepEqual(requireValue(describe(id)).sources, { removable: 0, removed: 1 });
 });
 
@@ -519,7 +520,7 @@ test("removing duplicates finishes a removal a restart interrupted, and a failed
   downloadTracker.setDone(stuckJob, stuck.better, "Album");
   const refreshed: unknown[] = [];
   vi.spyOn(playlistManager, "requestPlaylistSync").mockImplementation((playlistIds) => {
-    refreshed.push(...(playlistIds ?? []));
+    refreshed.push(playlistIds ?? "every playlist");
   });
 
   const { id } = await cleanUp();
@@ -547,7 +548,7 @@ test("removing duplicates finishes a removal a restart interrupted, and a failed
     [stuck.better],
   );
   assert.equal(requireValue(downloadTracker.getJob(stuckJob)).finalPath, stuck.better);
-  assert.ok(refreshed.includes("stuck-mix"));
+  assert.ok(refreshed.includes("every playlist"));
 });
 
 test("a duplicate stays when its name is behind a linked folder", async () => {
@@ -662,7 +663,7 @@ test("Clean up never files music into a folder the Library scan skips", async ()
   await scanMusicRoot({ rootPath: root, source: "aurral" });
 
   const newPath = path.join(root, "38 Special", "And Justice for All", "01 - Song.flac");
-  assert.equal(items[0].status, "done");
+  assert.equal(items[0]?.status, "done");
   assert.equal(mediaAt(newPath)?.available, 1);
 });
 
@@ -801,8 +802,8 @@ test("an upgrade with MusicBrainz tags keeps the Library track, its favorites, i
     .prepare<unknown[], Rows.LibraryTracksRow>("SELECT * FROM library_tracks WHERE title = 'Low'")
     .all();
   assert.equal(tracks.length, 1);
-  assert.equal(tracks[0].identity_key, `recording:${recording}`);
-  assert.equal(tracks[0].monitored, 1);
+  assert.equal(tracks[0]?.identity_key, `recording:${recording}`);
+  assert.equal(tracks[0]?.monitored, 1);
   assert.equal(
     db
       .prepare<unknown[], Rows.SubsonicStarsRow["entity_key"]>(
@@ -826,7 +827,7 @@ test("an upgrade with MusicBrainz tags keeps the Library track, its favorites, i
     queue.entry.map((song) => song.title),
     ["Low"],
   );
-  assert.equal(queue.current, queue.entry[0].id);
+  assert.equal(queue.current, requireFixture(queue.entry[0]).id);
   assert.equal(queue.position, 4200);
   assert.deepEqual(
     db

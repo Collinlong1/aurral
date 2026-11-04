@@ -189,7 +189,7 @@ test("event values reach the script as env and stdin JSON, never as shell syntax
   assert.ok(dump.includes("AURRAL_USERNAME=alice\n"));
   assert.ok(dump.includes("AURRAL_USER_ID=7\n"));
   assert.ok(dump.includes(`ARGS:2:two words|; touch ${pwned}\n`));
-  const stdin = JSON.parse(dump.split("STDIN:")[1]);
+  const stdin = JSON.parse(dump.split("STDIN:")[1]!);
   assert.equal(stdin.albumName, album);
   assert.equal(stdin.albumPath, "/music/John Coltrane/Blue Train");
   assert.equal(fs.existsSync(pwned), false);

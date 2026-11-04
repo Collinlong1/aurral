@@ -50,6 +50,11 @@ export type AlbumActivityRequest = ActivityRequest & {
   albumGrab: AurralAlbumGrab;
 };
 
+export const isCancelableDownload = (request: ActivityRequest) =>
+  request.kind === "track_download" &&
+  !!request.jobId &&
+  (request.status === "pending" || request.status === "processing");
+
 export const isAlbumActivityRequest = (request: ActivityRequest): request is AlbumActivityRequest =>
   request.kind === "album_download" && Boolean(request.children && request.albumGrab);
 
@@ -79,7 +84,8 @@ export function groupAlbumGrabRequests(requests: ActivityRequest[]) {
         Number(left.trackNumber || 0) - Number(right.trackNumber || 0) ||
         String(left.jobId).localeCompare(String(right.jobId)),
     );
-    const first = children[0];
+    const [first] = children;
+    if (!first) continue;
     const grab = first.albumGrab!;
     const total = grab.memberJobIds.length;
     const ready = children.filter(
@@ -344,18 +350,13 @@ export const buildHistoryListEntries = (requests: ActivityRequest[]) => {
 };
 
 // A track download that is still waiting or running can be cancelled.
-export const canCancelActivityRequest = (request: ActivityRequest) =>
-  request.kind === "track_download" &&
-  Boolean(request.jobId) &&
-  (request.status === "pending" || request.status === "processing");
-
 // The jobs of these requests that can be cancelled, including the tracks of an
 // album grab, each once.
 export const cancellableJobIds = (requests: ActivityRequest[]) => [
   ...new Set(
     requests
       .flatMap((request) => [request, ...(request.children || [])])
-      .filter(canCancelActivityRequest)
+      .filter(isCancelableDownload)
       .map((request) => String(request.jobId)),
   ),
 ];

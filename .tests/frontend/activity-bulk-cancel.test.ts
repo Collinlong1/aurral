@@ -2,7 +2,7 @@ import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 
 import {
-  canCancelActivityRequest,
+  isCancelableDownload,
   cancellableJobIds,
   type ActivityRequest,
 } from "../../frontend/src/pages/activity/activityListUtils.ts";
@@ -11,13 +11,13 @@ const track = (jobId: string | null, status: string, kind = "track_download") =>
   ({ id: `request-${jobId}`, jobId, status, kind }) as unknown as ActivityRequest;
 
 test("only waiting or running track downloads can be cancelled", () => {
-  assert.equal(canCancelActivityRequest(track("a", "pending")), true);
-  assert.equal(canCancelActivityRequest(track("b", "processing")), true);
+  assert.equal(isCancelableDownload(track("a", "pending")), true);
+  assert.equal(isCancelableDownload(track("b", "processing")), true);
   for (const status of ["blocked", "failed", "cancelled", "completed"]) {
-    assert.equal(canCancelActivityRequest(track("c", status)), false, status);
+    assert.equal(isCancelableDownload(track("c", status)), false, status);
   }
-  assert.equal(canCancelActivityRequest(track(null, "pending")), false);
-  assert.equal(canCancelActivityRequest(track("d", "pending", "album_download")), false);
+  assert.equal(isCancelableDownload(track(null, "pending")), false);
+  assert.equal(isCancelableDownload(track("d", "pending", "album_download")), false);
 });
 
 test("bulk cancel takes each cancellable job once, including an album grab's tracks", () => {

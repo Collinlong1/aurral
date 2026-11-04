@@ -68,8 +68,14 @@ type CleanupPlanContext = {
 type CleanupApplyContext = ReturnType<typeof createCleanupContext>;
 type TagFillTags = NonNullable<Awaited<ReturnType<typeof planTagFill>>["tags"]>;
 type TagPlan =
-  | { reason: string | null; tags?: never }
-  | { reason?: never; tags: TagFillTags; tagFields: string[]; hardlinked?: true };
+  | { reason: string | null; unmatched?: boolean; tags?: never }
+  | {
+      reason?: never;
+      unmatched?: never;
+      tags: TagFillTags;
+      tagFields: string[];
+      hardlinked?: true;
+    };
 function libraryAlbumIds() {
   return db
     .prepare<[], number>(
@@ -132,7 +138,7 @@ async function planTags(
     },
     context.albums,
   );
-  if (!fill.tags) return { reason: fill.reason || null };
+  if (!fill.tags) return { reason: fill.reason || null, unmatched: fill.unmatched };
   const fileStat = await fs.stat(file.path).catch(() => null);
   const hardlinked = fileStat !== null && fileStat.nlink > 1;
   return { tags: fill.tags, tagFields: fill.fields, ...(hardlinked ? { hardlinked } : {}) };
@@ -324,10 +330,16 @@ async function planAlbum(albumId: number, context: CleanupPlanContext) {
       winners.set(target, file.path);
       rename = false;
     }
-    const { reason, ...fill } = await planTags(file, album, artist, context);
+    const { reason, unmatched, ...fill } = await planTags(file, album, artist, context);
     const actions = [fill.tags && "tags", rename && "rename"].filter(Boolean);
     if (!actions.length) {
-      if (reason) items.push({ sourcePath: file.path, status: "skipped", reason, details });
+      if (reason)
+        items.push({
+          sourcePath: file.path,
+          status: unmatched ? "unmatched" : "skipped",
+          reason,
+          details,
+        });
       else unchanged += 1;
       continue;
     }
@@ -367,7 +379,9 @@ export async function planCleanup(operation: LibraryFileOperation, deadline: num
   let unchanged = Number(operation.summary.unchanged || 0);
   while (cursor.next < cursor.albumIds.length) {
     if (Date.now() >= deadline) return false;
-    const planned = await planAlbum(cursor.albumIds[cursor.next], context);
+    const albumId = cursor.albumIds[cursor.next];
+    if (albumId === undefined) break;
+    const planned = await planAlbum(albumId, context);
     cursor = { ...cursor, next: cursor.next + 1 };
     unchanged += planned.unchanged;
     db.transaction(() => {
@@ -423,8 +437,8 @@ function moveJobs(from: string, to: string) {
   }
 }
 
-// The Library row and every download job follow the file, so playlists,
-// favorites, and media servers keep finding it.
+// The Library row and every download job follow the file, so playlists and
+// favorites keep finding it.
 function commitRename(from: string, to: string) {
   moveLibraryMediaFilePath("aurral", from, to);
   moveJobs(from, to);
@@ -651,9 +665,7 @@ export async function finishCleanup(operation: LibraryFileOperation) {
         .raw()
         .all(operation.id);
   const folders = new Map();
-  const renamed = new Set<string>();
   for (const [from, to] of moves) {
-    renamed.add(path.resolve(to));
     const folder = path.dirname(from);
     const targets = folders.get(folder) || new Set();
     targets.add(path.dirname(to));
@@ -665,17 +677,10 @@ export async function finishCleanup(operation: LibraryFileOperation) {
     if (targets.size === 1 && folder !== root) await moveAlbumImages(folder, [...targets][0]);
     await removeEmptyDirectories(folder, root);
   }
-  const playlistIds = new Set(
-    downloadTracker
-      .getAll()
-      .filter(
-        (job) => job.status === "done" && job.finalPath && renamed.has(path.resolve(job.finalPath)),
-      )
-      .map((job) => job.playlistId || job.playlistType)
-      .filter(Boolean),
-  );
-  const { playlistManager } = await import("../playlists/playlistManager.ts");
-  playlistManager.requestPlaylistSync([...playlistIds]);
+  if (moves.length) {
+    const { playlistManager } = await import("../playlists/playlistManager.ts");
+    playlistManager.requestPlaylistSync();
+  }
   if (removing) updateLibraryFileOperation(operation.id, { summary: { removingSources: null } });
   return {
     includeLidarr: false,

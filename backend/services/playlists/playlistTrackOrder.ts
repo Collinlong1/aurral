@@ -24,7 +24,9 @@ export function reorderStaticPlaylistTracks(playlistId: string, jobIds: readonly
   const slots = [...trackIndexByJobId.values()].sort((left, right) => left - right);
   const tracks = [...playlist.tracks];
   requested.forEach((jobId, position) => {
-    tracks[slots[position]] = playlist.tracks[trackIndexByJobId.get(jobId)!];
+    const slot = slots[position];
+    const track = playlist.tracks[trackIndexByJobId.get(jobId)!];
+    if (slot !== undefined && track) tracks[slot] = track;
   });
   if (tracks.every((track, index) => track === playlist.tracks[index])) return playlist;
   const next = flowPlaylistConfig.updateStaticPlaylist(playlistId, { tracks });

@@ -126,7 +126,7 @@ test("links a missing track to a Library file it finds by name", async () => {
   );
   assert.deepEqual(await searchFiles(jobId, "   "), []);
 
-  const response = await linkFile(jobId, files[0].fileId);
+  const response = await linkFile(jobId, files[0]!.fileId);
   assert.equal(response.status, 200, await response.text());
   const job = downloadTracker.getJob(jobId);
   assert.equal(job?.status, "done");
@@ -142,7 +142,7 @@ test("finds a file under a slightly different name, best match first", async () 
   const jobId = addFailedJob("Neon Coast (Radio Edit)");
 
   const files = await searchFiles(jobId, "The Lanterns Neon Coast (Radio Edit)");
-  assert.equal(files[0].title, "Neon Coast");
+  assert.equal(files[0]!.title, "Neon Coast");
   assert.deepEqual(
     new Set(files.map((file) => file.title)),
     new Set(["Neon Coast", "Harbor Song", "Morning"]),
@@ -166,12 +166,12 @@ test("refuses to link a track that is not missing, or a file that is gone", asyn
   );
   assert.ok(doneJob != null);
   downloadTracker.setDone(doneJob, filePath, "Album");
-  assert.equal((await linkFile(doneJob, file.fileId)).status, 409);
+  assert.equal((await linkFile(doneJob, file!.fileId)).status, 409);
 
   const missingJob = addFailedJob("Kept Song");
   assert.equal((await linkFile(missingJob, 999_999)).status, 404);
   await fs.rm(filePath);
-  assert.equal((await linkFile(missingJob, file.fileId)).status, 409);
+  assert.equal((await linkFile(missingJob, file!.fileId)).status, 409);
   assert.equal(downloadTracker.getJob(missingJob)?.status, "failed");
 });
 
@@ -318,8 +318,8 @@ test("a playlist track linked to a Library file gets that album's cover", async 
     downloadTracker.setFailed(jobId, "No matching source result");
     return jobId;
   });
-  const [file] = await searchFiles(coveredJob, "covered song");
-  assert.equal((await linkFile(coveredJob, file.fileId)).status, 200);
+  const [file] = await searchFiles(coveredJob!, "covered song");
+  assert.equal((await linkFile(coveredJob!, file!.fileId)).status, 200);
   const albumId = (
     db.prepare("SELECT id FROM library_albums WHERE title = ?").get("Cover Album") as {
       id: number;

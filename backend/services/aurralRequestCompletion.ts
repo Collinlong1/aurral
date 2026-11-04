@@ -19,10 +19,10 @@ const belongsToRequest = (job: RequestJob) =>
 // the album folder rather than one disc.
 export function commonDirectory(filePaths: string[]) {
   const dirs = filePaths.map((filePath) => path.resolve(path.dirname(filePath)).split(path.sep));
-  if (dirs.length === 0) return "";
+  const [first] = dirs;
+  if (!first) return "";
   const shared: string[] = [];
-  for (let index = 0; index < dirs[0].length; index++) {
-    const part = dirs[0][index];
+  for (const [index, part] of first.entries()) {
     if (!dirs.every((segments) => segments[index] === part)) break;
     shared.push(part);
   }

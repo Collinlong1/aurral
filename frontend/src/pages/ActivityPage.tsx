@@ -28,6 +28,7 @@ import {
   mergeActivityRequests,
   groupAlbumGrabRequests,
   isAlbumActivityRequest,
+  isCancelableDownload,
   type ActivityListEntry,
 } from "./activity/activityListUtils";
 import ActivityRequestRow from "./activity/ActivityRequestRow";
@@ -41,10 +42,12 @@ import { getApiErrorText } from "../utils/api/errors.ts";
 
 import { Navigate, useParams, useSearchParams } from "react-router";
 import RouteLink from "../components/RouteLink";
-import { AlertCircle, Music } from "../components/icons";
+import { AlertCircle, Music, Square } from "../components/icons";
 import { SkeletonActivityList, SkeletonStatus } from "../components/Skeletons";
 import { queryClient, queryKeys } from "../queryClient.ts";
 import type { ActivityRequest } from "./activity/activityListUtils.ts";
+import StatePanel from "../components/StatePanel";
+import { ConfirmModal } from "../components/ConfirmModal";
 
 const loadRequests = (refresh: boolean, signal: AbortSignal): Promise<ActivityRequest[]> =>
   parseResponse(
@@ -73,6 +76,7 @@ function ActivityPage() {
   const [controllingJobs, setControllingJobs] = useState<Record<string, "cancel" | "retry">>({});
   const [jobErrors, setJobErrors] = useState<Record<string, string>>({});
   const [infoRequest, setInfoRequest] = useState<ActivityRequest | null>(null);
+  const [confirmingCancelAll, setConfirmingCancelAll] = useState(false);
 
   const { playTrack, currentTrack, isPlaying, togglePlayPause } = useAudioQueue();
 
@@ -135,6 +139,16 @@ function ActivityPage() {
   const requests = useMemo(
     () => groupAlbumGrabRequests(mergeActivityRequests([], activityQuery.data)),
     [activityQuery.data],
+  );
+  const cancelableCount = useMemo(
+    () =>
+      (activityQuery.data ?? []).filter(
+        (request) =>
+          isCancelableDownload(request) &&
+          (hasFlowAccess ||
+            (user?.id != null && String(request.requestedBy?.id) === String(user.id))),
+      ).length,
+    [activityQuery.data, hasFlowAccess, user?.id],
   );
   const loading = activityQuery.isPending;
   const error =
@@ -255,6 +269,15 @@ function ActivityPage() {
           param: { jobId: encodeURIComponent(jobId) },
         }),
       ),
+  });
+
+  const cancelAllMutation = useMutation({
+    mutationFn: () => parseResponse(playlistJobsClient.jobs.cancel.$post()),
+    onError: () => setLocalError("Failed to cancel downloads."),
+    onSettled: () => {
+      setConfirmingCancelAll(false);
+      void queryClient.invalidateQueries({ queryKey: activityQueryKey });
+    },
   });
 
   const handleReSearchAlbum = async (request: ActivityRequest) => {
@@ -439,28 +462,31 @@ function ActivityPage() {
         filters={statusFilters}
         active={activeStatus}
         onChange={setActiveStatus}
+        action={
+          isQueueView && cancelableCount > 0 ? (
+            <button
+              type="button"
+              className="btn btn-secondary activity-toolbar__action"
+              onClick={() => setConfirmingCancelAll(true)}
+            >
+              <Square aria-hidden="true" />
+              <span>Cancel all</span>
+            </button>
+          ) : null
+        }
       />
 
       {error && (
-        <div className="search-empty-panel" role="alert">
-          <div className="search-empty-panel__icon" aria-hidden="true">
-            <AlertCircle />
-          </div>
-          <h2 className="search-empty-panel__title">Couldn’t load activity</h2>
-          {error !== "Failed to load activity." ? (
-            <p className="search-empty-panel__message">{error}</p>
-          ) : null}
-          <button
-            type="button"
-            onClick={() => {
-              setLocalError(null);
-              void activityQuery.refetch();
-            }}
-            className="btn btn-secondary"
-          >
-            Try again
-          </button>
-        </div>
+        <StatePanel
+          role="alert"
+          icon={<AlertCircle />}
+          title="Couldn’t load activity"
+          message={error !== "Failed to load activity." ? error : null}
+          onRetry={() => {
+            setLocalError(null);
+            void activityQuery.refetch();
+          }}
+        />
       )}
 
       <ActivityBulkCancel
@@ -473,19 +499,16 @@ function ActivityPage() {
 
       {filteredRequests.length === 0 ? (
         !error && (
-          <div className="search-empty-panel">
-            <div className="search-empty-panel__icon" aria-hidden="true">
-              <Music className="artist-icon-lg" />
-            </div>
-            <h2 className="search-empty-panel__title">
-              {activeStatus ? "No matches" : emptyState.title}
-            </h2>
+          <StatePanel
+            icon={<Music className="artist-icon-lg" />}
+            title={activeStatus ? "No matches" : emptyState.title}
+          >
             {isQueueView && !activeStatus && (
               <RouteLink to="/" className="btn btn-primary">
                 Start discovering
               </RouteLink>
             )}
-          </div>
+          </StatePanel>
         )
       ) : (
         <div className="activity-list">
@@ -535,6 +558,17 @@ function ActivityPage() {
         </div>
       )}
       <ActivityInfoModal item={infoRequest} onClose={() => setInfoRequest(null)} />
+      <ConfirmModal
+        open={confirmingCancelAll}
+        title="Cancel all downloads?"
+        body={`${cancelableCount} ${cancelableCount === 1 ? "download" : "downloads"} will stop. You can retry each one from History.`}
+        confirmLabel="Cancel all"
+        cancelLabel="Keep"
+        busyLabel="Cancelling"
+        busy={cancelAllMutation.isPending}
+        onCancel={() => setConfirmingCancelAll(false)}
+        onConfirm={() => cancelAllMutation.mutate()}
+      />
     </div>
   );
 }

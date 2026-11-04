@@ -15,7 +15,10 @@ import {
   flowPlaylistConfig,
   normalizeImportSource,
 } from "../../../services/playlists/flowPlaylistConfig.ts";
-import { dedupePlaylistTracks } from "../../../services/playlists/playlistTracks.ts";
+import {
+  dedupePlaylistTracks,
+  normalizePlaylistTrack,
+} from "../../../services/playlists/playlistTracks.ts";
 import { playlistOperationQueue } from "../../../services/playlists/playlistOperationQueue.ts";
 import { syncStaticPlaylistImport } from "../../../services/importLists/importListSync.ts";
 import { wakeDownloadWorker } from "../../../services/downloadJobs/mutationGuards.ts";
@@ -78,6 +81,7 @@ const playlistTrack = v.object({
   canonicalJobId: text,
   libraryJobId: text,
   membershipId: text,
+  path: text,
 });
 const playlistTracks = v.nullish(v.array(playlistTrack));
 
@@ -86,6 +90,7 @@ const playlistInput = v.object({
   sourceName: v.nullish(v.string(), null),
   sourceFlowId: v.nullish(v.string(), null),
   tracks: playlistTracks,
+  downloadMissing: v.optional(v.boolean(), true),
 });
 const enabledInput = v.object({ enabled: v.boolean() });
 const bulkInput = v.object({ jobIds: v.array(v.string()) });
@@ -112,10 +117,14 @@ const playlistUpdate = v.object({
 async function createStaticPlaylist<E extends AppEnv>(
   c: Context<E>,
   user: RequestUser,
-  { name, sourceName, sourceFlowId, tracks }: v.InferOutput<typeof playlistInput>,
+  { name, sourceName, sourceFlowId, tracks, downloadMissing }: v.InferOutput<typeof playlistInput>,
 ) {
   const safeName = String(name || "").trim();
-  const normalizedTracks = Array.isArray(tracks) ? dedupePlaylistTracks(tracks) : [];
+  const normalizedTracks = (tracks ?? []).flatMap((track) => {
+    const normalized = normalizePlaylistTrack(track);
+    if (!normalized) return [];
+    return typeof track.path === "string" ? [{ ...normalized, path: track.path }] : [normalized];
+  });
 
   if (!safeName) {
     return c.json({ error: "name is required" }, 400);
@@ -134,6 +143,7 @@ async function createStaticPlaylist<E extends AppEnv>(
     sourceFlowId,
     tracks: normalizedTracks,
     ownerUserId: user.id,
+    downloadMissing,
   });
 
   return c.json({ success: true, playlistId, queued: true, operationId: result.operationId }, 200);

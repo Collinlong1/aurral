@@ -9,10 +9,8 @@ import {
   getSimilarArtistsForArtist,
   updateArtistOverrides,
 } from "../../utils/api/endpoints/artists.ts";
-import {
-  downloadTrackToLibrary,
-  lookupArtistInLibrary,
-} from "../../utils/api/endpoints/library.ts";
+import { lookupArtistInLibrary } from "../../utils/api/endpoints/library.ts";
+import { useAddTrackToLibrary } from "../../hooks/useAddTrackToLibrary";
 import { parseResponse } from "hono/client";
 import { artistsClient } from "../../utils/api/clients/artists.ts";
 import { staticPlaylistsClient } from "../../utils/api/clients/staticPlaylists.ts";
@@ -29,7 +27,6 @@ import { useArtistTasteFeedback } from "../../hooks/useArtistTasteFeedback";
 import { useStaticPlaylists } from "../../hooks/useStaticPlaylists";
 
 import { useParams, useLocation } from "react-router";
-import { useDiscoverNavigation } from "../../hooks/useDiscoverNavigation";
 import { AlertCircle, X } from "../../components/icons";
 import { DotLoader } from "../../components/DotLoader";
 import { normalizeMediaUrl } from "../../utils/normalizeMediaUrl";
@@ -40,7 +37,6 @@ import { useModalDialog } from "../../hooks/useModalDialog.ts";
 import { useArtistDetailsStream } from "./hooks/useArtistDetailsStream";
 import { usePreviewPlayer } from "./hooks/usePreviewPlayer";
 import { useArtistDetailsLibrary } from "./hooks/useArtistDetailsLibrary";
-import { useArtistSearchFocus } from "./hooks/useArtistSearchFocus";
 import { ARTIST_DETAILS_APPEARS_ON_LIMIT, allReleaseTypes } from "./constants";
 import { ArtistDetailsHero } from "./components/ArtistDetailsHero";
 import { ArtistDetailsActionBar } from "./components/ArtistDetailsActionBar";
@@ -61,13 +57,14 @@ import RouteLink from "../../components/RouteLink";
 import type { PlaylistSelection, PlaylistTrackIdentity } from "./components/TrackPlaylistMenu";
 import type { ArtistPreviewTrack } from "./hooks/usePreviewPlayer";
 import type { ReleaseGroup } from "./utils";
+import { releaseTrackPayload } from "../album/releaseTracks.tsx";
 import type { ArtistFeedbackSource } from "../../utils/artistTaste.ts";
+import StatePanel from "../../components/StatePanel";
 const MBID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function ArtistDetailsPage() {
   const { mbid } = useParams();
   const { state: locationState } = useLocation();
-  const navigate = useDiscoverNavigation();
   const artistNameFromNav = locationState?.artistName;
   const initialLibraryHint = useMemo(
     () => ({
@@ -96,7 +93,7 @@ function ArtistDetailsPage() {
     loadStaticPlaylists,
   } = useStaticPlaylists();
   const [playlistMenuSavingKey, setPlaylistMenuSavingKey] = useState("");
-  const [libraryTrackSavingKeys, setLibraryTrackSavingKeys] = useState(() => new Set<string>());
+  const { savingKeys: libraryTrackSavingKeys, addTrackToLibrary } = useAddTrackToLibrary();
   const [visibleReleaseGroupCoverIds, setVisibleReleaseGroupCoverIds] = useState<string[]>([]);
   const [visibleAppearsOnCoverIds, setVisibleAppearsOnCoverIds] = useState<string[]>([]);
   const [visibleLibraryCoverIds, setVisibleLibraryCoverIds] = useState<string[]>([]);
@@ -122,9 +119,7 @@ function ArtistDetailsPage() {
       values: Parameters<typeof updateArtistOverrides>[1];
     }) => updateArtistOverrides(artistMbid, values),
   });
-  const downloadTrackMutation = useMutation({ mutationFn: downloadTrackToLibrary });
   const { mutateAsync: saveArtistOverrides } = saveArtistOverridesMutation;
-  const { mutateAsync: downloadTrack } = downloadTrackMutation;
   const idsLoading = artistOverridesQuery.isFetching;
   const idsSaving = saveArtistOverridesMutation.isPending;
 
@@ -241,12 +236,6 @@ function ArtistDetailsPage() {
     libraryDestination,
   });
 
-  useArtistSearchFocus({
-    navigate,
-    mbid,
-    locationState,
-  });
-
   const libraryLookup = useQuery({
     queryKey: queryKeys.libraryLookupDetails(mbid),
     queryFn: ({ signal }) => lookupArtistInLibrary(mbid, { signal }),
@@ -356,23 +345,7 @@ function ArtistDetailsPage() {
   const buildReleaseTrackPayload = (
     track: ReleaseGroupTrack,
     releaseGroup: ReleaseGroup | undefined,
-  ) => {
-    const year = String(releaseGroup?.["first-release-date"] || "").slice(0, 4);
-    return buildStaticPlaylistTrackPayload({
-      artistName: artist?.name || artistNameFromNav || "",
-      trackName: track?.trackName || track?.title || "",
-      albumName: releaseGroup?.title || "",
-      artistMbid: mbid || "",
-      albumMbid: releaseGroup?.id || "",
-      releaseMbid: track?.releaseMbid,
-      trackMbid: track?.mbid || track?.id || "",
-      releaseYear: year,
-      durationMs: track?.length,
-      trackNumber: track?.trackNumber,
-      discNumber: track?.discNumber,
-      reason: null,
-    });
-  };
+  ) => releaseTrackPayload(releaseGroup, track, artist?.name || artistNameFromNav || "", mbid);
 
   const buildPreviewTrackPayload = (track: ArtistPreviewTrack) =>
     buildStaticPlaylistTrackPayload({
@@ -455,50 +428,20 @@ function ArtistDetailsPage() {
     return saveTrackToPlaylist(payload, target, savingKey);
   };
 
-  const addTrackToLibrary = async (
-    payload: ReturnType<typeof buildStaticPlaylistTrackPayload>,
-    savingKey: string,
-  ) => {
-    if (!payload.artistName || !payload.trackName) {
-      showError("Track details are incomplete");
-      return false;
-    }
-    if (!savingKey) return false;
-    setLibraryTrackSavingKeys((current) => new Set(current).add(savingKey));
-    try {
-      const result = await downloadTrack(payload);
-      showSuccess(
-        result?.alreadyOwned
-          ? `${payload.trackName} is already in your library`
-          : result?.queued
-            ? `Queued ${payload.trackName} for your library`
-            : `Added ${payload.trackName} to your library`,
-      );
-    } catch (err) {
-      showError(getApiErrorMessage(err) || "Failed to add track to library");
-    } finally {
-      setLibraryTrackSavingKeys((current) => {
-        const next = new Set(current);
-        next.delete(savingKey);
-        return next;
-      });
-    }
-  };
-
   const heroWash = useArtworkWash(getArtistHeroImage(coverImages));
 
   if (error) {
     return (
-      <div className="search-empty-panel" role="alert">
-        <div className="search-empty-panel__icon" aria-hidden="true">
-          <AlertCircle />
-        </div>
-        <h2 className="search-empty-panel__title">Couldn’t load this artist</h2>
-        <p className="search-empty-panel__message">{error}</p>
+      <StatePanel
+        role="alert"
+        icon={<AlertCircle />}
+        title="Couldn’t load this artist"
+        message={error}
+      >
         <RouteLink to="/search" className="btn btn-secondary">
           Back to search
         </RouteLink>
-      </div>
+      </StatePanel>
     );
   }
 

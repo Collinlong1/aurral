@@ -22,6 +22,7 @@ import {
   historyServerStatus,
   useHistoryServers,
 } from "./listening/HistoryServers";
+import { PlexDetail, usePlex } from "./listening/PlexDetail";
 import {
   SettingsActions,
   SettingsGroup,
@@ -34,7 +35,7 @@ import {
 } from "../SettingsLayout";
 
 type ScrobbleStatus = InferResponseType<typeof scrobblingClient.status.$get, 200>;
-type ConnectionStatus = ScrobbleStatus[string] | undefined;
+type ConnectionStatus = ScrobbleStatus[keyof ScrobbleStatus] | undefined;
 type ListenHistoryUpdate = InferRequestType<
   (typeof usersClient.me)["listening-history"]["$patch"]
 >["json"];
@@ -83,7 +84,7 @@ function serviceStatus(history: string | null, scrobbling: ConnectionStatus): Se
     .filter((part) => part !== null)
     .join(", ");
   if (!on) return { label: "Not set up", tone: "muted" };
-  return { label: on[0].toUpperCase() + on.slice(1) };
+  return { label: on.charAt(0).toUpperCase() + on.slice(1) };
 }
 
 function useScrobbleActions(provider: ScrobbleProvider) {
@@ -496,12 +497,18 @@ export function ListeningSection() {
   const provider = PROVIDERS.find((id) => id === item);
   const { data: spotify } = useQuery(spotifyHistoryQueryOptions(user?.id));
   const historyServers = useHistoryServers();
+  const plex = usePlex();
   const historyServer = HISTORY_SERVERS.find((id) => id === item);
-  const showHistoryServers =
-    hasPermission("accessSettings") || Boolean(historyServers.data?.servers.length);
+  const shownHistoryServers = HISTORY_SERVERS.filter(
+    (id) =>
+      hasPermission("accessSettings") ||
+      (id === "plex" && plex.data?.connected) ||
+      historyServers.data?.servers.some((server) => server.provider === id),
+  );
 
   if (provider) return <ServiceDetail provider={provider} />;
   if (item === "spotify") return <SpotifyDetail />;
+  if (historyServer === "plex") return <PlexDetail />;
   if (historyServer) return <HistoryServerDetail provider={historyServer} />;
 
   return (
@@ -541,22 +548,20 @@ export function ListeningSection() {
                 : { label: "Not set up", tone: "muted" }
           }
         />
-        {showHistoryServers
-          ? HISTORY_SERVERS.map((id) => (
-              <SettingsServiceRow
-                key={id}
-                to={`listening/${id}`}
-                name={historyServerLabel(id)}
-                status={
-                  historyServers.data
-                    ? historyServerStatus(
-                        historyServers.data.servers.find((server) => server.provider === id),
-                      )
-                    : null
-                }
-              />
-            ))
-          : null}
+        {shownHistoryServers.map((id) => (
+          <SettingsServiceRow
+            key={id}
+            to={`listening/${id}`}
+            name={historyServerLabel(id)}
+            status={
+              historyServers.data
+                ? historyServerStatus(
+                    historyServers.data.servers.find((server) => server.provider === id),
+                  )
+                : null
+            }
+          />
+        ))}
       </SettingsGroup>
       <SettingsGroup title="Discovery tastes">
         <ResetTastesRow />

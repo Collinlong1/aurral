@@ -188,9 +188,10 @@ const parseId = (value: unknown): ParsedId | null => {
     /^(artist|album|song|flow|flow-song|shared|shared-song|art-album|art-track|art-playlist|art-playlist-track):(.+)$/.exec(
       String(value || ""),
     );
-  if (!match) return null;
+  const [, kind, key] = match ?? [];
+  if (!kind || !key) return null;
   try {
-    return { kind: match[1] as ParsedKind, key: decodeURIComponent(match[2]) };
+    return { kind: kind as ParsedKind, key: decodeURIComponent(key) };
   } catch {
     return null;
   }
@@ -208,7 +209,10 @@ const seconds = (durationMs: number | null | undefined) => {
 };
 
 const bitRateKbps = (
-  quality: (NonNullable<LibraryTrackFile["quality"]> & { audioBitRate?: unknown }) | null,
+  quality:
+    | (NonNullable<LibraryTrackFile["quality"]> & { audioBitRate?: unknown })
+    | null
+    | undefined,
 ) => {
   const lidarrKbps = Number.parseInt(String(quality?.audioBitRate), 10);
   if (lidarrKbps > 0) return lidarrKbps;
@@ -1206,7 +1210,7 @@ const ensureLibraryJob = (track: PlaylistTrack, createdJobIds: string[] | null =
   if (!jobId) return null;
   if (createdJobIds) createdJobIds.push(jobId);
   const owned = findAvailableLibraryTrack(track);
-  if (owned) {
+  if (owned?.file) {
     downloadTracker.setDone(jobId, owned.file.path, owned.albumName || track.albumName || null);
     return jobId;
   }
@@ -1575,7 +1579,8 @@ export function unstarMany(user: SubsonicUser, values: string[]) {
       const libraryRow = libraryRows[index];
       if (
         (targetKeys.has(`${row.entity_kind}:${row.entity_key}`) ||
-          targetKeys.has(`${libraryRow.entity_kind}:${libraryRow.entity_key}`)) &&
+          (libraryRow !== undefined &&
+            targetKeys.has(`${libraryRow.entity_kind}:${libraryRow.entity_key}`))) &&
         removeStarStmt.run(user.id, row.entity_kind, row.entity_key).changes > 0
       ) {
         removed.push({

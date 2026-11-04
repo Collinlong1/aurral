@@ -14,16 +14,17 @@ export type AlbumDiscTrack = {
 // the disc of the tracks around it.
 export function albumDiscHeadings(tracks: AlbumDiscTrack[], albumTitle: string) {
   const discs = tracks.map(({ disc }) => disc || 0);
-  for (let index = 1; index < discs.length; index++) discs[index] ||= discs[index - 1];
-  for (let index = discs.length - 2; index >= 0; index--) discs[index] ||= discs[index + 1];
+  for (let index = 1; index < discs.length; index++) discs[index] ||= discs[index - 1] ?? 0;
+  for (let index = discs.length - 2; index >= 0; index--) discs[index] ||= discs[index + 1] ?? 0;
   if (new Set(discs).size < 2) return tracks.map(() => null);
 
   const titles = new Map<number, Set<string>>();
   tracks.forEach(({ title }, index) => {
+    const disc = discs[index] ?? 0;
     if (!title) return;
-    const seen = titles.get(discs[index]) ?? new Set<string>();
+    const seen = titles.get(disc) ?? new Set<string>();
     seen.add(title);
-    titles.set(discs[index], seen);
+    titles.set(disc, seen);
   });
   const discTitle = (disc: number) => {
     const seen = titles.get(disc);
@@ -44,7 +45,7 @@ type DiscTrack = {
 };
 
 // The album title a track's own file carries: a box set's disc title.
-const fileAlbumTitle = (track: DiscTrack) => {
+export const fileAlbumTitle = (track: DiscTrack) => {
   const tags = (track.metadata as { tags?: { album?: unknown } } | null | undefined)?.tags;
   return typeof tags?.album === "string" ? tags.album.trim() : "";
 };

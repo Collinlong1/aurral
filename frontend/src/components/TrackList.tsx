@@ -9,6 +9,7 @@ import {
 } from "react";
 import { AlertTriangle, ArrowDown, ArrowUp, Clock, Heart, Pause, Play } from "./icons";
 import { DotLoader } from "./DotLoader";
+import PreviewChip from "./PreviewChip";
 import type { To } from "react-router";
 import { LibraryItemMenu } from "./LibraryItemMenu";
 import Tooltip from "./Tooltip";
@@ -67,6 +68,7 @@ export type TrackListRow = {
   onToggleSelected?: ChangeEventHandler<HTMLInputElement>;
   onPlay?: (() => void) | null;
   playDisabled?: boolean;
+  previewOnly?: boolean;
   cover?: TrackCoverField | null;
   artist?: TrackLinkField | null;
   album?: TrackLinkField | null;
@@ -292,7 +294,11 @@ export function TrackList({
       </div>
       <div role="list" aria-label={label}>
         {rows.flatMap((row) => {
-          const playLabel = `${row.playing ? "Pause" : "Play"} ${row.title}`;
+          const playLabel = row.playing
+            ? `Pause ${row.title}`
+            : row.previewOnly
+              ? `Preview ${row.title}`
+              : `Play ${row.title}`;
           return [
             row.section ? (
               <DiscSection key={`section-${row.key}`}>{row.section}</DiscSection>
@@ -306,7 +312,8 @@ export function TrackList({
               className={
                 "native-library-track" +
                 (row.active ? " is-active" : "") +
-                (row.missing ? " is-missing" : "")
+                (row.missing ? " is-missing" : "") +
+                (row.missing && row.previewOnly ? " is-preview" : "")
               }
               data-library-menu-target={row.menu || row.menuElement ? true : undefined}
               role="listitem"
@@ -365,8 +372,10 @@ export function TrackList({
                     type="button"
                     className="native-library-track__title"
                     onClick={row.onPlay}
+                    aria-label={row.previewOnly ? playLabel : undefined}
                   >
                     <span>
+                      {row.previewOnly ? <PreviewChip /> : null}
                       {row.badge}
                       {row.title}
                     </span>
@@ -378,6 +387,7 @@ export function TrackList({
                 ) : (
                   <span className="native-library-track__title">
                     <span>
+                      {row.previewOnly ? <PreviewChip /> : null}
                       {row.badge}
                       {row.title}
                     </span>

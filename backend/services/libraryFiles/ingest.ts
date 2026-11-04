@@ -39,6 +39,7 @@ import { findLibraryTrackAtPath, matchLibraryRecord } from "./libraryMatch.ts";
 import {
   SAME_LENGTH_MS,
   type Recording,
+  compareQuality,
   differentTracks,
   formatGap,
   readRecording,
@@ -233,7 +234,8 @@ async function compareWithLibrary(source: Recording, candidates: string[], title
     };
   }
   const same = measured.filter((copy) => Math.abs(copy.gap) <= SAME_LENGTH_MS);
-  if (!same.length) {
+  const [firstSame] = same;
+  if (!firstSame) {
     const nearest = measured.reduce((best, copy) =>
       Math.abs(copy.gap) < Math.abs(best.gap) ? copy : best,
     );
@@ -242,14 +244,16 @@ async function compareWithLibrary(source: Recording, candidates: string[], title
       reason: `Matches ${title}, but differs by ${formatGap(nearest.gap)}. Check its tags.`,
     };
   }
-  if (source.lossless && !same.some((copy) => copy.lossless)) {
+  const asGood = same.filter((copy) => compareQuality(copy, source) >= 0);
+  const [firstGood] = asGood;
+  if (!firstGood) {
     return {
-      targetPath: same[0].targetPath,
-      reason: `A lossless copy of ${title} is available. To replace the Library's lossy copy, remove it and import again.`,
+      targetPath: firstSame.targetPath,
+      reason: `This copy of ${title} is better than the Library's. To replace the Library's copy, remove it and import again.`,
     };
   }
   return {
-    targetPath: (same.find((copy) => copy.lossless === source.lossless) || same[0]).targetPath,
+    targetPath: (asGood.find((copy) => copy.lossless === source.lossless) ?? firstGood).targetPath,
   };
 }
 
@@ -804,10 +808,13 @@ async function takeBackDouble(
       .get(media.track_id) || details.title;
   const verdict = await compareWithLibrary(filed, kept, title);
   if (verdict.reason) return null;
-  const sidecars = (details.sidecars || []).map((extension: string) => [
-    `${item.target_path.slice(0, -path.extname(item.target_path).length)}${extension}`,
-    `${item.source_path.slice(0, -path.extname(item.source_path).length)}${extension}`,
-  ]);
+  const sidecars = (details.sidecars || []).map(
+    (extension: string) =>
+      [
+        `${item.target_path.slice(0, -path.extname(item.target_path).length)}${extension}`,
+        `${item.source_path.slice(0, -path.extname(item.source_path).length)}${extension}`,
+      ] as const,
+  );
   if (operation.options.mode === "move") {
     if (await fileExists(item.source_path)) return null;
     await placeFile(item.target_path, item.source_path, "move");

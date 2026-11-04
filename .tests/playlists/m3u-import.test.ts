@@ -125,10 +125,10 @@ test("files in the Library folder are pinned to that exact file", async () => {
 
   const { tracks, stats } = await m3u.buildM3uTracks(list);
   assert.deepEqual(stats, { pinned: 1, byName: 0, skipped: 0, total: 1 });
-  const job = downloadTracker.getJob(tracks[0].canonicalJobId!);
+  const job = downloadTracker.getJob(tracks[0]!.canonicalJobId!);
   assert.equal(job?.status, "done");
   assert.equal(job?.finalPath, track);
-  assert.equal(tracks[0].trackName, "Dreams Can Come True");
+  assert.equal(tracks[0]!.trackName, "Dreams Can Come True");
 });
 
 test("files copied by an ingest are pinned to their Library copy", async () => {
@@ -152,7 +152,7 @@ test("files copied by an ingest are pinned to their Library copy", async () => {
 
   const { tracks, stats } = await m3u.buildM3uTracks(list);
   assert.equal(stats.pinned, 1);
-  assert.equal(downloadTracker.getJob(tracks[0].canonicalJobId!)?.finalPath, target);
+  assert.equal(downloadTracker.getJob(tracks[0]!.canonicalJobId!)?.finalPath, target);
 });
 
 test("tracks outside the Library are left out unless downloads are allowed", async () => {
@@ -195,6 +195,6 @@ test("pending imports wait for their ingest to finish", async () => {
   );
   const results = await m3u.completePendingM3uImports();
   assert.equal(results.length, 1);
-  assert.equal(results[0].skipped, "no tracks found");
+  assert.equal(results[0]!.skipped, "no tracks found");
   assert.deepEqual(await m3u.completePendingM3uImports(), []);
 });

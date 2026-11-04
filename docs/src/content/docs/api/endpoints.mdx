@@ -118,6 +118,7 @@ WebSocket connections.
 | `GET`    | `/api/library/files/operations/:id`                               | Read an operation's status, progress, and counts                                                                                                                                                                                                                                                     |
 | `GET`    | `/api/library/files/operations/:id/items`                         | Read an operation's files. Optional `status`, `offset`, and `limit` up to 200                                                                                                                                                                                                                        |
 | `POST`   | `/api/library/files/operations/:id/cancel`                        | Stop an ingest or clean up after the current file. Files already done stay done                                                                                                                                                                                                                      |
+| `POST`   | `/api/library/files/operations/:id/dismiss`                       | Clear a finished operation, so `GET /api/library/files` returns no operation until the next one starts                                                                                                                                                                                               |
 | `POST`   | `/api/library/files/operations/:id/remove-sources`                | Remove the files a Move ingest kept because the Library has their track, or the duplicate copies a clean up found. Each is checked again first. Returns `400` for a Copy or Hardlink ingest and `409` while another operation runs                                                                   |
 | `GET`    | `/api/library/canonical`                                          | Read one page of Library items. Requires a supported `kind`, and `pageSize` from 1 to 100                                                                                                                                                                                                            |
 | `GET`    | `/api/library/favorites`                                          | Read the current user's library favorites                                                                                                                                                                                                                                                            |
@@ -359,6 +360,7 @@ The routes call a static playlist a shared playlist.
 | `GET`    | `/api/playlists/status`                                              | Download worker, flow, and static playlist status                                                     |
 | `GET`    | `/api/playlists/jobs`                                                | List Library and accessible flow and playlist jobs                                                    |
 | `GET`    | `/api/playlists/jobs/:playlistId`                                    | List jobs for a flow or static playlist                                                               |
+| `POST`   | `/api/playlists/jobs/cancel`                                         | Cancel every pending or downloading song you can control                                              |
 | `POST`   | `/api/playlists/jobs/:jobId/cancel`                                  | Cancel a pending or downloading song without changing its monitoring                                  |
 | `POST`   | `/api/playlists/research-missing`                                    | Re-search every missing track in Wanted                                                               |
 | `GET`    | `/api/playlists/jobs/:jobId/manual-search/sources`                   | List the download clients available for a manual search                                               |
@@ -548,9 +550,14 @@ recording require a user's login session.
 | `GET`    | `/api/play-events`                     | Read local play history                                |
 | `POST`   | `/api/play-events`                     | Record a local play event. Requires a user session     |
 | `GET`    | `/api/history-servers`                 | List the current user's media server history imports   |
-| `PUT`    | `/api/history-servers/:provider`       | Connect Navidrome, Plex, or Jellyfin. Admins only      |
+| `PUT`    | `/api/history-servers/:provider`       | Connect Navidrome or Jellyfin. Admins only             |
 | `POST`   | `/api/history-servers/:provider/sync`  | Import new plays now                                   |
 | `DELETE` | `/api/history-servers/:provider`       | Disconnect and remove the imported plays               |
+| `GET`    | `/api/plex`                            | Whether the Plex server is connected                   |
+| `POST`   | `/api/plex/sign-in`                    | Start a Plex sign-in                                   |
+| `POST`   | `/api/plex/sign-in/:id`                | Finish a Plex sign-in. With `serverUrl`, admins only   |
+| `PATCH`  | `/api/plex`                            | Turn sending playlists to Plex on or off. Admins only  |
+| `DELETE` | `/api/plex`                            | Disconnect the Plex server. Admins only                |
 
 `GET /api/play-events` lists plays recorded in Aurral. Plays imported from a media server are not included.
 

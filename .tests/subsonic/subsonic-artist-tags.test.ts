@@ -124,7 +124,7 @@ test("Subsonic songs and albums show the file's artist tags", () => {
   const served = songs();
   assert.equal(served.length, Object.keys(SONGS).length);
   for (const song of served) {
-    const [artist, artists, albumArtist, albumArtists] = SONGS[song.title];
+    const [artist, artists, albumArtist, albumArtists] = SONGS[song.title]!;
     assert.equal(song.artist, artist, song.title);
     assert.equal(song.displayArtist, artist, song.title);
     assert.deepEqual(names(song.artists), artists, song.title);
@@ -132,7 +132,7 @@ test("Subsonic songs and albums show the file's artist tags", () => {
     assert.deepEqual(names(song.albumArtists), albumArtists, song.title);
   }
   for (const album of albums()) {
-    const [artist, artists] = ALBUMS[album.name];
+    const [artist, artists] = ALBUMS[album.name]!;
     assert.equal(album.artist, artist, album.name);
     assert.equal(album.displayArtist, artist, album.name);
     assert.deepEqual(names(album.artists), artists, album.name);
@@ -167,7 +167,7 @@ test("the library setting serves Aurral's artist names as before", () => {
     assert.equal(hit.displayArtist, undefined);
     assert.deepEqual(names(hit.artists), ["Band One"]);
     assert.deepEqual(names(hit.albumArtists), ["Various Artists"]);
-    assert.equal(getAlbum(getAlbumList({ size: "50" })[0].id)?.displayArtist, undefined);
+    assert.equal(getAlbum(getAlbumList({ size: "50" })[0]!.id)?.displayArtist, undefined);
   } finally {
     setArtistSource("tags");
   }

@@ -82,7 +82,7 @@ test("reorders a playlist's tracks and its playlist file", async () => {
   const { playlist, jobIds } = await createPlaylist(["One", "Two", "Three"]);
   const membershipIds = playlist.tracks.map((track) => track.membershipId);
 
-  const response = await putOrder(playlist.id, [jobIds[2], jobIds[0], jobIds[1]]);
+  const response = await putOrder(playlist.id, [jobIds[2]!, jobIds[0]!, jobIds[1]!]);
   assert.equal(response.status, 200, await response.text());
 
   assert.deepEqual(trackNames(playlist.id), ["Three", "One", "Two"]);
@@ -100,9 +100,9 @@ test("reorders a playlist's tracks and its playlist file", async () => {
 test("refuses an order that leaves out or repeats a track", async () => {
   const { playlist, jobIds } = await createPlaylist(["One", "Two", "Three"]);
 
-  const missing = await putOrder(playlist.id, [jobIds[1], jobIds[0]]);
+  const missing = await putOrder(playlist.id, [jobIds[1]!, jobIds[0]!]);
   assert.equal(missing.status, 409);
-  const repeated = await putOrder(playlist.id, [jobIds[1], jobIds[1], jobIds[0]]);
+  const repeated = await putOrder(playlist.id, [jobIds[1]!, jobIds[1]!, jobIds[0]!]);
   assert.equal(repeated.status, 409);
   assert.deepEqual(trackNames(playlist.id), ["One", "Two", "Three"]);
 });
@@ -110,7 +110,7 @@ test("refuses an order that leaves out or repeats a track", async () => {
 test("ignores ids that are not tracks of the playlist", async () => {
   const { playlist, jobIds } = await createPlaylist(["One", "Two"]);
 
-  const response = await putOrder(playlist.id, ["not-a-job", jobIds[1], jobIds[0]]);
+  const response = await putOrder(playlist.id, ["not-a-job", jobIds[1]!, jobIds[0]!]);
   assert.equal(response.status, 200, await response.text());
   assert.deepEqual(trackNames(playlist.id), ["Two", "One"]);
 });
