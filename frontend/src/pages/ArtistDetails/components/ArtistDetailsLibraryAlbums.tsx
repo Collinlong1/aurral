@@ -50,6 +50,7 @@ type ArtistDetailsLibraryAlbumsProps = {
   handleReSearchMissingDownloads: () => Promise<void>;
   onVisibleCoverIdsChange?: (ids: string[]) => void;
   artistName?: string;
+  discographyLoading?: boolean;
 };
 
 export function ArtistDetailsLibraryAlbums({
@@ -72,6 +73,7 @@ export function ArtistDetailsLibraryAlbums({
   handleReSearchMissingDownloads,
   onVisibleCoverIdsChange,
   artistName = "",
+  discographyLoading = false,
 }: ArtistDetailsLibraryAlbumsProps) {
   const railRef = useRef<HTMLDivElement>(null);
   const visibleCoverIdsRef = useRef(new Set<string>());
@@ -83,11 +85,19 @@ export function ArtistDetailsLibraryAlbums({
   const [dropdownPosition, setDropdownPosition] = useState<{ top: number; left: number } | null>(
     null,
   );
+  const releaseGroups: ReleaseGroup[] = artist?.["release-groups"] || [];
+  // Wait for the discography so matched albums don't flash in this rail first.
+  const discographyIds = discographyLoading
+    ? null
+    : new Set(
+        [...releaseGroups, ...(artist?.["appears-on-release-groups"] || [])]
+          .map((rg) => rg?.id)
+          .filter((id): id is string => Boolean(id)),
+      );
   const downloadedAlbums = libraryAlbums.filter((album) =>
-    isVisibleLibraryAlbum(album, { requestingAlbum }),
+    isVisibleLibraryAlbum(album, { requestingAlbum, discographyIds }),
   );
 
-  const releaseGroups: ReleaseGroup[] = artist?.["release-groups"] || [];
   const popularityById = new Map<string | null | undefined, number>(
     releaseGroups.map((rg) => [rg.id, getReleaseMetric(rg).sortValue]),
   );
