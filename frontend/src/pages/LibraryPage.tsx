@@ -905,7 +905,10 @@ function LibraryPage() {
             label={artist.name || "Artist"}
             {...artistMenuProps(artist)}
             items={[
-              ...actions.collectionPlayItems(() => loadArtistTracks(artist)),
+              ...actions.collectionPlayItems(() => loadArtistTracks(artist), false, {
+                seed: { artists: [{ id: String(artist.id) }] },
+                label: artist.name || "Artist",
+              }),
               actions.shareMenuItem({ kind: "artist", entity: artist }),
               {
                 id: "info",
@@ -1016,7 +1019,10 @@ function LibraryPage() {
             label={album.title || "Album"}
             {...actions.albumMenuProps(album, () => loadAlbumCollection(album))}
             items={[
-              ...actions.collectionPlayItems(() => loadAlbumCollection(album), albumEmpty),
+              ...actions.collectionPlayItems(() => loadAlbumCollection(album), albumEmpty, {
+                seed: { albumIds: [String(album.id)] },
+                label: album.title || "Album",
+              }),
               ...actions.albumMenuItems(album, artist),
             ]}
           />
@@ -1261,6 +1267,10 @@ function LibraryPage() {
                   ...actions.collectionQueueItems(
                     () => loadArtistTracks(libraryArtist),
                     !artistPlayable,
+                    {
+                      seed: { artists: [{ id: String(libraryArtist.id) }] },
+                      label: libraryArtist.name || "Artist",
+                    },
                   ),
                   actions.shareMenuItem({ kind: "artist", entity: libraryArtist }),
                   {
