@@ -4,7 +4,7 @@ import fs from "fs/promises";
 import path from "path";
 import * as v from "valibot";
 import { asAppError } from "../../lib/errors.ts";
-import { NOTIFICATION_EVENTS } from "../../lib/notificationEvents.ts";
+import { NOTIFICATION_EVENTS, type NotificationEvent } from "../../lib/notificationEvents.ts";
 import type { StoredIntegrations } from "../db/helpers/settings.ts";
 import { isPathInsideRoot } from "./downloadPaths.ts";
 import { enqueueNotification } from "./honkerDb.ts";
@@ -137,22 +137,20 @@ export async function listScriptFiles(scriptsDir = getScriptsDir()) {
 }
 
 // Script settings exist only while AURRAL_SCRIPTS_DIR is set; otherwise
-// settings read and save exactly as they do without the feature. Scripts run
-// on the notification events switched on for them, all off by default.
+// settings read and save exactly as they do without the feature. Each script
+// runs on its own events, none by default.
 export function readableScriptSettings(integrations: StoredIntegrations): StoredIntegrations {
-  const { scripts, scriptEvents, ...rest } = integrations;
+  const { scripts, ...rest } = integrations;
   if (!scriptsEnabled()) return rest;
-  const events = {
-    ...Object.fromEntries(NOTIFICATION_EVENTS.map((event) => [event, false])),
-    ...scriptEvents,
+  return {
+    ...rest,
+    scripts: (scripts ?? []).map((script) => ({ ...script, events: script.events ?? [] })),
   };
-  return { ...rest, scripts: scripts ?? [], scriptEvents: events };
 }
 
 export function normalizeScriptSettings(integrations: StoredIntegrations) {
   if (!scriptsEnabled()) {
     delete integrations.scripts;
-    delete integrations.scriptEvents;
     return;
   }
   if (!Array.isArray(integrations.scripts)) return;
@@ -163,6 +161,7 @@ export function normalizeScriptSettings(integrations: StoredIntegrations) {
       args: normalizeScriptArgs(script.args),
       timeoutSec: normalizeTimeoutSec(script.timeoutSec),
       enabled: script.enabled !== false,
+      events: NOTIFICATION_EVENTS.filter((event) => script.events?.includes(event)),
     }))
     .filter((script) => script.file)
     .slice(0, MAX_SCRIPTS);
@@ -280,15 +279,19 @@ const scriptLabel = (script: ScriptTarget) => String(script.name || "").trim() |
 // One job per script, so a failing script retries alone and never holds up
 // webhooks, Gotify, or another script.
 export function queueScripts(
-  { scripts, scriptEvents }: StoredIntegrations,
+  { scripts }: StoredIntegrations,
   event: string,
   vars: ScriptVars = {},
 ) {
-  if (!scriptsEnabled() || !scriptEvents?.[event as keyof typeof scriptEvents]) return [];
-  if (!Array.isArray(scripts)) return [];
+  if (!scriptsEnabled() || !Array.isArray(scripts)) return [];
   const resolved = scriptVars({ ...vars, event });
   return scripts
-    .filter((script) => script.enabled !== false && String(script.file || "").trim())
+    .filter(
+      (script) =>
+        script.enabled !== false &&
+        String(script.file || "").trim() &&
+        script.events?.includes(event as NotificationEvent),
+    )
     .map((script) =>
       enqueueNotification({
         kind: "script",

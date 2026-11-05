@@ -382,7 +382,16 @@ export function NotificationsSection() {
 
   if (item === "gotify") return <GotifyDetail />;
   if (webhookItem) return <WebhookDetail key={item} index={webhookItem.index} />;
-  if (scriptItem) return <ScriptDetail key={item} index={scriptItem.index} />;
+  if (scriptItem) {
+    return (
+      <ScriptDetail
+        key={item}
+        index={scriptItem.index}
+        EventToggles={EventToggles}
+        eventLabels={EVENT_LABELS}
+      />
+    );
+  }
 
   return (
     <SettingsPage title="Notifications">
@@ -421,7 +430,7 @@ export function NotificationsSection() {
           ))
         )}
       </SettingsGroup>
-      <ScriptsGroups EventToggles={EventToggles} />
+      <ScriptsGroups EventToggles={EventToggles} eventLabels={EVENT_LABELS} />
     </SettingsPage>
   );
 }

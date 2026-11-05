@@ -104,24 +104,33 @@ afterAll(async () => {
 test("the feature is off without AURRAL_SCRIPTS_DIR, and settings read as upstream", () => {
   const fresh = appSettings.readAppSettings().integrations;
   assert.deepEqual(fresh.scripts, []);
-  assert.equal(fresh.scriptEvents?.notifyRequestAvailable, false);
 
   dbOps.updateSettings({
     integrations: {
-      scripts: [{ name: "x", file: "x.sh", args: [], timeoutSec: 5, enabled: true }],
-      scriptEvents: { notifyRequestAvailable: true },
+      scripts: [
+        { name: "x", file: "x.sh", args: [], timeoutSec: 5, enabled: true },
+        {
+          name: "y",
+          file: "y.sh",
+          args: [],
+          timeoutSec: 5,
+          enabled: true,
+          events: ["notifyRequestAvailable"],
+        },
+      ],
     },
   });
   assert.equal(getScriptsDir(), scriptsDir);
   const enabled = appSettings.readAppSettings().integrations;
-  assert.equal(enabled.scripts?.length, 1);
-  assert.equal(enabled.scriptEvents?.notifyRequestAvailable, true);
+  assert.deepEqual(
+    enabled.scripts?.map((script) => script.events),
+    [[], ["notifyRequestAvailable"]],
+  );
 
   delete process.env.AURRAL_SCRIPTS_DIR;
   assert.equal(getScriptsDir(), null);
   const disabled = appSettings.readAppSettings().integrations;
   assert.equal("scripts" in disabled, false);
-  assert.equal("scriptEvents" in disabled, false);
 
   process.env.AURRAL_SCRIPTS_DIR = path.join(root, "missing");
   assert.equal(getScriptsDir(), null);
@@ -258,6 +267,7 @@ test("a failing script throws for retry and logs its exit and output", async () 
 
 test("a real request-available event runs each script independently of webhooks", async () => {
   const out = path.join(root, "ran.txt");
+  const events = ["notifyRequestAvailable" as const];
   writeScript(scriptsDir, "fail.sh", "exit 1");
   writeScript(scriptsDir, "record.sh", `env | grep '^AURRAL_' | sort > "${out}"`);
 
@@ -282,11 +292,25 @@ test("a real request-available event runs each script independently of webhooks"
             events: ["notifyRequestAvailable"],
           },
         ],
-        scriptEvents: { notifyRequestAvailable: true, notifyRequestMade: false },
         scripts: [
-          { name: "Fails", file: "fail.sh", args: [], timeoutSec: 5, enabled: true },
-          { name: "Off", file: "record.sh", args: ["off"], timeoutSec: 5, enabled: false },
-          { name: "Records", file: "record.sh", args: [], timeoutSec: 5, enabled: true },
+          { name: "Fails", file: "fail.sh", args: [], timeoutSec: 5, enabled: true, events },
+          {
+            name: "Off",
+            file: "record.sh",
+            args: ["off"],
+            timeoutSec: 5,
+            enabled: false,
+            events,
+          },
+          { name: "Records", file: "record.sh", args: [], timeoutSec: 5, enabled: true, events },
+          {
+            name: "Other event",
+            file: "record.sh",
+            args: ["other"],
+            timeoutSec: 5,
+            enabled: true,
+            events: ["notifyArtistAdded"],
+          },
         ],
       },
     });
@@ -326,8 +350,16 @@ test("scripts are not queued while the feature is off", async () => {
   delete process.env.AURRAL_SCRIPTS_DIR;
   dbOps.updateSettings({
     integrations: {
-      scriptEvents: { notifyRequestAvailable: true },
-      scripts: [{ name: "x", file: "x.sh", args: [], timeoutSec: 5, enabled: true }],
+      scripts: [
+        {
+          name: "x",
+          file: "x.sh",
+          args: [],
+          timeoutSec: 5,
+          enabled: true,
+          events: ["notifyRequestAvailable"],
+        },
+      ],
     },
   });
   const queuedBefore = queuedScriptFiles().length;

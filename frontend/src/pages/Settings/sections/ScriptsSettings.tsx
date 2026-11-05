@@ -16,7 +16,10 @@ import {
   SettingsRow,
   SettingsServiceRow,
 } from "../SettingsLayout";
-import type { NotificationEvent } from "../../../../../lib/notificationEvents.ts";
+import {
+  NOTIFICATION_EVENTS,
+  type NotificationEvent,
+} from "../../../../../lib/notificationEvents.ts";
 import "./scripts.css";
 
 // Custom script hooks. The server only sends script settings while
@@ -29,6 +32,12 @@ type EventTogglesProps = {
   idPrefix: string;
   isOn: (event: NotificationEvent) => boolean;
   onChange: (event: NotificationEvent, enabled: boolean) => void;
+};
+// The Notifications page's own event switches and labels, so scripts and
+// webhooks read the same.
+type EventsUi = {
+  EventToggles: ComponentType<EventTogglesProps>;
+  eventLabels: Record<NotificationEvent, string>;
 };
 
 const MAX_SCRIPTS = 10;
@@ -52,7 +61,7 @@ function describeRun(run: ScriptRun) {
   return `Exit code ${run.exitCode} after ${seconds}s.`;
 }
 
-export function ScriptDetail({ index }: { index: number | null }) {
+export function ScriptDetail({ index, EventToggles }: { index: number | null } & EventsUi) {
   const { settings, updateSettings } = useServerSettings();
   const route = useSettingsRoute();
   const scripts = settings.integrations.scripts ?? [];
@@ -64,6 +73,7 @@ export function ScriptDetail({ index }: { index: number | null }) {
     timeoutSec: String(existing?.timeoutSec ?? 60),
   });
   const [enabled, setEnabled] = useState(existing?.enabled !== false);
+  const [events, setEvents] = useState<NotificationEvent[]>(existing?.events ?? []);
   const [missingFile, setMissingFile] = useState(false);
   const [testing, setTesting] = useState(false);
   // The last test's outcome, shown until the next edit.
@@ -93,7 +103,11 @@ export function ScriptDetail({ index }: { index: number | null }) {
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!draft.file) return setMissingFile(true);
-    const script = { ...draft, enabled };
+    const script = {
+      ...draft,
+      enabled,
+      events: NOTIFICATION_EVENTS.filter((event) => events.includes(event)),
+    };
     save(
       index === null
         ? [...scripts, script]
@@ -123,8 +137,8 @@ export function ScriptDetail({ index }: { index: number | null }) {
 
   return (
     <SettingsPage title={index === null ? "Add script" : "Script"} back="Notifications">
-      <SettingsGroup>
-        <form onSubmit={submit}>
+      <form onSubmit={submit}>
+        <SettingsGroup>
           <SettingsRow label="Name" htmlFor="script-name">
             <SettingsInput
               id="script-name"
@@ -192,6 +206,15 @@ export function ScriptDetail({ index }: { index: number | null }) {
               onChange={(event) => setEnabled(event.target.checked)}
             />
           </SettingsRow>
+        </SettingsGroup>
+        <SettingsGroup title="Events">
+          <EventToggles
+            idPrefix="script"
+            isOn={(key) => events.includes(key)}
+            onChange={(key, on) =>
+              setEvents(on ? [...events, key] : events.filter((event) => event !== key))
+            }
+          />
           <SettingsActions status={status}>
             <button type="submit" className="btn btn-primary btn-sm">
               {index === null ? "Add script" : "Save"}
@@ -228,64 +251,45 @@ export function ScriptDetail({ index }: { index: number | null }) {
               </pre>
             </SettingsRow>
           ) : null}
-        </form>
-      </SettingsGroup>
+        </SettingsGroup>
+      </form>
     </SettingsPage>
   );
 }
 
-// The scripts list and their event switches, drawn with the Notifications
-// page's own EventToggles.
-export function ScriptsGroups({
-  EventToggles,
-}: {
-  EventToggles: ComponentType<EventTogglesProps>;
-}) {
-  const { settings, updateSettings } = useServerSettings();
-  const { scripts, scriptEvents } = settings.integrations;
-  if (!scripts || !scriptEvents) return null;
+// The scripts list, each row naming the events that run it, like webhooks.
+export function ScriptsGroups({ eventLabels }: EventsUi) {
+  const { settings } = useServerSettings();
+  const { scripts } = settings.integrations;
+  if (!scripts) return null;
   return (
-    <>
-      <SettingsGroup
-        title="Scripts"
-        actions={
-          scripts.length < MAX_SCRIPTS ? (
-            <SettingsLink to="notifications/script" className="btn btn-secondary btn-sm">
-              Add script
-            </SettingsLink>
-          ) : null
-        }
-      >
-        {scripts.length === 0 ? (
-          <p className="settings-group__note">No scripts yet.</p>
-        ) : (
-          scripts.map((script, index) => (
-            <SettingsServiceRow
-              key={`${script.file}-${index}`}
-              to={`notifications/script-${index}`}
-              name={script.name || script.file}
-              status={script.enabled === false ? { label: "Off" } : undefined}
-            />
-          ))
-        )}
-      </SettingsGroup>
-      {scripts.length > 0 ? (
-        <SettingsGroup title="Script events">
-          <EventToggles
-            idPrefix="script-event"
-            isOn={(key) => scriptEvents[key] === true}
-            onChange={(key, enabled) =>
-              updateSettings({
-                ...settings,
-                integrations: {
-                  ...settings.integrations,
-                  scriptEvents: { ...scriptEvents, [key]: enabled },
-                },
-              })
+    <SettingsGroup
+      title="Scripts"
+      actions={
+        scripts.length < MAX_SCRIPTS ? (
+          <SettingsLink to="notifications/script" className="btn btn-secondary btn-sm">
+            Add script
+          </SettingsLink>
+        ) : null
+      }
+    >
+      {scripts.length === 0 ? (
+        <p className="settings-group__note">No scripts yet.</p>
+      ) : (
+        scripts.map((script, index) => (
+          <SettingsServiceRow
+            key={`${script.file}-${index}`}
+            to={`notifications/script-${index}`}
+            name={script.name || script.file}
+            detail={
+              script.events?.length
+                ? script.events.map((event) => eventLabels[event]).join(", ")
+                : "No events"
             }
+            status={script.enabled === false ? { label: "Off" } : undefined}
           />
-        </SettingsGroup>
-      ) : null}
-    </>
+        ))
+      )}
+    </SettingsGroup>
   );
 }

@@ -1,7 +1,7 @@
 import * as v from "valibot";
 import { logger } from "../../services/logger.ts";
 import { USENET_CLIENT_KEYS } from "../../services/usenetClientCommon.ts";
-import { NOTIFICATION_EVENTS, type NotificationEvent } from "../../../lib/notificationEvents.ts";
+import { NOTIFICATION_EVENTS } from "../../../lib/notificationEvents.ts";
 import { lenient, listOf, recordOf } from "./storedSchemas.ts";
 
 const number = v.pipe(
@@ -18,14 +18,6 @@ const id = lenient(v.nullable(number));
 const service = <Entries extends v.ObjectEntries>(entries: Entries) =>
   lenient(v.looseObject(entries));
 
-// One switch per notification event.
-const eventFlags = service(
-  Object.fromEntries(NOTIFICATION_EVENTS.map((event) => [event, flag])) as Record<
-    NotificationEvent,
-    typeof flag
-  >,
-);
-
 export const webhookSchema = v.looseObject({
   url: v.string(),
   headers: lenient(listOf(v.looseObject({ key: v.string(), value: v.string() }))),
@@ -39,12 +31,12 @@ export const scriptSettingsSchema = v.looseObject({
   args: lenient(listOf(v.string())),
   timeoutSec: count,
   enabled: flag,
+  events: lenient(listOf(v.picklist(NOTIFICATION_EVENTS))),
 });
 
 export const integrationSettingsSchema = v.looseObject({
   webhooks: lenient(listOf(webhookSchema)),
   scripts: lenient(listOf(scriptSettingsSchema)),
-  scriptEvents: eventFlags,
   lastfm: service({
     apiKey: text,
     apiSecret: text,

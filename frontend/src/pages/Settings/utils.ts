@@ -1,4 +1,3 @@
-import { NOTIFICATION_EVENTS } from "../../../../lib/notificationEvents.ts";
 import { allReleaseTypes } from "./constants";
 import { normalizeDateTimeFormat } from "../../utils/dateTime.ts";
 import type {
@@ -224,10 +223,6 @@ export const normalizeSettings = (savedSettings: SavedSettings) => {
       ...(Array.isArray(savedSettings.integrations?.scripts)
         ? {
             scripts: savedSettings.integrations.scripts,
-            scriptEvents: {
-              ...Object.fromEntries(NOTIFICATION_EVENTS.map((event) => [event, false])),
-              ...(savedSettings.integrations?.scriptEvents || {}),
-            },
           }
         : {}),
     },
