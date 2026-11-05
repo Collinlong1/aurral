@@ -65,7 +65,10 @@ import {
   listDiskFiles,
   type ImportDiskFileResult,
 } from "../../../services/downloadJobs/importDiskFile.ts";
-import { getLibraryCoverUrlsForJobs } from "../../../services/playlists/playlistTrackCovers.ts";
+import {
+  getLibraryCoverUrlsForJobs,
+  getLibraryTrackInfoForJobs,
+} from "../../../services/playlists/playlistTrackCovers.ts";
 import { asAppError } from "../../../../lib/errors.ts";
 import { validate } from "../../../middleware/validate.ts";
 import { isErrorStatus } from "../../shared/errorStatus.ts";
@@ -187,6 +190,18 @@ const manualSearchQuery = v.object({
   playlistId: v.optional(v.string()),
 });
 
+// A Library file's current names, leaving the job's own where the Library has none.
+const withLibraryNames = (
+  info: { trackName: string; artistName: string | null; albumName: string | null } | undefined,
+) =>
+  info
+    ? {
+        trackName: info.trackName,
+        ...(info.artistName ? { artistName: info.artistName } : {}),
+        ...(info.albumName ? { albumName: info.albumName } : {}),
+      }
+    : {};
+
 export default new Hono<AppEnv>()
   .basePath("/playlists")
   .get("/status", requireFlowAccess, noCache, (c) =>
@@ -238,6 +253,7 @@ export default new Hono<AppEnv>()
       const accessibleJobs = filterJobsForUser(user, jobs);
       const libraryOwnership = getLibraryTrackOwnershipBatch(accessibleJobs);
       const libraryCovers = getLibraryCoverUrlsForJobs(accessibleJobs);
+      const libraryInfo = getLibraryTrackInfoForJobs(accessibleJobs);
       const customArtwork = getCustomArtworkMap(
         "playlist-track",
         accessibleJobs.map((job) => job.id),
@@ -245,6 +261,7 @@ export default new Hono<AppEnv>()
       return c.json(
         accessibleJobs.map((job, index) => ({
           ...toPublicJob(job, profile),
+          ...withLibraryNames(libraryInfo.get(String(job.id))),
           libraryOwned: libraryOwnership[index] === true,
           libraryCoverUrl: libraryCovers.get(String(job.id)) ?? null,
           ...(customArtwork.has(String(job.id))

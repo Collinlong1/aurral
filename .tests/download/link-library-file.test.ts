@@ -335,3 +335,56 @@ test("a playlist track linked to a Library file gets that album's cover", async 
   );
   assert.equal(jobs.find((job) => job.id === missingJob)?.libraryCoverUrl, null);
 });
+
+test("a playlist track playing a Library file shows the Library's current names", async () => {
+  const { flowPlaylistConfig } =
+    await import("../../backend/services/playlists/flowPlaylistConfig.ts");
+  const filePath = path.join(managedRoot, "Tagged Artist", "Tagged Album", "Tagged Song.flac");
+  await addLibraryFile("Tagged Artist", "Tagged Album", "Tagged Song");
+  const playlist = flowPlaylistConfig.createStaticPlaylist({
+    name: `Names ${Date.now()}`,
+    tracks: [
+      { artistName: "Import Spelling", trackName: "Tagged Song - Remastered" },
+      { artistName: "Nowhere Artist", trackName: "Not In Library" },
+    ],
+  });
+  const [libraryJob, otherJob] = playlist.tracks.map((track) => {
+    const jobId = downloadTracker.addJob({ ...track, albumName: "Import Album" }, playlist.id);
+    assert.ok(jobId != null);
+    return jobId;
+  });
+  downloadTracker.setDone(libraryJob!, filePath, "Import Album");
+  downloadTracker.setDone(otherJob!, path.join(isolatedState.baseDir, "elsewhere.flac"));
+
+  const names = async () => {
+    const response = await fetch(`${baseUrl}/api/playlists/jobs/${playlist.id}`);
+    assert.equal(response.status, 200);
+    const jobs = (await response.json()) as {
+      id: string;
+      trackName: string;
+      artistName: string;
+      albumName: string | null;
+    }[];
+    return Object.fromEntries(
+      jobs.map((job) => [job.id, [job.trackName, job.artistName, job.albumName]]),
+    );
+  };
+  assert.deepEqual((await names())[libraryJob!], ["Tagged Song", "Tagged Artist", "Tagged Album"]);
+  assert.deepEqual((await names())[otherJob!], [
+    "Not In Library",
+    "Nowhere Artist",
+    "Import Album",
+  ]);
+
+  // A re-tag the Library picks up shows on the playlist too.
+  libraryStore.upsertLibraryTrack({
+    identityKey: "track:Tagged Artist:Tagged Song",
+    title: "Tagged Song (Live)",
+    artistName: "Tagged Artist feat. Guest",
+  });
+  assert.deepEqual((await names())[libraryJob!], [
+    "Tagged Song (Live)",
+    "Tagged Artist feat. Guest",
+    "Tagged Album",
+  ]);
+});
