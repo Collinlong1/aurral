@@ -206,3 +206,49 @@ test("re-tagged files show their new artist after the next scan", async () => {
   assert.equal(song.artist, retagged);
   assert.deepEqual(names(song.artists), CLASSICAL_ARTISTS);
 });
+
+test("playlists count as changed when their files are re-tagged or the artist source switches", async () => {
+  const { testUser } = await import("../helpers/userFixtures.ts");
+  setArtistSource("tags");
+  const user = testUser(9, { role: "admin" });
+  const created = await subsonic.createSubsonicPlaylist(user, {
+    name: "Re-tag check",
+    songIds: [songNamed("Together").id],
+  });
+  assert.ok(created);
+  const listed = () => subsonic.getSubsonicPlaylists(user).find((p) => p.name === "Re-tag check")!;
+  const opened = () => subsonic.getSubsonicPlaylist(listed().id, user)!;
+  const changedAt = () => [Date.parse(listed().changed), Date.parse(opened().changed)];
+  const pause = () => new Promise((resolve) => setTimeout(resolve, 20));
+  const [listedBefore, openedBefore] = changedAt();
+  assert.equal(opened().entry[0]?.artist, "Artist A • Artist B");
+
+  await pause();
+  const file = path.join(root, "Duo/Split Single/01 Together.flac");
+  await tags.writeAudioTags(file, { artist: "Artist A & Artist C" });
+  await scanMusicRoot({ rootPath: root, source: "aurral" });
+
+  assert.equal(opened().entry[0]?.artist, "Artist A & Artist C");
+  const [listedRetagged, openedRetagged] = changedAt();
+  assert.ok(listedRetagged! > listedBefore!, "playlist list shows the re-tag as a change");
+  assert.ok(openedRetagged! > openedBefore!, "playlist shows the re-tag as a change");
+
+  await pause();
+  const libraryBefore = subsonic.getLibraryLastModified(user);
+  try {
+    setArtistSource("library");
+    assert.equal(opened().entry[0]?.displayArtist, undefined);
+    const [listedSwitched, openedSwitched] = changedAt();
+    assert.ok(listedSwitched! > listedRetagged!, "playlist list shows the switch as a change");
+    assert.ok(openedSwitched! > openedRetagged!, "playlist shows the switch as a change");
+    assert.ok(subsonic.getLibraryLastModified(user) > libraryBefore, "library shows the switch");
+
+    // Saving the same source again is not a change.
+    const unchanged = changedAt();
+    await pause();
+    setArtistSource("library");
+    assert.deepEqual(changedAt(), unchanged);
+  } finally {
+    setArtistSource("tags");
+  }
+});
