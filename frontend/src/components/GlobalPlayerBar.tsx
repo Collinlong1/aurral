@@ -11,8 +11,11 @@ import { createPortal } from "react-dom";
 import { Link, useLocation } from "react-router";
 import { albumPath } from "../../../lib/albumPath.ts";
 import {
+  ArrowDownLeft,
   ChevronDown,
   Download,
+  Ellipsis,
+  Heart,
   ListMusic,
   Mic,
   Music,
@@ -25,12 +28,16 @@ import {
   Shuffle,
   SkipBack,
   SkipForward,
+  Stop,
   Volume2,
   VolumeX,
-  X,
 } from "./icons";
 import { useAudioQueue } from "../contexts/audioQueueContext";
+import { useToast } from "../contexts/ToastContext.tsx";
+import { usePlayerFavorite } from "../hooks/usePlayerFavorite.ts";
+import Tooltip from "./Tooltip";
 import TooltipButton from "./TooltipButton";
+import { LibraryItemMenu } from "./LibraryItemMenu";
 import { PlayerQueuePanel, UpNextQueue, type PlayerPanelView } from "./PlayerQueue";
 import PlayerLyrics from "./PlayerLyrics";
 import { PlayerMiniProgress, PlayerSeek } from "./PlayerProgress";
@@ -87,7 +94,12 @@ function PreviewDownloadButton({
     </TooltipButton>
   );
 }
-function GlobalPlayerBar() {
+type GlobalPlayerBarProps = {
+  minimized: boolean;
+  onMinimizedChange: (minimized: boolean) => void;
+};
+
+function GlobalPlayerBar({ minimized, onMinimizedChange }: GlobalPlayerBarProps) {
   const [failedArtwork, setFailedArtwork] = useState<string | null>(null);
   const {
     currentTrack,
@@ -115,6 +127,8 @@ function GlobalPlayerBar() {
   const sharePlain = useShareAction();
   const shareLibrary = useLibraryShareAction();
   const startRadio = useStartRadio();
+  const { addToast } = useToast();
+  const favorite = usePlayerFavorite(isActive ? currentTrack : null);
   const location = useLocation();
   const [sheetOpen, setSheetOpen] = useState(false);
   const [sheetLyrics, setSheetLyrics] = useState(false);
@@ -136,6 +150,7 @@ function GlobalPlayerBar() {
   const dragRef = useRef<{ pointerId: number; startY: number; fromArt: boolean } | null>(null);
   const draggedRef = useRef(false);
   const sheetCloseRef = useRef<HTMLButtonElement>(null);
+  const sheetQueueRef = useRef<HTMLDivElement>(null);
   const closeSheet = useCallback(() => setSheetOpen(false), []);
   const sheetDialog = useModalDialog({
     open: sheetPresence !== "closed",
@@ -217,7 +232,13 @@ function GlobalPlayerBar() {
     seekForward: () => seekBy(SEEK_SHORTCUT_SECONDS),
     mute: toggleMute,
     lyrics: () => {
-      if (window.matchMedia("(min-width: 768px)").matches) togglePanel("lyrics");
+      if (!window.matchMedia("(min-width: 768px)").matches) return;
+      if (!minimized) {
+        togglePanel("lyrics");
+        return;
+      }
+      onMinimizedChange(false);
+      setPanel("lyrics");
     },
   });
 
@@ -227,8 +248,78 @@ function GlobalPlayerBar() {
       : "",
   );
 
+  const stop = () => {
+    const undo = clearQueue();
+    addToast(
+      { message: "Queue cleared", action: { label: "Undo", onClick: undo } },
+      "success",
+      8000,
+    );
+  };
+  const minimize = () => {
+    setPanel(null);
+    onMinimizedChange(true);
+  };
+  const minimizedClass = minimized ? " global-player--minimized" : "";
+  const minimizeButton = (
+    <TooltipButton
+      tooltipPlacement="top"
+      label="Minimize player"
+      onClick={minimize}
+      className="btn btn-ghost btn-icon btn-xs"
+    >
+      <ArrowDownLeft className="artist-icon-sm" />
+    </TooltipButton>
+  );
+
   if (!isActive || !currentTrack) {
-    return null;
+    return (
+      <div
+        className={`global-player global-player--empty${minimizedClass}`}
+        role="region"
+        aria-label="Global audio player"
+      >
+        <div className="global-player__inner">
+          <div className="global-player__track">
+            <span className="global-player__art global-player__art--bar" aria-hidden="true">
+              <Music />
+            </span>
+            <div className="global-player__meta">
+              <span className="global-player__title">Nothing playing</span>
+            </div>
+          </div>
+          <div className="global-player__main">
+            <div className="global-player__controls">
+              <TooltipButton
+                tooltipPlacement="top"
+                disabled
+                label="Previous track"
+                className="btn btn-secondary btn-sm btn-icon global-player__control"
+              >
+                <SkipBack className="artist-icon-sm" />
+              </TooltipButton>
+              <TooltipButton
+                tooltipPlacement="top"
+                disabled
+                label="Play"
+                className="btn btn-accent btn-sm btn-icon global-player__control global-player__control--primary"
+              >
+                <Play className="artist-icon-sm" />
+              </TooltipButton>
+              <TooltipButton
+                tooltipPlacement="top"
+                disabled
+                label="Next track"
+                className="btn btn-secondary btn-sm btn-icon global-player__control"
+              >
+                <SkipForward className="artist-icon-sm" />
+              </TooltipButton>
+            </div>
+          </div>
+          <div className="global-player__side">{minimizeButton}</div>
+        </div>
+      </div>
+    );
   }
 
   const volumePercent = muted ? 0 : Math.round(volume * 100);
@@ -330,6 +421,7 @@ function GlobalPlayerBar() {
   );
 
   const playPauseLabel = isPlaying || isStarting ? "Pause" : "Play";
+  const favoriteLabel = favorite?.active ? "Remove from favorites" : "Add to favorites";
   const PlayPauseIcon = isPlaying || isStarting ? Pause : Play;
   const repeatLabel =
     repeatMode === "one"
@@ -340,10 +432,9 @@ function GlobalPlayerBar() {
 
   return (
     <div
-      className="global-player"
+      className={`global-player${minimizedClass}`}
       role="region"
       aria-label="Global audio player"
-      style={artTint ? { "--player-tint": artTint } : undefined}
     >
       <div className="global-player__mini">
         <PlayerMiniProgress />
@@ -409,6 +500,7 @@ function GlobalPlayerBar() {
                 onPointerCancel={handleSheetPointerEnd}
               >
                 <div className="now-playing__header">
+                  <span className="now-playing__grabber" aria-hidden="true" />
                   <button
                     ref={sheetCloseRef}
                     type="button"
@@ -420,43 +512,32 @@ function GlobalPlayerBar() {
                   </button>
                   <span className="now-playing__eyebrow">Now playing</span>
                   <span className="now-playing__header-actions">
-                    <button
-                      type="button"
-                      className={`now-playing__icon-button now-playing__lyrics-toggle${sheetLyrics ? " is-active" : ""}`}
-                      onClick={() => setSheetLyrics((current) => !current)}
-                      aria-pressed={sheetLyrics}
-                      aria-label="Lyrics"
-                    >
-                      <Mic aria-hidden="true" />
-                    </button>
-                    {canStartRadio ? (
-                      <button
-                        type="button"
-                        className="now-playing__icon-button"
-                        onClick={startTrackRadio}
-                        aria-label="Start radio"
-                      >
-                        <Radio aria-hidden="true" />
-                      </button>
-                    ) : null}
-                    {canShareTrack ? (
-                      <button
-                        type="button"
-                        className="now-playing__icon-button"
-                        onClick={shareTrack}
-                        aria-label="Share track"
-                      >
-                        <Share aria-hidden="true" />
-                      </button>
-                    ) : null}
-                    <button
-                      type="button"
-                      className="now-playing__icon-button"
-                      onClick={clearQueue}
-                      aria-label="Stop and clear queue"
-                    >
-                      <X aria-hidden="true" />
-                    </button>
+                    <LibraryItemMenu
+                      label={currentTrack.title || "Track"}
+                      contextMenu={false}
+                      triggerIcon={<Ellipsis aria-hidden="true" />}
+                      triggerLabel="More"
+                      triggerClassName="now-playing__icon-button"
+                      items={[
+                        ...(canShareTrack
+                          ? [
+                              {
+                                id: "share",
+                                label: "Share track",
+                                icon: Share,
+                                onSelect: shareTrack,
+                              },
+                            ]
+                          : []),
+                        {
+                          id: "stop",
+                          label: "Stop and clear queue",
+                          icon: Stop,
+                          danger: true,
+                          onSelect: stop,
+                        },
+                      ]}
+                    />
                   </span>
                 </div>
 
@@ -478,7 +559,24 @@ function GlobalPlayerBar() {
                   )}
 
                   <div className="now-playing__meta">
-                    <h2 className="now-playing__title">{currentTrack.title}</h2>
+                    <div className="now-playing__title-row">
+                      <h2 className="now-playing__title">{currentTrack.title}</h2>
+                      {favorite ? (
+                        <button
+                          type="button"
+                          className={`now-playing__icon-button now-playing__favorite${favorite.active ? " is-active" : ""}`}
+                          onClick={() => void favorite.toggle()}
+                          disabled={favorite.pending}
+                          aria-pressed={favorite.active}
+                          aria-label={favoriteLabel}
+                        >
+                          <Heart
+                            aria-hidden="true"
+                            fill={favorite.active ? "currentColor" : "none"}
+                          />
+                        </button>
+                      ) : null}
+                    </div>
                     {currentTrack.isPreview ? (
                       <div className="global-player__title-row">
                         <PreviewChip />
@@ -554,7 +652,44 @@ function GlobalPlayerBar() {
                     </button>
                   </div>
 
-                  <UpNextQueue className="now-playing__queue" />
+                  <div className="now-playing__actions">
+                    <button
+                      type="button"
+                      className={`now-playing__icon-button now-playing__lyrics-toggle${sheetLyrics ? " is-active" : ""}`}
+                      onClick={() => setSheetLyrics((current) => !current)}
+                      aria-pressed={sheetLyrics}
+                      aria-label="Lyrics"
+                    >
+                      <Mic aria-hidden="true" />
+                    </button>
+                    {canStartRadio ? (
+                      <button
+                        type="button"
+                        className="now-playing__icon-button"
+                        onClick={startTrackRadio}
+                        aria-label="Start radio"
+                      >
+                        <Radio aria-hidden="true" />
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="now-playing__icon-button"
+                      onClick={() =>
+                        sheetQueueRef.current?.scrollIntoView({
+                          behavior: "smooth",
+                          block: "start",
+                        })
+                      }
+                      aria-label="Up next"
+                    >
+                      <ListMusic aria-hidden="true" />
+                    </button>
+                  </div>
+
+                  <div ref={sheetQueueRef}>
+                    <UpNextQueue className="now-playing__queue" />
+                  </div>
                 </div>
               </div>
             </div>,
@@ -588,15 +723,25 @@ function GlobalPlayerBar() {
               </span>
             ) : null}
             {playbackError ? (
-              <span className="global-player__error" role="alert">
-                {playbackError}
-              </span>
+              <Tooltip content={playbackError} placement="top">
+                <span className="global-player__error" role="alert">
+                  {playbackError}
+                </span>
+              </Tooltip>
             ) : null}
           </div>
         </div>
 
         <div className="global-player__main">
           <div className="global-player__controls">
+            <TooltipButton
+              tooltipPlacement="top"
+              label="Stop and clear queue"
+              onClick={stop}
+              className="btn btn-secondary btn-sm btn-icon global-player__control global-player__stop"
+            >
+              <Stop className="artist-icon-sm" />
+            </TooltipButton>
             <TooltipButton
               tooltipPlacement="top"
               label={isShuffleEnabled ? "Disable shuffle" : "Enable shuffle"}
@@ -657,6 +802,16 @@ function GlobalPlayerBar() {
               ) : (
                 <Repeat className="artist-icon-sm" />
               )}
+            </TooltipButton>
+            <TooltipButton
+              tooltipPlacement="top"
+              label={favorite ? favoriteLabel : "Only Library tracks can be favorites"}
+              aria-pressed={favorite?.active ?? false}
+              onClick={favorite ? () => void favorite.toggle() : undefined}
+              disabled={!favorite || favorite.pending}
+              className={`btn btn-secondary btn-sm btn-icon global-player__control global-player__favorite${favorite?.active ? " is-active" : ""}`}
+            >
+              <Heart className="artist-icon-sm" fill={favorite?.active ? "currentColor" : "none"} />
             </TooltipButton>
           </div>
 
@@ -741,14 +896,7 @@ function GlobalPlayerBar() {
             style={{ "--volume-percent": `${volumePercent}%` }}
             aria-label="Volume"
           />
-          <TooltipButton
-            tooltipPlacement="top"
-            label="Close player"
-            onClick={clearQueue}
-            className="btn btn-ghost btn-icon btn-xs global-player__close"
-          >
-            <X className="artist-icon-sm" />
-          </TooltipButton>
+          {minimizeButton}
         </div>
       </div>
     </div>

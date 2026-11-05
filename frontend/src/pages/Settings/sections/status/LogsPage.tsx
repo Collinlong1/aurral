@@ -95,6 +95,7 @@ function triagePrompt(apiKey: string) {
     `Problems from the last day, grouped: ${link("problems", {})}`,
     `Full log with version and integrations: ${link("export", { level: "warn" })}`,
     `Start fresh, by POST, only after I say yes: ${link("fresh", {})}`,
+    "What went wrong: ",
   ].join("\n");
 }
 
@@ -282,6 +283,9 @@ function StreamView({ fp, onClearFp }: { fp: string | null; onClearFp: () => voi
         )}
         <input
           type="search"
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
           className="input logs-filters__search"
           placeholder="Search"
           aria-label="Search the log"

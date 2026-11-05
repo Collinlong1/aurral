@@ -13,6 +13,7 @@ import {
 } from "react";
 import RouteLink from "./RouteLink";
 import { useLocation, useNavigate, useNavigationType } from "react-router";
+import { useEdgeSwipeBack } from "../hooks/useEdgeSwipeBack.ts";
 import {
   Sparkles,
   Library,
@@ -46,6 +47,7 @@ const SIDEBAR_MIN = 56;
 const SIDEBAR_MAX = 400;
 const SIDEBAR_DEFAULT = 208;
 const MOBILE_SHEET_EXIT_MS = 180;
+const PLAYER_MINIMIZED_KEY = "playerMinimized";
 
 const SettingsModal = lazy(() => import("../pages/Settings/SettingsModal"));
 
@@ -66,6 +68,8 @@ function Layout({ children, headerActions }: LayoutProps) {
     height: 0,
   });
   const mainScrollRef = useRef<HTMLElement>(null);
+  const mainWrapRef = useRef<HTMLDivElement>(null);
+  const [isMainScrolled, setIsMainScrolled] = useState(false);
   const scrollbarTrackRef = useRef<HTMLDivElement>(null);
   const scrollbarDragRef = useRef<ScrollbarDrag | null>(null);
   const scrollbarFadeTimeoutRef = useRef<number | null>(null);
@@ -91,6 +95,19 @@ function Layout({ children, headerActions }: LayoutProps) {
     }
   });
   const [isResizing, setIsResizing] = useState(false);
+  const [playerMinimized, setPlayerMinimized] = useState(() => {
+    try {
+      return localStorage.getItem(PLAYER_MINIMIZED_KEY) === "true";
+    } catch {
+      return false;
+    }
+  });
+  const changePlayerMinimized = useCallback((minimized: boolean) => {
+    setPlayerMinimized(minimized);
+    try {
+      localStorage.setItem(PLAYER_MINIMIZED_KEY, String(minimized));
+    } catch {}
+  }, []);
   const location = useLocation();
   const navigate = useNavigate();
   const navigationType = useNavigationType();
@@ -199,6 +216,12 @@ function Layout({ children, headerActions }: LayoutProps) {
     }
     navigate("/");
   }, [navigate]);
+
+  useEdgeSwipeBack(mainWrapRef, {
+    enabled: !sectionNav,
+    onBack: handleMobileBack,
+    resetKey: location.key,
+  });
 
   const persistSidebarWidth = useCallback((width: number) => {
     const nextWidth = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, Math.round(width)));
@@ -433,9 +456,17 @@ function Layout({ children, headerActions }: LayoutProps) {
       className="app-shell"
       data-sidebar-mode={sidebarMode}
       data-resizing={isResizing || undefined}
-      style={{ "--sidebar-width": `${sidebarWidth}px` }}
+      data-player-docked={!playerMinimized || undefined}
+      style={{
+        "--sidebar-width": `${sidebarWidth}px`,
+      }}
     >
-      <Sidebar mode={sidebarMode} width={sidebarWidth} onToggle={toggleSidebarPin} />
+      <Sidebar
+        mode={sidebarMode}
+        width={sidebarWidth}
+        onToggle={toggleSidebarPin}
+        onRestorePlayer={playerMinimized ? () => changePlayerMinimized(false) : null}
+      />
 
       <div
         className={`sidebar-resize-handle${isResizing ? " is-active" : ""}`}
@@ -501,14 +532,17 @@ function Layout({ children, headerActions }: LayoutProps) {
           </nav>
         ) : null}
 
-        <div className="app-main-wrap">
+        <div
+          ref={mainWrapRef}
+          className="app-main-wrap"
+          data-scrolled={isMainScrolled || undefined}
+        >
           <main
-            className={`app-main${isArtistDetailsRoute ? " app-main--artist-details" : ""}${
-              isPlayerActive ? " app-main--player-active" : ""
-            }`}
+            className={`app-main${isArtistDetailsRoute ? " app-main--artist-details" : ""}`}
             ref={mainScrollRef}
             onScroll={(event) => {
               scrollPositionsRef.current.set(location.key, event.currentTarget.scrollTop);
+              setIsMainScrolled(event.currentTarget.scrollTop > 0);
               updateMainScrollbar();
               showScrollbarTemporarily();
             }}
@@ -537,7 +571,7 @@ function Layout({ children, headerActions }: LayoutProps) {
           </div>
         </div>
 
-        <GlobalPlayerBar />
+        <GlobalPlayerBar minimized={playerMinimized} onMinimizedChange={changePlayerMinimized} />
 
         {mobileMenuPresence !== "closed" && (
           <div
@@ -604,6 +638,14 @@ function Layout({ children, headerActions }: LayoutProps) {
                   to={item.path}
                   className={`app-mobile-nav__item${active ? " is-active" : ""}`}
                   aria-current={active ? "page" : undefined}
+                  onClick={(event) => {
+                    const main = mainScrollRef.current;
+                    if (location.pathname + location.search !== item.path || !main?.scrollTop) {
+                      return;
+                    }
+                    event.preventDefault();
+                    main.scrollTo({ top: 0, behavior: "smooth" });
+                  }}
                 >
                   <Icon aria-hidden="true" />
                   <span>{item.label}</span>
