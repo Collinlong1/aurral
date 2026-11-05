@@ -2,7 +2,7 @@ import { ChevronRight, ListMusic, Music } from "./icons";
 import type { SearchImageMap, SearchItem } from "./SearchMixedResultList";
 import ArtistImage from "./ArtistImage";
 import SearchLibraryCheck from "./SearchLibraryCheck";
-import { getSearchResultLink } from "../utils/searchNavigation";
+import { getReleaseTypeLabel, getSearchResultLink } from "../utils/searchNavigation";
 import { getArtistRecordId } from "../utils/artistTaste";
 import { isAlbumCompleteInLibrary } from "../utils/albumAddAction";
 import RouteLink from "./RouteLink";
@@ -22,7 +22,8 @@ function getPrimaryLabel(item: SearchItem | null | undefined) {
 function getMetaLabel(item: SearchItem | null | undefined) {
   if (item?.type === "artist") return "Artist";
   if (item?.type === "album") {
-    return item.artistName ? `Album · ${item.artistName}` : "Album";
+    const label = getReleaseTypeLabel(item);
+    return item.artistName ? `${label} · ${item.artistName}` : label;
   }
   if (item?.type === "track") {
     return item.artistName ? `Song · ${trackArtistLabel(item.artistName, item.tagArtist)}` : "Song";
@@ -51,12 +52,10 @@ function getPreviewLabel(item: SearchItem | null | undefined, previewTracks: Pre
 
 function TopResultArtwork({
   item,
-  artistImages,
   albumCovers,
   isInLibrary,
 }: {
   item: SearchItem;
-  artistImages: SearchImageMap;
   albumCovers: SearchImageMap;
   isInLibrary: boolean | undefined;
 }) {
@@ -64,13 +63,12 @@ function TopResultArtwork({
     const artistId = getArtistRecordId(item);
     return (
       <ArtistImage
-        src={artistImages[String(artistId)] || item.image || item.imageUrl}
+        src={item.image || item.imageUrl}
         mbid={artistId}
         artistName={item.name}
         alt={item.name}
         className="search-top-artist__image"
         showLoading={false}
-        enableBackendFallback={false}
         enablePreviewPlayback
         isInLibrary={isInLibrary}
       />
@@ -103,15 +101,8 @@ function TopResultArtwork({
   );
 }
 
-function getBackdropSrc(
-  item: SearchItem,
-  artistImages: SearchImageMap,
-  albumCovers: SearchImageMap,
-) {
-  if (item.type === "artist") {
-    const artistId = getArtistRecordId(item);
-    return artistImages[String(artistId)] || item.image || item.imageUrl || "";
-  }
+function getBackdropSrc(item: SearchItem, albumCovers: SearchImageMap) {
+  if (item.type === "artist") return item.image || item.imageUrl || "";
   if (item.type === "album") {
     return albumCovers[String(item.id)] || item.coverUrl || "";
   }
@@ -123,7 +114,6 @@ function getBackdropSrc(
 
 interface SearchTopArtistCardProps {
   item?: SearchItem | null;
-  artistImages: SearchImageMap;
   albumCovers?: SearchImageMap;
   libraryLookup: Record<string, boolean | undefined>;
   query?: string;
@@ -132,7 +122,6 @@ interface SearchTopArtistCardProps {
 
 function SearchTopArtistCard({
   item: result,
-  artistImages,
   albumCovers = {},
   libraryLookup,
   query = "",
@@ -140,8 +129,7 @@ function SearchTopArtistCard({
 }: SearchTopArtistCardProps) {
   const { matchArtwork: immersiveMode } = useThemeDocument();
   const label = getPrimaryLabel(result);
-  const backdropSrc =
-    immersiveMode && result ? getBackdropSrc(result, artistImages, albumCovers) : "";
+  const backdropSrc = immersiveMode && result ? getBackdropSrc(result, albumCovers) : "";
   if (!result || !label) return null;
   const isArtist = result.type === "artist";
   const artistId = isArtist ? getArtistRecordId(result) : null;
@@ -191,12 +179,7 @@ function SearchTopArtistCard({
               isArtist ? "" : " search-top-artist__image-wrap--square"
             }`}
           >
-            <TopResultArtwork
-              item={result}
-              artistImages={artistImages}
-              albumCovers={albumCovers}
-              isInLibrary={isInLibrary}
-            />
+            <TopResultArtwork item={result} albumCovers={albumCovers} isInLibrary={isInLibrary} />
           </span>
 
           {link ? (
