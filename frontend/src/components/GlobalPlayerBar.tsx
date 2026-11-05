@@ -54,6 +54,7 @@ import { useAddTrackToLibrary } from "../hooks/useAddTrackToLibrary";
 import { trackDownloadActionLabel } from "../pages/library/libraryShared.tsx";
 import { useStartRadio } from "../hooks/useQueueTrackActions";
 import { radioSeedFor } from "../utils/audioQueue";
+import { trackArtistLabel } from "../utils/trackArtist.ts";
 
 const SHEET_EXIT_MS = 260;
 const SHEET_DISMISS_DISTANCE = 120;
@@ -244,7 +245,9 @@ function GlobalPlayerBar({ minimized, onMinimizedChange }: GlobalPlayerBarProps)
 
   useNowPlayingTitle(
     isActive && currentTrack && (isPlaying || isStarting)
-      ? [currentTrack.title, currentTrack.artist].filter(Boolean).join(" · ")
+      ? [currentTrack.title, trackArtistLabel(currentTrack.artist, currentTrack.tagArtist)]
+          .filter(Boolean)
+          .join(" · ")
       : "",
   );
 
@@ -326,6 +329,7 @@ function GlobalPlayerBar({ minimized, onMinimizedChange }: GlobalPlayerBarProps)
   const artistMbid = String(currentTrack.artistMbid || "").trim();
   const albumMbid = String(currentTrack.albumMbid || "").trim();
   const artistLabel = currentTrack.artist || "";
+  const shownArtist = trackArtistLabel(artistLabel, currentTrack.tagArtist);
   const albumLabel = currentTrack.album || "";
   const artistPath = artistMbid ? `/artist/${artistMbid}` : "";
   const albumRef = albumMbid || String(currentTrack.libraryAlbumId ?? "").trim();
@@ -451,7 +455,7 @@ function GlobalPlayerBar({ minimized, onMinimizedChange }: GlobalPlayerBarProps)
             <span className="global-player__title">{currentTrack.title}</span>
             <span className="global-player__subtitle">
               {playbackError ||
-                [currentTrack.isPreview ? "Preview" : "", artistLabel, albumLabel]
+                [currentTrack.isPreview ? "Preview" : "", shownArtist, albumLabel]
                   .filter(Boolean)
                   .join(" · ")}
             </span>
@@ -588,7 +592,7 @@ function GlobalPlayerBar({ minimized, onMinimizedChange }: GlobalPlayerBarProps)
                     ) : null}
                     {artistLabel || albumLabel ? (
                       <p className="now-playing__subtitle">
-                        {metaLink(artistLabel, artistPath)}
+                        {metaLink(shownArtist, artistPath)}
                         {artistLabel && albumLabel ? " · " : null}
                         {metaLink(albumLabel, albumLink)}
                       </p>
@@ -717,7 +721,7 @@ function GlobalPlayerBar({ minimized, onMinimizedChange }: GlobalPlayerBarProps)
             </div>
             {artistLabel || albumLabel ? (
               <span className="global-player__subtitle">
-                {metaLink(artistLabel, artistPath)}
+                {metaLink(shownArtist, artistPath)}
                 {artistLabel && albumLabel ? " · " : null}
                 {metaLink(albumLabel, albumLink)}
               </span>

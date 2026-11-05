@@ -18,6 +18,7 @@ import {
 import { logIn, logOut } from "../utils/session.ts";
 import { clearLibraryFavoritesCache } from "../utils/api/endpoints/library.ts";
 import { setDateTimeFormat } from "../utils/dateTime.ts";
+import { setTrackArtistSource } from "../utils/trackArtist.ts";
 import { queryClient } from "../queryClient.ts";
 import type { ReactNode } from "react";
 
@@ -58,6 +59,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       const bootstrap = await getBootstrapStatus();
       authResolvedRef.current = true;
       setDateTimeFormat(bootstrap.dateTimeFormat);
+      setTrackArtistSource(bootstrap.trackArtistSource);
       setBootstrap(bootstrap);
       if (bootstrap.token) setStoredAuth({ token: bootstrap.token });
       const isOnboarding = !!bootstrap.onboardingRequired;
@@ -149,6 +151,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       try {
         const bootstrap = await getBootstrapStatus();
         setDateTimeFormat(bootstrap.dateTimeFormat);
+        setTrackArtistSource(bootstrap.trackArtistSource);
         setBootstrap(bootstrap);
       } catch {}
       return { ok: true };

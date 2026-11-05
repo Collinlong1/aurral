@@ -9,6 +9,7 @@ import { SettingsGroup, SettingsPage, SettingsRow, useSettingsItem } from "../Se
 import { ApiKeyRow } from "../components/ApiKeyRow";
 import { BackupGroup } from "./BackupGroup";
 import { UsageStatsDetail, UsageStatsGroup } from "./UsageStats";
+import { setTrackArtistSource } from "../../../utils/trackArtist.ts";
 
 export function GeneralSection() {
   const { settings, updateSettings } = useServerSettings();
@@ -38,6 +39,27 @@ export function GeneralSection() {
             ]}
           />
         </SettingsRow>
+        <SettingsRow
+          label="Track artist names"
+          htmlFor="track-artist-source"
+          help="Applies to all users, in Aurral and in Subsonic apps. File tags show each track's ARTIST tag as written, like Navidrome, such as AC/DC or Artist feat. Guest. Library shows Aurral's artist names. Artist pages are the same either way."
+        >
+          <Select
+            id="track-artist-source"
+            value={settings.subsonic?.artistSource === "library" ? "library" : "tags"}
+            onChange={(artistSource) => {
+              setTrackArtistSource(artistSource);
+              updateSettings({
+                ...settings,
+                subsonic: { ...settings.subsonic, artistSource },
+              });
+            }}
+            options={[
+              { value: "tags", label: "File tags" },
+              { value: "library", label: "Library" },
+            ]}
+          />
+        </SettingsRow>
       </SettingsGroup>
       <UsageStatsGroup />
       <SettingsGroup title="Subsonic">
@@ -56,26 +78,6 @@ export function GeneralSection() {
               })
             }
             aria-label="Keep flow tracks when favorited through Subsonic"
-          />
-        </SettingsRow>
-        <SettingsRow
-          label="Artist names"
-          htmlFor="subsonic-artist-source"
-          help="File tags show each track's ARTIST and ALBUMARTIST tags as written, like Navidrome. Library shows Aurral's artist names."
-        >
-          <Select
-            id="subsonic-artist-source"
-            value={settings.subsonic?.artistSource === "library" ? "library" : "tags"}
-            onChange={(artistSource) =>
-              updateSettings({
-                ...settings,
-                subsonic: { ...settings.subsonic, artistSource },
-              })
-            }
-            options={[
-              { value: "tags", label: "File tags" },
-              { value: "library", label: "Library" },
-            ]}
           />
         </SettingsRow>
       </SettingsGroup>

@@ -24,6 +24,7 @@ export function toQueueTracks(trackIds: number[]) {
         id: String(track.id),
         title: track.title || "Unknown Track",
         artist: track.artistName || artist?.name || "Unknown Artist",
+        tagArtist: file.artistTags?.artist || null,
         album: album.title || "Unknown Album",
         streamPath: `/library/canonical-stream/${encodeURIComponent(album.id)}/${encodeURIComponent(track.id)}`,
         streamFormat: file.format || null,

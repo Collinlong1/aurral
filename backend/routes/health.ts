@@ -260,6 +260,8 @@ type BootstrapPayload = {
   ssoOnly: boolean;
   onboardingRequired: boolean;
   dateTimeFormat: string;
+  // Whether tracks show their files' ARTIST tags or Aurral's artist names, for every user.
+  trackArtistSource: "tags" | "library";
   token?: string;
   user?: Pick<RequestUser, "id" | "username" | "role" | "permissions">;
   authUser?: string;
@@ -334,6 +336,7 @@ function buildBootstrapPayload(req: CredentialRequest) {
     ssoOnly: settings?.security?.ssoOnly === true,
     onboardingRequired: !onboardingDone,
     dateTimeFormat: settings.dateTimeFormat,
+    trackArtistSource: settings.subsonic?.artistSource === "library" ? "library" : "tags",
     timestamp: new Date().toISOString(),
     appVersion: APP_VERSION,
     api: API_CONTRACT,

@@ -48,6 +48,7 @@ import type { PlaybackSource } from "../../../hooks/useAlbumTrackListToolbar";
 import type { PlaylistTrackRow } from "../playlistPageUtils.ts";
 import type { PlaylistTrackStatus } from "../trackAvailability.ts";
 import type { StaticPlaylist } from "../playlistStats.ts";
+import { trackArtistLabel } from "../../../utils/trackArtist.ts";
 
 export type PlaylistPanelTrack = Pick<
   PlaylistTrackRow,
@@ -715,10 +716,10 @@ export function PlaylistTracksPanel<T extends PlaylistPanelTrack>({
       number: trackNumbers.get(track.id),
       title: track.trackName,
       year: track.releaseYear,
-      subtitle: track.artistName,
+      subtitle: trackArtistLabel(track.artistName, track.tagArtist),
       detail: showReasons ? track.reason : null,
       artist: {
-        label: track.artistName,
+        label: trackArtistLabel(track.artistName, track.tagArtist),
         ...artistLink,
         onOpen: canOpenArtist ? () => onNavigateArtist!(track) : null,
       },

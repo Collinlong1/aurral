@@ -81,6 +81,8 @@ export type TrackSearchResult = SearchContextAnnotations & {
   key: string;
   title: string;
   artistName: string;
+  // The track file's ARTIST tag, which the web app shows when tracks show file tags.
+  tagArtist?: string | null;
   albumTitle: string | null;
   albumMbid: string | null;
   albumCanonicalId: string | null;
@@ -141,6 +143,7 @@ type SearchItemLike = {
   albumId?: string | null;
   albumCanonicalId?: string | null;
   albumArtist?: string | null;
+  tagArtist?: string | null;
   releaseGroupMbid?: string | null;
   releaseDate?: string | null;
   releaseYear?: string | null;
@@ -790,6 +793,7 @@ export function searchLocalFromData(
         key: track.id,
         title,
         artistName: artistName || "Unknown Artist",
+        tagArtist: track.tagArtist || null,
         albumTitle: albumTitle || null,
         albumMbid: track.albumMbid || null,
         albumCanonicalId: track.albumCanonicalId || null,
@@ -859,6 +863,9 @@ function searchLocalLibrary(query: string, limit: number, context: SearchContext
       id: track.id,
       title: track.title,
       artistName: albumDetails?.artistName || track.artistName,
+      tagArtist:
+        track.files?.find((file) => file.available && file.artistTags?.artist)?.artistTags
+          ?.artist || null,
       albumTitle: albumDetails?.title || null,
       albumMbid: albumDetails?.releaseGroupMbid || null,
       albumCanonicalId: albumDetails?.canonicalId || null,

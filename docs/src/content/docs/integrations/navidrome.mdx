@@ -54,7 +54,9 @@ When a Subsonic client favorites a flow track, Aurral also adds it to the Librar
 
 By default, Subsonic clients show each track's artist the way the file's tags spell it, as Navidrome does. A song's artist is its `ARTIST` tag and its album artist is its `ALBUMARTIST` tag. OpenSubsonic clients also get the separate artists from multi-valued `ARTISTS` and `ALBUMARTISTS` tags. Aurral never splits a tag value, so a credit such as `Composer — Performer — Ensemble — Conductor` stays whole. A file with no `ARTIST` tag shows its Library artist. Artist links still open the matching Library artist.
 
-To show Aurral's Library artist names instead, open **Settings > General > Subsonic** and set **Artist names** to **Library**.
+Aurral's web app shows the same artist on tracks: in the Library, on album pages, in playlists and search, and in the player and queue. Artist pages, artist links, and play history keep using the Library artist.
+
+To show Aurral's Library artist names instead, open **Settings > General > Display** and set **Track artist names** to **Library**. The setting applies to all users, in Aurral and in Subsonic clients.
 
 Aurral reads tags when it scans a file. After you change a file's tags, the next scan picks up the change. The first scan after updating Aurral reads the artist tags of every file once.
 

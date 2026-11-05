@@ -3,6 +3,7 @@ import { useAudioQueue } from "../contexts/audioQueueContext";
 import ArtworkImage from "./ArtworkImage";
 import { PlayerMiniProgress } from "./PlayerProgress";
 import { Music, Pause, Play } from "./icons";
+import { trackArtistLabel } from "../utils/trackArtist.ts";
 
 type SidebarPlayerProps = {
   iconsOnly: boolean;
@@ -46,7 +47,9 @@ function SidebarPlayer({ iconsOnly, onRestore, onTooltip }: SidebarPlayerProps) 
           <span className="sidebar-player__copy">
             <span className="sidebar-player__title">{title}</span>
             {currentTrack?.artist ? (
-              <span className="sidebar-player__subtitle">{currentTrack.artist}</span>
+              <span className="sidebar-player__subtitle">
+                {trackArtistLabel(currentTrack.artist, currentTrack.tagArtist)}
+              </span>
             ) : null}
           </span>
         )}

@@ -46,13 +46,26 @@ export function getLibraryCoverUrlsForJobs(jobs: readonly CoverJob[]) {
   return covers;
 }
 
-type LibraryTrackInfo = { trackName: string; artistName: string | null; albumName: string | null };
+type LibraryTrackInfo = {
+  trackName: string;
+  artistName: string | null;
+  albumName: string | null;
+  tagArtist: string | null;
+};
 
 const libraryTrackInfoByPathStmt = db.prepare<
   [string],
-  { path: string; title: string; artist_name: string | null; album_title: string | null }
+  {
+    path: string;
+    title: string;
+    artist_name: string | null;
+    album_title: string | null;
+    tag_artist: string | null;
+  }
 >(
   `SELECT media.path, track.title,
+          CASE WHEN json_valid(media.artist_tags_json)
+            THEN json_extract(media.artist_tags_json, '$.artist') END AS tag_artist,
           COALESCE(NULLIF(TRIM(track.artist_name), ''), artist.name) AS artist_name,
           album.title AS album_title
      FROM library_media_files AS media
@@ -87,6 +100,7 @@ export function getLibraryTrackInfoForJobs(jobs: readonly CoverJob[]) {
       trackName: row.title,
       artistName: row.artist_name || null,
       albumName: row.album_title || null,
+      tagArtist: row.tag_artist?.trim() || null,
     });
   }
   return info;
