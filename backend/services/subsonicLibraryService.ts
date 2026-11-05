@@ -1,6 +1,7 @@
 import { audioContentType } from "./audioFileStream.ts";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
+import path from "node:path";
 import type { RequestUser } from "../middleware/requestUser.ts";
 import { dbOps, userOps } from "../db/helpers/index.ts";
 import { db } from "../config/db-sqlite.ts";
@@ -585,7 +586,7 @@ function toPlaylistSong(
   kind: string,
   job: DownloadJob,
   starredAt: StarredAt | null = null,
-  owned = findAvailableLibraryTrack(trackFromJob(job)),
+  owned = findAvailableLibraryTrack(trackFromJob(job), job.finalPath),
   customArtworkUpdatedAt: number | null = null,
 ) {
   const customCoverArt = customArtworkUpdatedAt
@@ -1186,20 +1187,37 @@ const findReusableLibrarySource = (track: PlaylistTrackInput) =>
 // Resolve playlist track descriptors to available library tracks. All descriptors of a batch are
 // looked up in one library query (by recording MBID and by title), then matched in memory with
 // the same rule the playlist code uses, so a 1000-entry playlist costs a couple of statements.
-export function resolveLibraryTracks(descriptors: (PlaylistTrackInput | null | undefined)[]) {
+// A descriptor's file path, when given, wins: a playlist track that plays a Library file is
+// that Library song, however its title or artist was written when it was added.
+export function resolveLibraryTracks(
+  descriptors: (PlaylistTrackInput | null | undefined)[],
+  filePaths: (string | null | undefined)[] = [],
+) {
   const items = (Array.isArray(descriptors) ? descriptors : []).map((entry) =>
     normalizePlaylistTrack(entry),
   );
   const present = items.filter((track): track is NonNullable<typeof track> => Boolean(track));
-  if (!present.length) return items.map(() => null);
+  const resolvedPaths = items.map((_item, index) => {
+    const filePath = String(filePaths[index] || "").trim();
+    return filePath ? path.resolve(filePath) : null;
+  });
+  const knownPaths = resolvedPaths.filter((entry): entry is string => Boolean(entry));
+  if (!present.length && !knownPaths.length) return items.map(() => null);
   const library = indexFocusedLibrary(
     getLibraryForTrackMatches({
       source: "all",
       availableOnly: true,
       mbids: present.map((track) => track.trackMbid),
       titles: present.map((track) => track.trackName),
+      paths: knownPaths,
     }),
   );
+  const byPath = new Map<string, LibraryTrack>();
+  for (const track of library.tracks) {
+    for (const file of track.files ?? []) {
+      if (file?.path && file.available !== false) byPath.set(path.resolve(file.path), track);
+    }
+  }
   const byTitle = new Map<string, LibraryTrack[]>();
   const byMbid = new Map<string, LibraryTrack>();
   for (const track of library.tracks) {
@@ -1218,7 +1236,13 @@ export function resolveLibraryTracks(descriptors: (PlaylistTrackInput | null | u
     const { file } = resolveFile(entry);
     return Boolean(file?.available && file.path);
   };
-  return items.map((track) => {
+  return items.map((track, index) => {
+    const filePath = resolvedPaths[index];
+    const linked = filePath ? byPath.get(filePath) : undefined;
+    if (linked && playable(linked)) {
+      const { album, file } = resolveFile(linked);
+      return { file, library, track: linked, albumName: album?.title };
+    }
     if (!track) return null;
     // A shared recording MBID identifies the track even when the titles differ (remaster, typo).
     const byId = track.trackMbid ? byMbid.get(track.trackMbid) : null;
@@ -1233,8 +1257,10 @@ export function resolveLibraryTracks(descriptors: (PlaylistTrackInput | null | u
   });
 }
 
-const findAvailableLibraryTrack = (track: PlaylistTrackInput | null | undefined) =>
-  resolveLibraryTracks([track])[0];
+const findAvailableLibraryTrack = (
+  track: PlaylistTrackInput | null | undefined,
+  filePath: string | null | undefined = null,
+) => resolveLibraryTracks([track], [filePath])[0];
 
 // Map playlist-song star rows to their library song row when the entry is a library track.
 const libraryStarRows = <T extends StarKey>(user: SubsonicUser, rows: T[]) => {
@@ -1243,7 +1269,10 @@ const libraryStarRows = <T extends StarKey>(user: SubsonicUser, rows: T[]) => {
       ? resolvePlaylistSong(user, idFor(row.entity_kind, row.entity_key))
       : null,
   );
-  const resolved = resolveLibraryTracks(playlistSongs.map((song) => song?.track || null));
+  const resolved = resolveLibraryTracks(
+    playlistSongs.map((song) => song?.track || null),
+    playlistSongs.map((song) => song?.job?.finalPath),
+  );
   return rows.map((row, index) => {
     const libraryTrack = resolved[index]?.track;
     return libraryTrack
@@ -1939,7 +1968,10 @@ export function getSubsonicPlaylist(value: string, user: SubsonicUser) {
   if (!playlist || (kind === "flow" && !flowPlaylistConfig.isEnabled(playlist.id))) return null;
   const jobs = visiblePlaylistJobs(playlist);
   const starredAt = starredAtFor(user);
-  const owned = resolveLibraryTracks(jobs.map((job) => trackFromJob(job)));
+  const owned = resolveLibraryTracks(
+    jobs.map((job) => trackFromJob(job)),
+    jobs.map((job) => job.finalPath),
+  );
   const customArtwork = getCustomArtworkMap(
     "playlist-track",
     jobs.map((job) => job.id),

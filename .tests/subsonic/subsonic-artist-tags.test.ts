@@ -252,3 +252,35 @@ test("playlists count as changed when their files are re-tagged or the artist so
     setArtistSource("tags");
   }
 });
+
+test("a playlist track that plays a Library file is that Library song, however it was named", async () => {
+  const { testUser } = await import("../helpers/userFixtures.ts");
+  const { downloadTracker } =
+    await import("../../backend/services/downloadJobs/downloadTracker.ts");
+  const { flowPlaylistConfig } =
+    await import("../../backend/services/playlists/flowPlaylistConfig.ts");
+  setArtistSource("tags");
+  const user = testUser(11, { role: "admin" });
+  const playlistId = "linked-by-file";
+  flowPlaylistConfig.createStaticPlaylist({
+    id: playlistId,
+    name: "Linked by file",
+    ownerUserId: user.id,
+    tracks: [],
+  });
+  // Named the way an import service spells it, which matches no Library track by name.
+  const jobId = downloadTracker.addJob(
+    { artistName: "ACDC", trackName: "Thunder - 2003 Remaster", albumName: "Covers" },
+    playlistId,
+  );
+  assert.ok(jobId != null);
+  downloadTracker.setDone(jobId, path.join(root, "AC-DC/Bach Covers/01 Thunder.mp3"), "Covers");
+
+  const library = songNamed("Thunder");
+  const listed = subsonic.getSubsonicPlaylists(user).find((p) => p.name === "Linked by file")!;
+  const entry = subsonic.getSubsonicPlaylist(listed.id, user)!.entry[0]!;
+  assert.equal(entry.id, library.id);
+  assert.equal(entry.albumId, library.albumId);
+  assert.equal(entry.album, "Bach Covers");
+  assert.equal(entry.artist, "AC/DC");
+});

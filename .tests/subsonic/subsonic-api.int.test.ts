@@ -255,6 +255,11 @@ beforeAll(async () => {
   await rm(unavailablePath);
   await scanLidarrRoot();
 
+  // Flow and playlist downloads that aren't Library files: an entry playing a Library file
+  // is that Library song.
+  const flowSongPath = path.join(isolatedState.baseDir, ".flow-files", "Flow Song.flac");
+  await mkdir(path.dirname(flowSongPath), { recursive: true });
+  await writeFile(flowSongPath, "0123456789");
   const flow = flowPlaylistConfig.createFlow({ name: "Canonical Flow", size: 1 });
   flowPlaylistConfig.setEnabled(flow.id, true);
   const jobId = downloadTracker.addJob(
@@ -268,7 +273,7 @@ beforeAll(async () => {
     flow.id,
   );
   assert.ok(jobId != null);
-  downloadTracker.setDone(jobId, fixturePath);
+  downloadTracker.setDone(jobId, flowSongPath);
   staticPlaylist = flowPlaylistConfig.createStaticPlaylist({
     name: "Canonical Shared",
     ownerUserId: alice.id,
@@ -292,7 +297,7 @@ beforeAll(async () => {
     staticPlaylist.id,
   );
   assert.ok(sharedJobId != null);
-  downloadTracker.setDone(sharedJobId, fixturePath);
+  downloadTracker.setDone(sharedJobId, flowSongPath);
   libraryFavoritePlaylist = flowPlaylistConfig.createStaticPlaylist({
     name: "Canonical Favorite Playlist",
     ownerUserId: alice.id,
