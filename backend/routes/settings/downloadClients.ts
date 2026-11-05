@@ -10,7 +10,6 @@ import {
   testDownloadClient,
 } from "../../services/download/downloadClientSettings.ts";
 import { asAppError, type AppError } from "../../../lib/errors.ts";
-import { NOTIFICATION_EVENTS } from "../../../lib/notificationEvents.ts";
 import { isErrorStatus } from "../shared/errorStatus.ts";
 
 function validateDownloadClientTestConfig(key: string, config: Record<string, unknown>) {
@@ -70,15 +69,10 @@ async function clientTestResponse<
 
 const clientConfig = v.record(v.string(), v.unknown());
 const gotifyTarget = v.object({ url: v.optional(v.string()), token: v.optional(v.string()) });
-const eventBody = v.optional(v.nullable(v.string()));
 const webhookTarget = v.object({
   url: v.optional(v.string()),
   headers: v.optional(v.array(v.object({ key: v.string(), value: v.string() }))),
   body: v.optional(v.nullable(v.string())),
-  eventBodies: v.optional(
-    v.object(Object.fromEntries(NOTIFICATION_EVENTS.map((key) => [key, eventBody]))),
-  ),
-  testEvent: v.optional(v.picklist(NOTIFICATION_EVENTS)),
 });
 
 export default new Hono<AppEnv>()
@@ -181,13 +175,13 @@ export default new Hono<AppEnv>()
     }
   })
   .post("/webhook/test", requireAuth, requireAdmin, validate("json", webhookTarget), async (c) => {
-    const { testEvent, ...webhook } = c.req.valid("json");
+    const webhook = c.req.valid("json");
     const urlValidation = validateExternalUrl(webhook.url);
     if (!urlValidation.valid) return c.json({ error: urlValidation.error }, 400);
 
     try {
       const { sendWebhookTest } = await import("../../services/notificationService.ts");
-      await sendWebhookTest({ ...webhook, url: urlValidation.url }, testEvent);
+      await sendWebhookTest({ ...webhook, url: urlValidation.url });
       return c.json({ success: true, message: "Test webhook sent" }, 200);
     } catch (error) {
       const failure = asAppError(error);

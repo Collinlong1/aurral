@@ -31,13 +31,6 @@ export const webhookSchema = v.looseObject({
   headers: lenient(listOf(v.looseObject({ key: v.string(), value: v.string() }))),
   body: nullableText,
   events: lenient(listOf(v.picklist(NOTIFICATION_EVENTS))),
-  // Optional body per event; an empty one falls back to body.
-  eventBodies: service(
-    Object.fromEntries(NOTIFICATION_EVENTS.map((event) => [event, nullableText])) as Record<
-      NotificationEvent,
-      typeof nullableText
-    >,
-  ),
 });
 
 export const scriptSettingsSchema = v.looseObject({

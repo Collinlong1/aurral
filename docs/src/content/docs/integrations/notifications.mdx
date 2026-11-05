@@ -29,8 +29,7 @@ Gotify is a self-hosted push notification server.
 A webhook sends one HTTP request for each event it has turned on. Configure webhooks in **Settings > Notifications > Webhooks**. Each webhook has these fields:
 
 - **URL**: the endpoint to call. It must start with `http://` or `https://`.
-- **Default body**: optional JSON. Leave it blank to send a `GET` request. Enter a body to send a `POST` request.
-- **Event bodies**: optional. One body for each event, such as **Request made body** and **Artist added body**. When an event has its own body, the webhook sends it instead of the default body. Use them to send a different message for each event, for example `Album requested` and later `Album available`.
+- **Body**: optional JSON. Leave it blank to send a `GET` request. Enter a body to send a `POST` request.
 - **Headers**: optional header names and values.
 - **Events**: the events this webhook receives.
 
@@ -56,7 +55,7 @@ A placeholder that doesn't apply to an event is empty. Paths are the paths Aurra
 
 ### Test a webhook
 
-Open the webhook and select **Send test** to send the default body, or select **Test** under an event body to send that event's body. Aurral sends the current URL, body, and headers at once. For an event body test, `$event` is that event's name. The test ignores the event switches and does not save the webhook. It fills the placeholders with these values:
+Open the webhook and select **Send test**. Aurral sends the current URL, body, and headers at once. The test ignores the event switches and does not save the webhook. It fills the placeholders with these values:
 
 | Placeholder   | Test value                                           |
 | ------------- | ---------------------------------------------------- |

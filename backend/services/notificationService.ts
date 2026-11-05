@@ -121,13 +121,6 @@ function escapeJsonString(value: unknown) {
 
 const placeholderPattern = new RegExp(`\\$(${WEBHOOK_PLACEHOLDERS.join("|")})\\b`, "g");
 
-// The webhook's body for this event, or its default body.
-export function webhookBodyFor(webhook: WebhookTarget, event: string | undefined) {
-  const eventBodies = (webhook.eventBodies ?? {}) as Record<string, string | null | undefined>;
-  const eventBody = event ? (eventBodies[event] ?? "").trim() : "";
-  return eventBody || (webhook.body || "").trim();
-}
-
 export function interpolateBody(str: string | null | undefined, vars: Record<string, string> = {}) {
   return String(str ?? "").replace(placeholderPattern, (_, key: string) =>
     escapeJsonString(vars[key] ?? ""),
@@ -140,7 +133,7 @@ async function sendWebhookDirect(webhook: WebhookTarget, event: string, vars: We
     logger.warn("notifications", "Skipping a webhook without an http(s) URL", { event });
     return;
   }
-  const rawBody = webhookBodyFor(webhook, event);
+  const rawBody = (webhook.body || "").trim();
   try {
     if (rawBody) {
       const interpolated = interpolateBody(rawBody, { ...vars, event });
@@ -249,9 +242,8 @@ const WEBHOOK_TEST_VARS = Object.freeze({
   message: "Aurral webhook test",
 });
 
-// Sends the webhook as it would for `event`, or with its default body.
-export async function sendWebhookTest(webhook: WebhookTarget, event?: string | null) {
-  await sendWebhookDirect(webhook, event || "webhookTest", WEBHOOK_TEST_VARS);
+export async function sendWebhookTest(webhook: WebhookTarget) {
+  await sendWebhookDirect(webhook, "webhookTest", WEBHOOK_TEST_VARS);
 }
 
 function actorVars(user: RequestActor | null | undefined) {

@@ -24,7 +24,6 @@ import {
   useSettingsItem,
 } from "../SettingsLayout";
 import { ScriptDetail, ScriptsGroups, resolveScriptItem } from "./ScriptsSettings";
-import { WebhookEventBodies, editableEventBodies, filledEventBodies } from "./WebhookEventBodies";
 
 type Integrations = SettingsState["integrations"];
 type Webhook = Integrations["webhooks"][number];
@@ -184,14 +183,8 @@ function WebhookDetail({ index }: { index: number | null }) {
   const [body, setBody] = useState(existing?.body ?? "");
   const [headers, setHeaders] = useState<WebhookHeader[]>(existing?.headers ?? []);
   const [events, setEvents] = useState<NotificationEvent[]>(existing?.events ?? []);
-  const [eventBodies, setEventBodies] = useState(() => editableEventBodies(existing?.eventBodies));
   const [missingUrl, setMissingUrl] = useState(false);
-  const draft = {
-    url: url.trim(),
-    body: body.trim() || null,
-    headers,
-    eventBodies: filledEventBodies(eventBodies),
-  };
+  const draft = { url: url.trim(), body: body.trim() || null, headers };
   const test = useTest(
     () => parseResponse(downloadClientSettingsClient.webhook.test.$post({ json: draft })),
     "Test webhook sent.",
@@ -254,9 +247,9 @@ function WebhookDetail({ index }: { index: number | null }) {
             />
           </SettingsRow>
           <SettingsRow
-            label="Default body"
+            label="Body"
             htmlFor="webhook-body"
-            help="Optional. With a body Aurral sends a POST, otherwise a GET. $message, $event, $artistName, $albumName, $trackName, $path, $albumPath, $username, and $flowName are filled in. Events without their own body below use this one."
+            help="Optional. With a body Aurral sends a POST, otherwise a GET. $message, $event, $artistName, $albumName, $trackName, $path, $albumPath, $username, and $flowName are filled in."
             stack
           >
             <SettingsTextarea
@@ -272,16 +265,6 @@ function WebhookDetail({ index }: { index: number | null }) {
               }}
             />
           </SettingsRow>
-          <WebhookEventBodies
-            events={NOTIFICATION_EVENTS.map((event) => [event, EVENT_LABELS[event]] as const)}
-            draft={draft}
-            values={eventBodies}
-            useTest={useTest}
-            onChange={(next) => {
-              test.reset();
-              setEventBodies(next);
-            }}
-          />
           <SettingsRow label="Headers" stack>
             {headers.map((header, headerIndex) => (
               <div key={headerIndex} className="settings-webhook-header">
