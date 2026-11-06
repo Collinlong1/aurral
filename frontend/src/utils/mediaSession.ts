@@ -41,17 +41,18 @@ export function mediaSessionPosition(duration: number, position: number) {
   };
 }
 
-// AirPlay receivers such as Apple TV show the Now Playing cover only as JPEG or PNG. Aurral serves
-// most covers as WebP, so the system player gets a JPEG copy. Returns null to keep the original.
-const AIRPLAY_IMAGE_TYPES = new Set(["image/jpeg", "image/png"]);
-const AIRPLAY_ARTWORK_MAX_PX = 1024;
+// Apple TV's full screen Now Playing stays blank for small covers, while its corner banner shows
+// them. Aurral stores covers at up to 512px, mostly as WebP, so the system player gets a JPEG copy
+// whose longest side is 1024px, enlarging smaller covers. Returns null to keep the original.
+const AIRPLAY_ARTWORK_PX = 1024;
 
-export function needsAirPlayArtwork(contentType: string | null | undefined) {
-  const [type = ""] = String(contentType || "")
-    .trim()
-    .toLowerCase()
-    .split(";");
-  return type.startsWith("image/") && !AIRPLAY_IMAGE_TYPES.has(type.trim());
+export function airPlayArtworkSize(width: number, height: number) {
+  if (!(width > 0) || !(height > 0)) return null;
+  const scale = AIRPLAY_ARTWORK_PX / Math.max(width, height);
+  return {
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale)),
+  };
 }
 
 export async function airPlayArtwork(src: string | null | undefined, baseUrl: string) {
@@ -62,17 +63,22 @@ export async function airPlayArtwork(src: string | null | undefined, baseUrl: st
     const response = await fetch(new URL(src, baseUrl), { credentials: "same-origin" });
     if (!response.ok) return null;
     const image = await response.blob();
-    if (!needsAirPlayArtwork(image.type)) return null;
+    if (!image.type.toLowerCase().startsWith("image/")) return null;
     const bitmap = await createImageBitmap(image);
-    const scale = Math.min(1, AIRPLAY_ARTWORK_MAX_PX / Math.max(bitmap.width, bitmap.height));
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
-    canvas.getContext("2d")?.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    const size = airPlayArtworkSize(bitmap.width, bitmap.height);
+    const context = size && document.createElement("canvas").getContext("2d");
+    if (!size || !context) {
+      bitmap.close();
+      return null;
+    }
+    context.canvas.width = size.width;
+    context.canvas.height = size.height;
+    context.imageSmoothingQuality = "high";
+    context.drawImage(bitmap, 0, 0, size.width, size.height);
     bitmap.close();
     return {
-      src: canvas.toDataURL("image/jpeg", 0.9),
-      sizes: `${canvas.width}x${canvas.height}`,
+      src: context.canvas.toDataURL("image/jpeg", 0.9),
+      sizes: `${size.width}x${size.height}`,
       type: "image/jpeg",
     };
   } catch {
