@@ -466,13 +466,6 @@ export async function scanConfiguredLibrary({
     albumsMatched = await matchUntaggedLibraryAlbums(force);
     tracksListed = await completeLibraryTrackLists();
     if (tracksListed) reconcileLibraryAlbums();
-    await import("./libraryAlbumTitles.ts")
-      .then(({ settleMixedAlbumTitles }) => settleMixedAlbumTitles())
-      .catch((error) => {
-        logger.warn("library", "Could not name box sets", {
-          message: asAppError(error)?.message || String(error),
-        });
-      });
     if (!targeted) {
       await removePlaylistTracksWithoutDownloads().catch((error) => {
         logger.warn("library", "Could not remove missing tracks from playlists", {
