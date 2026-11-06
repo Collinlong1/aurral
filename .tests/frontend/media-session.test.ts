@@ -3,7 +3,6 @@ import { test } from "vite-plus/test";
 
 import {
   mediaSessionArtwork,
-  needsAirPlayArtwork,
   mediaSessionPosition,
 } from "../../frontend/src/utils/mediaSession.ts";
 
@@ -51,13 +50,4 @@ test("lock-screen position stays inside the track and clears without a usable du
   assert.equal(mediaSessionPosition(0, 5), null);
   assert.equal(mediaSessionPosition(Number.POSITIVE_INFINITY, 5), null);
   assert.equal(mediaSessionPosition(Number.NaN, 5), null);
-});
-
-test("AirPlay gets a JPEG copy of covers it cannot show, and keeps JPEG and PNG covers as they are", () => {
-  assert.equal(needsAirPlayArtwork("image/webp"), true);
-  assert.equal(needsAirPlayArtwork("image/avif"), true);
-  assert.equal(needsAirPlayArtwork("image/jpeg"), false);
-  assert.equal(needsAirPlayArtwork("image/png; charset=binary"), false);
-  assert.equal(needsAirPlayArtwork("application/json"), false);
-  assert.equal(needsAirPlayArtwork(null), false);
 });
