@@ -90,7 +90,6 @@ type LibraryCanonicalRow = {
   track_title: LibraryTracksRow["title"];
   track_artist_name: LibraryTracksRow["artist_name"];
   track_monitored: LibraryTracksRow["monitored"];
-  track_keep_file: LibraryTracksRow["keep_file"];
   track_created_at: LibraryTracksRow["created_at"];
   disc_number: LibraryAlbumTracksRow["disc_number"];
   track_number: LibraryAlbumTracksRow["track_number"];
@@ -193,7 +192,6 @@ const CANONICAL_SELECT = `SELECT
   track.title AS track_title,
   track.artist_name AS track_artist_name,
   track.monitored AS track_monitored,
-  track.keep_file AS track_keep_file,
   track.created_at AS track_created_at,
   album_track.disc_number,
   album_track.track_number,
@@ -264,7 +262,6 @@ export interface LibraryTrack {
   metadata: Record<string, unknown> | null;
   providerId?: string | number | null;
   monitored: boolean;
-  keepFile: boolean;
   albums: LibraryTrackAlbumRef[];
   files: LibraryTrackFile[];
   sources: string[];
@@ -387,7 +384,6 @@ function buildLibraryFromRows(rows: Iterable<LibraryCanonicalRow>) {
         metadata: trackMetadata,
         providerId: trackMetadata?.id ?? null,
         monitored: row.track_monitored !== 0,
-        keepFile: row.track_keep_file === 1,
         albums: [],
         files: [],
         sources: [],
@@ -2714,6 +2710,7 @@ function buildPageQuery({
   direction,
   artistId,
   albumId,
+  userId,
 }: {
   kind: string;
   sourceFilter: string | null;
@@ -2724,9 +2721,11 @@ function buildPageQuery({
   direction: string;
   artistId: string | number | null;
   albumId: string | number | null;
+  userId: number | null;
 }) {
   const where: string[] = [];
   const parameters: unknown[] = [];
+  const joinParameters: unknown[] = [];
   const media = pageMediaExists(kind, sourceFilter, availableOnly);
   where.push(media.sql);
   parameters.push(...media.parameters);
@@ -2770,6 +2769,12 @@ function buildPageQuery({
       where.push("album.id = ?");
       parameters.push(Number(albumId));
     }
+    if (sort === "played" || sort === "plays") {
+      from += `
+        JOIN play_album_stats AS played
+          ON played.user_id = ? AND played.album_key = album.identity_key`;
+      joinParameters.push(userId ?? -1);
+    }
   } else {
     entityKind = "track";
     const needsRelations =
@@ -2808,7 +2813,7 @@ function buildPageQuery({
       JOIN library_search_fts AS search_fts
         ON search_fts.rowid = search_document.id
         AND library_search_fts MATCH ?`;
-    parameters.unshift(searchMatch.match);
+    joinParameters.push(searchMatch.match);
     where.push(searchTermsSql(searchMatch));
     parameters.push(...searchMatch.terms);
   } else if (query) {
@@ -2827,8 +2832,17 @@ function buildPageQuery({
   }
 
   const orderDirection = direction === "desc" ? "DESC" : "ASC";
+  const latestFirst = direction === "desc" ? "ASC" : "DESC";
   let orderBy: string;
-  if (sort === "newest") {
+  if (kind === "albums" && sort === "played") {
+    orderBy = `played.last_played_at ${latestFirst}, album.id`;
+  } else if (kind === "albums" && sort === "plays") {
+    orderBy = `played.play_count ${latestFirst}, played.last_played_at ${latestFirst}, album.id`;
+  } else if (kind === "albums" && sort === "released") {
+    orderBy = `coalesce(album.release_date, '') = '', album.release_date ${latestFirst}, album.id`;
+  } else if (kind === "albums" && sort === "random") {
+    orderBy = "random()";
+  } else if (sort === "newest") {
     orderBy = recentMediaOrder(kind, sourceFilter, availableOnly, direction);
     orderBy += kind === "albums" ? ", album.id" : kind === "artists" ? ", artist.id" : ", track.id";
   } else if (sort === "artist" && kind !== "artists") {
@@ -2849,7 +2863,7 @@ function buildPageQuery({
     from,
     idExpression,
     where: where.join(" AND "),
-    parameters,
+    parameters: [...joinParameters, ...parameters],
     orderBy,
     groupBy,
   };
@@ -3252,6 +3266,7 @@ type LibraryPageOptions = LibraryScope & {
   direction?: unknown;
   artistId?: string | number | null;
   albumId?: string | number | null;
+  userId?: number | null;
 };
 
 type LibraryPageItems = {
@@ -3296,6 +3311,7 @@ export function getLibraryPage({
   direction = "asc",
   artistId = null,
   albumId: albumReference = null,
+  userId = null,
 }: LibraryPageOptions = {}): LibraryPage {
   const albumId =
     text(albumReference) && !/^\d+$/.test(text(albumReference))
@@ -3372,6 +3388,7 @@ export function getLibraryPage({
     direction: normalizedDirection,
     artistId,
     albumId,
+    userId,
   });
   const total = getPageTotal(
     `SELECT COUNT(DISTINCT ${queryDefinition.idExpression}) AS total

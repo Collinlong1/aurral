@@ -87,6 +87,14 @@ export interface ArtistOverridesRow {
   updated_at: number | null;
 }
 
+export interface AudioLoudnessRow {
+  path: string;
+  size: number;
+  mtime_ms: number;
+  lufs: number;
+  measured_at: number;
+}
+
 export interface AurralHistoryRow {
   id: string | null;
   kind: string;
@@ -354,7 +362,6 @@ export interface LibraryTracksRow {
   created_at: number;
   updated_at: number;
   monitored: number;
-  keep_file: number;
 }
 
 export interface LidarrArtistIdMapRow {
