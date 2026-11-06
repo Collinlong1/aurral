@@ -98,7 +98,6 @@ async function createAurralAlbum({
     created_at: number;
     updated_at: number;
     monitored: number;
-    keep_file: number;
   }[] = [];
   for (let index = 0; index < trackCount; index += 1) {
     const trackMbid = `abababab-abab-4bab-8bab-${suffix.slice(2)}${String(index).padStart(2, "0")}`;
@@ -166,6 +165,11 @@ function useFailingSlskd() {
   const provider = { status: 503, close: async () => {} };
   const serverReady = createMockHttpServer((request, response) => {
     request.resume();
+    if (provider.status < 400 && request.method === "GET") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ endedAt: "2026-11-05T12:00:00Z" }));
+      return;
+    }
     response.writeHead(provider.status);
     response.end();
   }).then((server) => {

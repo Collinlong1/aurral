@@ -200,6 +200,14 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_play_events_user_played_at
     ON play_events(user_id, played_at DESC);
 
+  CREATE TABLE IF NOT EXISTS audio_loudness (
+    path TEXT PRIMARY KEY NOT NULL,
+    size INTEGER NOT NULL,
+    mtime_ms INTEGER NOT NULL,
+    lufs REAL NOT NULL,
+    measured_at INTEGER NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS plugins (
     id TEXT PRIMARY KEY NOT NULL,
     manifest TEXT,
@@ -1567,7 +1575,18 @@ db.transaction(() => {
 }).immediate();
 
 tryAddColumn("ALTER TABLE library_management ADD COLUMN monitor_rules TEXT");
-tryAddColumn("ALTER TABLE library_tracks ADD COLUMN keep_file INTEGER NOT NULL DEFAULT 0");
+db.transaction(() => {
+  const columns = db
+    .prepare<[], TableColumnRow>("PRAGMA table_info(library_tracks)")
+    .all()
+    .map((column) => column.name);
+  if (columns.includes("keep_file")) {
+    db.exec(`
+      UPDATE library_tracks SET monitored = 0 WHERE keep_file = 1;
+      ALTER TABLE library_tracks DROP COLUMN keep_file;
+    `);
+  }
+})();
 tryAddColumn("ALTER TABLE library_media_files ADD COLUMN artist_tag TEXT");
 // Artist credits as the file spells them. NULL means the file was indexed before this
 // column existed, so the next scan reads its tags again.

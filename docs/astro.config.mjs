@@ -87,7 +87,6 @@ export default defineConfig({
             { slug: "admin/storage" },
             { slug: "admin/users" },
             { slug: "admin/environment" },
-            { slug: "admin/usage-stats" },
             { slug: "admin/plugins" },
             { slug: "admin/troubleshooting" },
           ],

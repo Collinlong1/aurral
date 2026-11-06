@@ -818,9 +818,6 @@ export const flowPlaylistConfig = {
     });
     playlists[index] = next;
     setStaticPlaylists(playlists);
-    import("../unifiedSearchService.ts")
-      .then(({ clearSearchContextCache }) => clearSearchContextCache())
-      .catch(() => {});
     return next;
   },
 

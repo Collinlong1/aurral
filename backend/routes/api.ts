@@ -40,11 +40,11 @@ import search from "./search.ts";
 import settings from "./settings/index.ts";
 import shareLinks from "./shareLinks.ts";
 import starPrompt from "./starPrompt.ts";
-import telemetry from "./telemetry.ts";
 import settingsDownloadClients from "./settings/downloadClients.ts";
 import settingsScripts from "./settings/scripts.ts";
 import updates from "./updates.ts";
 import users from "./users.ts";
+import visualizer from "./visualizer.ts";
 import wrapped from "./wrapped.ts";
 
 const JSON_BODY_LIMIT = process.env.JSON_BODY_LIMIT || "5mb";
@@ -103,11 +103,11 @@ export const api = new Hono<AppEnv>()
   .route("/", discovery)
   .route("/", news)
   .route("/", lyrics)
+  .route("/", visualizer)
   .route("/", playEvents)
   .route("/", playQueue)
   .route("/", shareLinks)
   .route("/", starPrompt)
-  .route("/", telemetry)
   .route("/", wrapped)
   .route("/", lidarrWebhook)
   .route("/", lidarrFeed)
