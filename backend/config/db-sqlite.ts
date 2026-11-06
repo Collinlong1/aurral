@@ -200,6 +200,20 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_play_events_user_played_at
     ON play_events(user_id, played_at DESC);
 
+  CREATE INDEX IF NOT EXISTS idx_play_events_user_title
+    ON play_events(user_id, title COLLATE NOCASE);
+
+  CREATE TABLE IF NOT EXISTS discovery_playlists (
+    user_id INTEGER NOT NULL,
+    id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL,
+    tracks_json TEXT NOT NULL,
+    built_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, id),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+
   CREATE TABLE IF NOT EXISTS audio_loudness (
     path TEXT PRIMARY KEY NOT NULL,
     size INTEGER NOT NULL,
@@ -865,7 +879,7 @@ db.transaction(() => {
     return {
       ...flow,
       recentListening: true,
-      ...(generated ? { relatedArtists: [], description: null } : {}),
+      ...(generated && { relatedArtists: [], description: null }),
     };
   });
   db.prepare("UPDATE settings SET value = ? WHERE key = 'flows'").run(JSON.stringify(migrated));
@@ -923,7 +937,7 @@ db.transaction(() => {
   db.prepare("UPDATE settings SET value = ? WHERE key = 'integrations'").run(
     JSON.stringify({
       ...rest,
-      ...(scripts ? { scripts: scripts.map((script) => ({ ...script, events })) } : {}),
+      ...(scripts && { scripts: scripts.map((script) => ({ ...script, events })) }),
     }),
   );
 }).immediate();

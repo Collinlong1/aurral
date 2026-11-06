@@ -200,7 +200,7 @@ export const normalizeSettings = (savedSettings: SavedSettings) => {
         enableNarrowFallbacks: true,
         ...metadata,
       },
-      ...(savedSettings.integrations?.google ? { google: savedSettings.integrations.google } : {}),
+      ...(savedSettings.integrations?.google && { google: savedSettings.integrations.google }),
       general: {
         authUser: "",
         authPassword: "",
@@ -219,11 +219,9 @@ export const normalizeSettings = (savedSettings: SavedSettings) => {
       },
       webhooks: savedSettings.integrations?.webhooks || [],
       // Present only while the server has custom scripts enabled.
-      ...(Array.isArray(savedSettings.integrations?.scripts)
-        ? {
-            scripts: savedSettings.integrations.scripts,
-          }
-        : {}),
+      ...(Array.isArray(savedSettings.integrations?.scripts) && {
+        scripts: savedSettings.integrations.scripts,
+      }),
     },
   };
 };
