@@ -22,7 +22,6 @@ import { pluginsClient } from "../../../utils/api/clients/plugins.ts";
 import { formatTrackTotal } from "../playlistPageUtils.ts";
 import { getAppBasePath, normalizeBasePathWithTrailingSlash } from "../../../utils/basePath";
 import { useAuth } from "../../../contexts/AuthContext";
-import { M3uImportPanel } from "./M3uImportPanel.tsx";
 import { queryClient, queryKeys } from "../../../queryClient.ts";
 import {
   listeningHistoryQueryOptions,
@@ -45,8 +44,6 @@ const IMPORT_SOURCES = [
   { id: "youtube", label: "YouTube Music" },
   { id: "aurral", label: "Aurral share" },
   { id: "file", label: "M3U file" },
-  // Admins only: scans a folder on the server for M3U playlists.
-  { id: "m3u", label: "M3U folder" },
 ] as const;
 type ImportSource = (typeof IMPORT_SOURCES)[number]["id"] | `plugin:${string}`;
 const PLUGIN_SOURCE = "plugin:";
@@ -1067,18 +1064,6 @@ export function PlaylistImportModal({
   };
 
   const renderSource = () => {
-    if (source === "m3u") {
-      return (
-        <M3uImportPanel
-          showError={showError}
-          showSuccess={showSuccess}
-          onDone={() => {
-            onImported?.();
-            onClose();
-          }}
-        />
-      );
-    }
     if (source === "file") {
       return (
         <SettingsGroup>
@@ -1314,26 +1299,24 @@ export function PlaylistImportModal({
       closeDisabled={importing}
       nav={
         <nav className="settings-dialog__group" aria-label="Import from">
-          {importSources
-            .filter((entry) => entry.id !== "m3u" || user?.role === "admin")
-            .map((entry) => {
-              const active = entry.id === source;
-              return (
-                <button
-                  key={entry.id}
-                  type="button"
-                  className={`settings-dialog__link${active ? " is-active" : ""}`}
-                  aria-current={active ? "page" : undefined}
-                  onClick={() => {
-                    if (!active) selectSource(entry.id);
-                    setView("pane");
-                  }}
-                  disabled={importing}
-                >
-                  {entry.label}
-                </button>
-              );
-            })}
+          {importSources.map((entry) => {
+            const active = entry.id === source;
+            return (
+              <button
+                key={entry.id}
+                type="button"
+                className={`settings-dialog__link${active ? " is-active" : ""}`}
+                aria-current={active ? "page" : undefined}
+                onClick={() => {
+                  if (!active) selectSource(entry.id);
+                  setView("pane");
+                }}
+                disabled={importing}
+              >
+                {entry.label}
+              </button>
+            );
+          })}
         </nav>
       }
     >
