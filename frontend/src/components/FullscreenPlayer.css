@@ -84,11 +84,22 @@
 
 .fullscreen-player__art--thumb {
   width: 3.5rem;
+  height: 3.5rem;
 }
 
 .fullscreen-player__art--cover {
+  /* Older TV and tablet browsers skip a width they cannot read, so 22rem comes first. */
+  width: 22rem;
   width: min(100%, 28rem, 44dvh);
   box-shadow: var(--aurral-shadow-artwork);
+}
+
+/* Without aspect-ratio the cover box has no height and shows blank, so give it one. */
+@supports not (aspect-ratio: 1) {
+  .fullscreen-player__art--cover {
+    width: 22rem;
+    height: 22rem;
+  }
 }
 
 .fullscreen-player__meta {
@@ -278,6 +289,7 @@
 @media (max-width: 767px) {
   .fullscreen-player__art--thumb {
     width: 3rem;
+    height: 3rem;
   }
 
   .fullscreen-player__tabbed {
@@ -298,6 +310,7 @@
 
   .fullscreen-player__tabbed .fullscreen-player__art--cover {
     width: 3.5rem;
+    height: 3.5rem;
     grid-area: art;
     box-shadow: none;
   }

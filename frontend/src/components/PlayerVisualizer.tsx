@@ -29,8 +29,14 @@ void main() {
   gl_Position = vec4(position, 0.0, 1.0);
 }`;
 
+// TV and older mobile GPUs often lack high precision in fragment shaders, and the shader then
+// fails to compile, leaving no visualizer. Medium precision is enough for these shapes.
 const FRAGMENT_SHADER = `
+#ifdef GL_FRAGMENT_PRECISION_HIGH
 precision highp float;
+#else
+precision mediump float;
+#endif
 uniform vec2 size;
 uniform vec3 goo[${MAX_GOO}];
 uniform int count;
@@ -120,12 +126,10 @@ const SCENES: Record<VisualizerScene, (t: number, pulse: number) => Goo[]> = {
 };
 
 function createGooRenderer(canvas: HTMLCanvasElement) {
-  const gl = canvas.getContext("webgl", {
-    alpha: false,
-    antialias: false,
-    depth: false,
-    powerPreference: "low-power",
-  });
+  const options = { alpha: false, antialias: false, depth: false, powerPreference: "low-power" };
+  // Some older TV browsers only offer WebGL under its early name.
+  const gl = (canvas.getContext("webgl", options) ??
+    canvas.getContext("experimental-webgl", options)) as WebGLRenderingContext | null;
   const program = gl?.createProgram();
   if (!gl || !program) return null;
   for (const [type, source] of [
