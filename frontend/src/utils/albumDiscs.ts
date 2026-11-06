@@ -44,10 +44,19 @@ type DiscTrack = {
   metadata?: unknown;
 };
 
-// The album title a track's own file carries: a box set's disc title.
+const firstText = (value: unknown) => {
+  const [first] = Array.isArray(value) ? value : [value];
+  return typeof first === "string" ? first.trim() : "";
+};
+
+// The title a track's own file gives its disc: the disc subtitle tag (TSST,
+// DISCSUBTITLE) when it has one, as a box set retagged with one album title
+// keeps each disc's name there, or else the file's album title.
 export const fileAlbumTitle = (track: DiscTrack) => {
-  const tags = (track.metadata as { tags?: { album?: unknown } } | null | undefined)?.tags;
-  return typeof tags?.album === "string" ? tags.album.trim() : "";
+  const tags = (
+    track.metadata as { tags?: { album?: unknown; discsubtitle?: unknown } } | null | undefined
+  )?.tags;
+  return firstText(tags?.discsubtitle) || firstText(tags?.album);
 };
 
 // The heading above each track of this album's track list, from the track's

@@ -72,3 +72,19 @@ test("a track list's disc headings come from each track's place on this album an
     [null, null],
   );
 });
+
+test("a box set with one album title names its discs after each file's disc subtitle", () => {
+  const track = (disc: number, discsubtitle?: string[]) => ({
+    albums: [{ albumId: 5, discNumber: disc }],
+    metadata: { tags: { album: "Decca Sound: The Analogue Years", discsubtitle } },
+  });
+  assert.deepEqual(
+    albumDiscSections({ id: 5, title: "Decca Sound: The Analogue Years" }, [
+      track(1, [" Saint-Saëns: Tone Poems "]),
+      track(1, ["Saint-Saëns: Tone Poems"]),
+      track(2, ["Bruckner: Symphony No.6"]),
+      track(3),
+    ]),
+    ["Disc 1 · Saint-Saëns: Tone Poems", null, "Disc 2 · Bruckner: Symphony No.6", "Disc 3"],
+  );
+});
