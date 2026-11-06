@@ -293,7 +293,7 @@ export function EditUserPage({ user }: { user: SettingsUser }) {
             </button>
           </SettingsActions>
         </PermissionsGroup>
-        {!user.isProtected ? (
+        {user.role !== "admin" ? (
           <SettingsGroup>
             <SettingsActions>
               <button

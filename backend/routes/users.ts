@@ -549,17 +549,6 @@ export default new Hono<AppEnv>()
       if (!existing) {
         return c.json({ error: "User not found" }, 404);
       }
-      if (existing.isProtected) {
-        return c.json({ error: "The protected recovery account cannot be deleted" }, 400);
-      }
-      if (
-        existing.role === "admin" &&
-        !userOps
-          .getAllUsers()
-          .some((user) => user.id !== id && user.role === "admin" && user.status === "active")
-      ) {
-        return c.json({ error: "Cannot delete the last active admin" }, 400);
-      }
       deleteSessionsByUserId(id);
       userOps.deleteUser(id);
       dbOps.deleteUserSettings(id);
