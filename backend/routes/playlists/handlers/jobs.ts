@@ -5,7 +5,10 @@ import { downloadTracker } from "../../../services/downloadJobs/downloadTracker.
 import { downloadWorker } from "../../../services/downloadJobs/downloadWorker.ts";
 import { flowPlaylistConfig } from "../../../services/playlists/flowPlaylistConfig.ts";
 import { orderJobsByPlaylistTracks } from "../../../services/playlists/playlistTracks.ts";
-import { getPlaylistStatusSnapshot } from "../../../services/playlists/playlistStatusSnapshot.ts";
+import {
+  getPlaylistStatusSnapshot,
+  getPlaylistsContainingTrack,
+} from "../../../services/playlists/playlistStatusSnapshot.ts";
 import { indexUnmonitoredJobs } from "../../../services/aurralUnmonitoredJobs.ts";
 import { noCache } from "../../../middleware/cacheHeaders.ts";
 import { requireAdmin, requireAuth } from "../../../middleware/guards.ts";
@@ -156,7 +159,7 @@ const reviewBlockedJob = async <E extends AppEnv>(
     }
     invalidateRequestsCache();
     return c.json(
-      { success: true, ...("path" in outcome && outcome.path ? { path: outcome.path } : {}) },
+      { success: true, ...("path" in outcome && outcome.path && { path: outcome.path }) },
       200,
     );
   } catch (error) {
@@ -209,15 +212,28 @@ const withLibraryNames = (
   info
     ? {
         trackName: info.trackName,
-        ...(info.artistName ? { artistName: info.artistName } : {}),
-        ...(info.albumName ? { albumName: info.albumName } : {}),
+        ...(info.artistName && { artistName: info.artistName }),
+        ...(info.albumName && { albumName: info.albumName }),
       }
     : {};
+
+const containingQuery = v.object({
+  artistName: v.string(),
+  trackName: v.string(),
+  albumName: v.optional(v.string()),
+  artistMbid: v.optional(v.string()),
+  albumMbid: v.optional(v.string()),
+  trackMbid: v.optional(v.string()),
+  releaseYear: v.optional(v.string()),
+});
 
 export default new Hono<AppEnv>()
   .basePath("/playlists")
   .get("/status", requireFlowAccess, noCache, (c) =>
     c.json(getPlaylistStatusSnapshot({ user: c.var.user }), 200),
+  )
+  .get("/containing", requireFlowAccess, noCache, validate("query", containingQuery), (c) =>
+    c.json({ playlists: getPlaylistsContainingTrack(c.var.user, c.req.valid("query")) }, 200),
   )
   .get(
     "/jobs/:playlistId",
@@ -277,22 +293,20 @@ export default new Hono<AppEnv>()
           tagArtist: libraryInfo.get(String(job.id))?.tagArtist ?? null,
           libraryOwned: libraryOwnership[index] === true,
           libraryCoverUrl: libraryCovers.get(String(job.id)) ?? null,
-          ...(customArtwork.has(String(job.id))
-            ? {
-                artworkUrl: buildCustomArtworkUrl(
-                  "playlist-track",
-                  job.id,
-                  customArtwork.get(String(job.id)),
-                  { playlistId },
-                ),
-                customArtworkUrl: buildCustomArtworkUrl(
-                  "playlist-track",
-                  job.id,
-                  customArtwork.get(String(job.id)),
-                  { playlistId },
-                ),
-              }
-            : {}),
+          ...(customArtwork.has(String(job.id)) && {
+            artworkUrl: buildCustomArtworkUrl(
+              "playlist-track",
+              job.id,
+              customArtwork.get(String(job.id)),
+              { playlistId },
+            ),
+            customArtworkUrl: buildCustomArtworkUrl(
+              "playlist-track",
+              job.id,
+              customArtwork.get(String(job.id)),
+              { playlistId },
+            ),
+          }),
         })),
         200,
       );
@@ -322,25 +336,22 @@ export default new Hono<AppEnv>()
         jobs.map((job) => ({
           ...toPublicJob(job, profile),
           monitored: !isUnmonitored(job),
-          ...(job.status === "cancelled" && !downloadTracker.isWantedMissing(job)
-            ? { albumCancelled: true }
-            : {}),
-          ...(customArtwork.has(String(job.id))
-            ? {
-                artworkUrl: buildCustomArtworkUrl(
-                  "playlist-track",
-                  job.id,
-                  customArtwork.get(String(job.id)),
-                  { playlistId: job.playlistType || job.playlistId },
-                ),
-                customArtworkUrl: buildCustomArtworkUrl(
-                  "playlist-track",
-                  job.id,
-                  customArtwork.get(String(job.id)),
-                  { playlistId: job.playlistType || job.playlistId },
-                ),
-              }
-            : {}),
+          ...(job.status === "cancelled" &&
+            !downloadTracker.isWantedMissing(job) && { albumCancelled: true }),
+          ...(customArtwork.has(String(job.id)) && {
+            artworkUrl: buildCustomArtworkUrl(
+              "playlist-track",
+              job.id,
+              customArtwork.get(String(job.id)),
+              { playlistId: job.playlistType || job.playlistId },
+            ),
+            customArtworkUrl: buildCustomArtworkUrl(
+              "playlist-track",
+              job.id,
+              customArtwork.get(String(job.id)),
+              { playlistId: job.playlistType || job.playlistId },
+            ),
+          }),
         })),
         200,
       );

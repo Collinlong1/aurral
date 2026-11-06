@@ -2,6 +2,7 @@ import { queryOptions } from "@tanstack/react-query";
 import {
   fetchLibraryPage,
   getLibraryFavorites,
+  getLibraryPage,
   type LibraryFavoritesResponse,
   type LibraryPageResponse,
 } from "../utils/api/endpoints/library.ts";
@@ -43,6 +44,7 @@ export const LIBRARY_SORT_OPTIONS: Partial<Record<LibraryViewId, (typeof NAME_SO
 };
 
 const HOME_RAIL_SIZE = 20;
+const ARTIST_TOP_TRACKS = 10;
 
 export const HOME_ALBUM_RAILS = [
   { title: "Most played", sort: "plays", path: "/library/albums?sort=plays" },
@@ -141,7 +143,7 @@ const DETAIL_PAGE_CONCURRENCY = 4;
 const fetchEveryLibraryPage = async (
   params: NonNullable<Parameters<typeof fetchLibraryPage>[0]>,
   signal: AbortSignal,
-) => {
+): Promise<LibraryPageResponse> => {
   const first = await fetchLibraryPage({ ...params, page: 1 }, { signal });
   const size = Number(params.pageSize) || LIBRARY_PAGE_SIZE;
   const pageCount = Math.min(Math.ceil(Number(first?.total || 0) / size), MAX_DETAIL_PAGES);
@@ -154,15 +156,6 @@ const fetchEveryLibraryPage = async (
     );
     rest.push(...(await Promise.all(batch)));
   }
-  const seen = new Set<string>();
-  const items = [first, ...rest]
-    .flatMap((page): unknown[] => (Array.isArray(page?.items) ? [...page.items] : []))
-    .filter((item) => {
-      const id = String((item as { id?: unknown })?.id ?? "");
-      if (!id || seen.has(id)) return !id;
-      seen.add(id);
-      return true;
-    });
   const merged = normalizeLibraryPages([first, ...rest]);
   // Each page lists an album's tracks on that page only.
   const trackIds = new Map<string, Set<string>>();
@@ -173,9 +166,8 @@ const fetchEveryLibraryPage = async (
       trackIds.set(String(album.id), ids);
     }
   }
-  return {
-    ...first,
-    items,
+  // `first` is this request's own copy, so it can carry the merged lists.
+  return Object.assign(first, {
     hasMore: false,
     artists: merged.artists,
     albums: merged.albums.map((album) => ({
@@ -183,7 +175,7 @@ const fetchEveryLibraryPage = async (
       trackIds: [...(trackIds.get(String(album.id)) ?? [])],
     })),
     tracks: merged.tracks,
-  } as unknown as typeof first;
+  });
 };
 
 const fetchLibraryPages = async (
@@ -222,6 +214,17 @@ const fetchLibraryPages = async (
       fetchEveryLibraryPage(
         { kind: "tracks", artistId, page: 1, pageSize, availableOnly: true },
         signal,
+      ),
+      fetchLibraryPage(
+        {
+          kind: "tracks",
+          artistId,
+          page: 1,
+          pageSize: ARTIST_TOP_TRACKS,
+          sort: "plays",
+          availableOnly: true,
+        },
+        { signal },
       ),
     ]);
   }
@@ -334,12 +337,15 @@ export function libraryViewQueryOptions({
           favoriteIds: favoriteIdsFromFavorites(favorites),
         });
       }
-      const nextData = await fetchLibraryPages(view, signal);
+      const [nextData, genres] = await Promise.all([
+        fetchLibraryPages(view, signal),
+        getLibraryPage({ kind: "genres", page: 1, pageSize: 1 }),
+      ]);
       const pageResults = Array.isArray(nextData) ? nextData : [nextData];
       return finishLibraryView(view, {
         nextData,
         pageResults,
-        library: normalizeLibraryPages(pageResults),
+        library: normalizeLibraryPages([...pageResults, genres]),
         favoriteIds: favoriteIdsFromPages(pageResults),
       });
     },
