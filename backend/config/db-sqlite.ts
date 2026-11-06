@@ -897,48 +897,6 @@ db.transaction(() => {
   );
 }).immediate();
 
-// Per-event webhook bodies were removed. Each event that had its own body
-// becomes its own webhook to the same URL, and the original keeps the events
-// that used its body. A body for an event the webhook didn't send is dropped.
-const webhookEventBodiesMigrationKey = "migration:webhook-event-bodies-split-v1";
-db.transaction(() => {
-  const claimed = db
-    .prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)")
-    .run(webhookEventBodiesMigrationKey, "1");
-  if (claimed.changes === 0) return;
-  const stored = db
-    .prepare<[], Pick<SettingsRow, "value">>(
-      "SELECT value FROM settings WHERE key = 'integrations' AND json_valid(value)",
-    )
-    .get();
-  const integrations = v.safeParse(
-    v.looseObject({ webhooks: v.optional(v.array(v.looseObject({}))) }),
-    stored ? JSON.parse(stored.value) : null,
-  );
-  if (!integrations.success || !integrations.output.webhooks) return;
-  const { webhooks, ...rest } = integrations.output;
-  if (!webhooks.some((webhook) => "eventBodies" in webhook)) return;
-  const split = webhooks.flatMap(({ eventBodies, ...webhook }) => {
-    const events = Array.isArray(webhook.events) ? webhook.events.map(String) : [];
-    const bodies = new Map<string, string>();
-    for (const event of events) {
-      const body = (eventBodies as Record<string, unknown> | undefined)?.[event];
-      if (typeof body === "string" && body.trim()) bodies.set(event, body.trim());
-    }
-    if (bodies.size === 0) return [webhook];
-    const byBody = new Map<string, string[]>();
-    for (const [event, body] of bodies) byBody.set(body, [...(byBody.get(body) ?? []), event]);
-    const kept = events.filter((event) => !bodies.has(event));
-    return [
-      ...(kept.length > 0 ? [{ ...webhook, events: kept }] : []),
-      ...[...byBody].map(([body, bodyEvents]) => ({ ...webhook, body, events: bodyEvents })),
-    ];
-  });
-  db.prepare("UPDATE settings SET value = ? WHERE key = 'integrations'").run(
-    JSON.stringify({ ...rest, webhooks: split }),
-  );
-}).immediate();
-
 // Script events moved from one set of switches for every script onto each
 // script, the same way webhook events did.
 const scriptEventsMigrationKey = "migration:script-events-per-script-v1";
