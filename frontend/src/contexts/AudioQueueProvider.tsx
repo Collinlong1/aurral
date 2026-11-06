@@ -51,6 +51,7 @@ import { getReleaseGroupCoversBatch } from "../utils/api/endpoints/artists";
 import { createAudioEngine } from "../utils/audioEngine";
 import {
   MEDIA_SESSION_SEEK_SECONDS,
+  airPlayArtwork,
   mediaSessionArtwork,
   mediaSessionPosition,
 } from "../utils/mediaSession";
@@ -884,6 +885,23 @@ export function AudioQueueProvider({ children }: { children: ReactNode }) {
     };
   }, [dispatch, currentAlbum, currentArtist, missingArtworkMbid]);
 
+  const currentArtwork = currentTrack?.artwork || null;
+  const [jpegArtwork, setJpegArtwork] = useState<{
+    source: string;
+    artwork: MediaImage;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!currentArtwork) return undefined;
+    let cancelled = false;
+    void airPlayArtwork(currentArtwork, window.location.href).then((artwork) => {
+      if (!cancelled && artwork) setJpegArtwork({ source: currentArtwork, artwork });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentArtwork]);
+
   useEffect(() => {
     const mediaSession = navigator.mediaSession;
     if (!mediaSession || typeof MediaMetadata === "undefined") return;
@@ -892,10 +910,13 @@ export function AudioQueueProvider({ children }: { children: ReactNode }) {
           title: currentTrack.title || "",
           artist: trackArtistLabel(currentTrack.artist || "", currentTrack.tagArtist),
           album: currentTrack.album || "",
-          artwork: mediaSessionArtwork(currentTrack.artwork, window.location.href),
+          artwork:
+            jpegArtwork && jpegArtwork.source === currentTrack.artwork
+              ? [jpegArtwork.artwork]
+              : mediaSessionArtwork(currentTrack.artwork, window.location.href),
         })
       : null;
-  }, [currentTrack]);
+  }, [currentTrack, jpegArtwork]);
 
   useEffect(() => {
     const mediaSession = navigator.mediaSession;

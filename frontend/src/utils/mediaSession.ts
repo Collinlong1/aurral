@@ -40,3 +40,42 @@ export function mediaSessionPosition(duration: number, position: number) {
     playbackRate: 1,
   };
 }
+
+// AirPlay receivers such as Apple TV show the Now Playing cover only as JPEG or PNG. Aurral serves
+// most covers as WebP, so the system player gets a JPEG copy. Returns null to keep the original.
+const AIRPLAY_IMAGE_TYPES = new Set(["image/jpeg", "image/png"]);
+const AIRPLAY_ARTWORK_MAX_PX = 1024;
+
+export function needsAirPlayArtwork(contentType: string | null | undefined) {
+  const [type = ""] = String(contentType || "")
+    .trim()
+    .toLowerCase()
+    .split(";");
+  return type.startsWith("image/") && !AIRPLAY_IMAGE_TYPES.has(type.trim());
+}
+
+export async function airPlayArtwork(src: string | null | undefined, baseUrl: string) {
+  if (!src || typeof document === "undefined" || typeof createImageBitmap !== "function") {
+    return null;
+  }
+  try {
+    const response = await fetch(new URL(src, baseUrl), { credentials: "same-origin" });
+    if (!response.ok) return null;
+    const image = await response.blob();
+    if (!needsAirPlayArtwork(image.type)) return null;
+    const bitmap = await createImageBitmap(image);
+    const scale = Math.min(1, AIRPLAY_ARTWORK_MAX_PX / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    canvas.getContext("2d")?.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close();
+    return {
+      src: canvas.toDataURL("image/jpeg", 0.9),
+      sizes: `${canvas.width}x${canvas.height}`,
+      type: "image/jpeg",
+    };
+  } catch {
+    return null;
+  }
+}
