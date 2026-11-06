@@ -49,7 +49,7 @@ test("an album link opens the release it resolves to, keeping names intact", asy
   assert.ok(target.state && "focusReleaseGroup" in target.state);
   assert.equal(target.state.artistMbid, "artist-1");
   assert.equal(target.state.focusReleaseGroup.title, "Back in Black?");
-  const sent = requests.find((url) => url.pathname.endsWith("/discover/editorial/links"));
+  const sent = requests.find((url) => url.pathname.endsWith("/discover/playlists/links"));
   assert.ok(sent != null);
   assert.equal(sent.searchParams.get("artist"), "AC/DC & Friends");
   assert.equal(sent.searchParams.get("album"), "Back in Black?");
@@ -79,7 +79,8 @@ test("a library artist link falls back to a name match when the ID lookup misses
     if (url.pathname.endsWith("/library/canonical")) {
       return {
         body: {
-          items: [
+          kind: "artists",
+          artists: [
             { id: 3, name: "Other" },
             { id: 9, canonicalId: "c-9", name: "Wanted Artist" },
           ],
@@ -103,7 +104,7 @@ test("hovering a resolver link does the lookup the opened page then reuses", asy
 
   await prefetchRoute(path);
   const lookups = () =>
-    requests.filter((url) => url.pathname.endsWith("/discover/editorial/links")).length;
+    requests.filter((url) => url.pathname.endsWith("/discover/playlists/links")).length;
   assert.equal(lookups(), 1);
 
   const target = await open(path);

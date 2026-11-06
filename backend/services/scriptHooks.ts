@@ -299,7 +299,7 @@ export function queueScripts(
           name: String(script.name || ""),
           file: String(script.file),
           args: script.args ?? [],
-          ...(script.timeoutSec ? { timeoutSec: Number(script.timeoutSec) } : {}),
+          ...(script.timeoutSec && { timeoutSec: Number(script.timeoutSec) }),
         },
         event,
         vars: resolved,

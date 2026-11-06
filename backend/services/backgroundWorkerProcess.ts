@@ -242,7 +242,7 @@ const heartbeat = setInterval(() => {
       workers: getHonkerWorkerStatuses().filter((worker) =>
         isQueueOwnedByGroup(worker.name, group),
       ),
-      ...(downloadOwnerStatus ? { downloadOwnerStatus } : {}),
+      ...(downloadOwnerStatus && { downloadOwnerStatus }),
     });
   }
 }, 5000);

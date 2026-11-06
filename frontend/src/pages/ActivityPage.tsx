@@ -535,7 +535,7 @@ function ActivityPage() {
                 onRetry: (jobId: string | null | undefined) => controlDownloadJob(jobId, "retry"),
                 onPreview: handleReviewPreview,
                 onInfo: setInfoRequest,
-                ...(isQueueView ? bulkSelection.rowProps : {}),
+                ...(isQueueView && bulkSelection.rowProps),
               };
               return isAlbumActivityRequest(entry.request) ? (
                 <ActivityAlbumRow key={entry.key} request={entry.request} {...rowProps} />

@@ -5,7 +5,7 @@ description: Browse, play, add, and remove the music in your Library.
 
 The Library is Aurral's index of your music. It includes the files in the Library folder, in your [read-only folders](#add-music-aurral-only-reads), and, if you connect Lidarr, in the Lidarr root folders. Open **Library** in the sidebar to see these sections:
 
-- **Library** shows your genres, your most played, recently added, recently played, and recently released albums, a random selection to explore, and your playlists.
+- **Library** shows your genres, your most played, recently added, recently played, and recently released albums, a random selection to explore, your mixes, and your playlists.
 - **Favorites** shows your starred artists, albums, and tracks.
 - **Albums** shows album artwork and how many tracks are available.
 - **Tracks** shows each track, its artist and album, and whether its file exists.
@@ -40,6 +40,8 @@ Each artist and album has a Discover view and a Library view. On a Library page,
 Album artwork comes from your files first: the cover embedded in a track, then a `cover`, `folder`, `front`, or `album` image in the album's folder. An album without one shows the artwork from its metadata. When newly added music in Aurral's own folder has no cover, Aurral saves that artwork as `cover.jpg` beside the tracks, so apps that read the folder, like Navidrome, show it too. It never replaces an image that is already there. Artists show their photo, or the art of one of their albums. Aurral keeps a copy of each and updates an album's copy when its tracks change. After you replace an image file beside the tracks, select **Clear artwork cache** in **Settings > Discovery**. To pick your own cover, select **Change artwork** in the album's menu. For an album in Aurral's own folder, this also saves your pick as the folder's `cover.jpg` and keeps the cover that was there as `cover-original.jpg`. Removing your pick puts that cover back.
 
 Favorites belong to each user. They work in the built-in player and in Subsonic clients.
+
+**Top tracks** on a Library artist page are the ones you play most, counting plays from Subsonic clients and imported listening history. Tracks you haven't played follow, newest first. Subsonic clients get the same order.
 
 To open a track, album, or artist menu, select its options button, right-click it, or press and hold it on a touch screen. Use the track menu to add a track to a playlist or remove it. To see the indexed metadata of an artist, album, or track, select **View info** in its menu.
 

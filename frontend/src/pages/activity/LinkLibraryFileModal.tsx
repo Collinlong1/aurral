@@ -63,7 +63,7 @@ export default function LinkLibraryFileModal({
         jobRoutes["library-files"].$get(
           {
             param: { jobId: encodeURIComponent(jobId) },
-            query: { q: query, ...(playlistId ? { playlistId } : {}) },
+            query: { q: query, ...(playlistId && { playlistId }) },
           },
           { init: { signal } },
         ),
