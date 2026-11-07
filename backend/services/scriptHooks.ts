@@ -7,7 +7,7 @@ import { asAppError } from "../../lib/errors.ts";
 import { NOTIFICATION_EVENTS, type NotificationEvent } from "../../lib/notificationEvents.ts";
 import type { StoredIntegrations } from "../db/helpers/settings.ts";
 import { isPathInsideRoot } from "./downloadPaths.ts";
-import { enqueueNotification } from "./honkerDb.ts";
+import { notificationQueue } from "./jobs/queues.ts";
 import { logger } from "./logger.ts";
 
 // Custom script hooks run admin-chosen executables from AURRAL_SCRIPTS_DIR
@@ -293,7 +293,7 @@ export function queueScripts(
         script.events?.includes(event as NotificationEvent),
     )
     .map((script) =>
-      enqueueNotification({
+      notificationQueue.enqueue({
         kind: "script",
         script: {
           name: String(script.name || ""),

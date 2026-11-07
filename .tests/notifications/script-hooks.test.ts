@@ -19,7 +19,6 @@ const [
   { db },
   { dbOps },
   notifications,
-  honker,
   hooks,
   appSettings,
   { default: scriptRoutes },
@@ -28,7 +27,6 @@ const [
   () => import("../../backend/config/db-sqlite.ts"),
   () => import("../../backend/db/helpers/index.ts"),
   () => import("../../backend/services/notificationService.ts"),
-  () => import("../../backend/services/honkerDb.ts"),
   () => import("../../backend/services/scriptHooks.ts"),
   () => import("../../backend/services/appSettings.ts"),
   () => import("../../backend/routes/settings/scripts.ts"),
@@ -75,9 +73,12 @@ const isAlive = (pid: number) => {
 };
 
 const queuedScriptFiles = () =>
-  honker
-    .listHonkerJobs("_outbox:notifications")
-    .map((job) => job.payload as { kind?: string; script?: { file?: string } })
+  db
+    .prepare<[], { payload: string }>(
+      "SELECT payload FROM jobs WHERE queue = 'notifications' AND state IN ('pending', 'running')",
+    )
+    .all()
+    .map((row) => JSON.parse(row.payload) as { kind?: string; script?: { file?: string } })
     .filter((payload) => payload.kind === "script")
     .map((payload) => payload.script?.file);
 
