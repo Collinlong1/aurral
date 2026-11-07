@@ -76,14 +76,14 @@ test("library track reads remove nested filesystem paths", async () => {
       streamFormat: string;
     }[] = await (
       await asUser.request(
-        `/library/tracks?${new URLSearchParams({ readPath: "canonical", releaseGroupMbid })}`,
+        `/library/tracks?${new URLSearchParams({ readPath: "library", releaseGroupMbid })}`,
       )
     ).json();
 
     assert.equal(body.length, 1);
     assert.equal("path" in requireFixture(body[0]), false);
     assert.deepEqual(body[0]?.quality, { audioFormat: "FLAC", nested: {} });
-    assert.match(body[0].streamPath, /\/library\/canonical-stream\/\d+\/\d+$/);
+    assert.match(body[0].streamPath, /\/library\/stream\/\d+\/\d+$/);
     assert.equal(body[0]?.streamFormat, "flac");
 
     const filesPath = `/library/tracks/${body[0].id}/files`;
@@ -98,7 +98,7 @@ test("library track reads remove nested filesystem paths", async () => {
     body = await (
       await asUser.request(
         `/library/tracks?${new URLSearchParams({
-          readPath: "canonical",
+          readPath: "library",
           albumId: "999999999",
           releaseGroupMbid,
         })}`,
@@ -121,7 +121,7 @@ test("library track reads remove nested filesystem paths", async () => {
     ]) {
       body = await (
         await asUser.request(
-          `/library/albums?${new URLSearchParams({ readPath: "canonical", artistId: String(artistId) })}`,
+          `/library/albums?${new URLSearchParams({ readPath: "library", artistId: String(artistId) })}`,
         )
       ).json();
       assert.ok(Array.isArray(body), JSON.stringify(body));

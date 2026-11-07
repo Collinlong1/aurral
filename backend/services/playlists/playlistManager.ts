@@ -58,13 +58,11 @@ function mergeEntityIds(left: string[] | null | undefined, right: string[] | nul
 
 export class PlaylistManager {
   declare downloadRoot: string;
-  declare playlistFilesRoot: string;
   declare libraryRoot: string;
 
   constructor(downloadRoot = resolveDownloadRoot()) {
     this.downloadRoot = resolveDownloadRoot(downloadRoot);
-    this.playlistFilesRoot = path.join(this.downloadRoot, PLAYLIST_FILES_DIR);
-    this.libraryRoot = path.join(this.playlistFilesRoot, "_playlists");
+    this.libraryRoot = path.join(this.downloadRoot, PLAYLIST_FILES_DIR);
   }
 
   _getPlaylistBaseName(playlistName: string) {
@@ -143,7 +141,7 @@ export class PlaylistManager {
         await this._ensureFlowArtwork(flow.id, names.get(id) ?? flow.name, "Flow");
       if (!entity || !fileName) continue;
       await this._ensureFlowArtwork(id, names.get(id) ?? entity.name, flow ? "Flow" : "Playlist");
-      const tracks = await collectPlaylistFileTracks(id, { downloadRoot: this.downloadRoot });
+      const tracks = await collectPlaylistFileTracks(id);
       const filePath = path.join(this.libraryRoot, fileName);
       if (await writePlaylistFile(filePath, buildPlaylistFile(tracks), { force: rewrite })) {
         changed.push(id);
@@ -340,14 +338,12 @@ export class PlaylistManager {
           await getDownloadClient("ytdlp").cleanupStaging(job.id);
         }
       }
-      const playlistDir = path.join(this.playlistFilesRoot, playlistType);
       try {
         const { relocateSharedFilesBeforePlaylistRemoval } =
           await import("../downloadJobs/fileReuse.ts");
         await relocateSharedFilesBeforePlaylistRemoval(playlistType, {
           downloadRoot: this.downloadRoot,
         });
-        await fs.rm(playlistDir, { recursive: true, force: true });
         await fs.rm(flowDir, { recursive: true, force: true });
         console.log(`[PlaylistManager] Cleaned unused files for ${playlistType}`);
       } catch (error) {

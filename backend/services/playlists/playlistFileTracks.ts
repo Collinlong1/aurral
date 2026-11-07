@@ -1,9 +1,7 @@
 import fs from "node:fs/promises";
+import { playlistJobEntries } from "./playlistJobs.ts";
 import path from "node:path";
 import { flowPlaylistConfig } from "./flowPlaylistConfig.ts";
-import { orderJobsByPlaylistTracks } from "./playlistTracks.ts";
-import { downloadTracker, type DownloadJob } from "../downloadJobs/downloadTracker.ts";
-import { resolveExistingTrackPath, resolveDownloadRoot } from "../downloadPaths.ts";
 
 async function isFile(filePath: string) {
   try {
@@ -13,27 +11,14 @@ async function isFile(filePath: string) {
   }
 }
 
-export async function collectPlaylistFileTracks(
-  entityId: string,
-  options: { downloadRoot?: string | null } = {},
-) {
-  const downloadRoot = path.resolve(options.downloadRoot || resolveDownloadRoot());
-  const playlist = flowPlaylistConfig.getStaticPlaylist(entityId);
-  const referencedJobs = (playlist?.tracks || [])
-    .map((track) => (track?.canonicalJobId ? downloadTracker.getJob(track.canonicalJobId) : null))
-    .filter((job): job is DownloadJob => Boolean(job));
-  const jobs = [...referencedJobs, ...downloadTracker.getByPlaylistType(entityId)]
-    .filter(
-      (job, index, values) => values.findIndex((candidate) => candidate.id === job.id) === index,
-    )
-    .filter((job) => job?.status === "done" && typeof job?.finalPath === "string");
-  const orderedJobs = orderJobsByPlaylistTracks(jobs, playlist?.tracks);
+export async function collectPlaylistFileTracks(entityId: string) {
+  const playlist = flowPlaylistConfig.getStaticPlaylist(entityId) ?? { id: entityId };
   const tracks = [];
-  for (const job of orderedJobs) {
-    const resolved = await resolveExistingTrackPath(job.finalPath, downloadRoot);
-    if (!resolved || !(await isFile(resolved.path))) continue;
+  for (const { job } of playlistJobEntries(playlist)) {
+    if (job.status !== "done" || typeof job.finalPath !== "string") continue;
+    if (!(await isFile(job.finalPath))) continue;
     tracks.push({
-      path: resolved.path,
+      path: path.resolve(job.finalPath),
       title: String(job.trackName || "").trim() || "Unknown Track",
       artist: String(job.artistName || "").trim() || "Unknown Artist",
       ...(job.albumName && { album: job.albumName }),

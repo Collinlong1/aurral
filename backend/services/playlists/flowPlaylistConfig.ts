@@ -457,11 +457,6 @@ export const flowPlaylistConfig = {
     return getStoredFlows();
   },
 
-  saveNormalized() {
-    setFlows(getStoredFlows());
-    setStaticPlaylists(getStoredStaticPlaylists());
-  },
-
   getFlowsForUser(user: AccessUser) {
     return getStoredFlows().filter((flow) => this.canUserAccessFlow(user, flow));
   },
@@ -682,6 +677,13 @@ export const flowPlaylistConfig = {
 
   getStaticPlaylists() {
     return getStoredStaticPlaylists();
+  },
+
+  getStaticPlaylistIdsUsingJobs(jobIds: Iterable<string>) {
+    const ids = new Set(jobIds);
+    return getStoredStaticPlaylists()
+      .filter((playlist) => playlist.tracks.some((track) => ids.has(track.canonicalJobId ?? "")))
+      .map((playlist) => playlist.id);
   },
 
   getStaticPlaylistsForUser(user: AccessUser) {

@@ -1,6 +1,5 @@
 import { downloadTracker } from "../../../services/downloadJobs/downloadTracker.ts";
 import { DEFAULT_FLOW_SIZE } from "../../../../lib/flows.ts";
-import { downloadWorker } from "../../../services/downloadJobs/downloadWorker.ts";
 import { flowPlaylistConfig } from "../../../services/playlists/flowPlaylistConfig.ts";
 import { playlistOperationQueue } from "../../../services/playlists/playlistOperationQueue.ts";
 import {
@@ -9,10 +8,6 @@ import {
   markLatestPlaylistOperationToken,
   restorePlaylistOperationToken,
 } from "../../../services/playlists/playlistOperations.ts";
-import {
-  restartWorkerIfPending,
-  withPlaylistMutation,
-} from "../../../services/downloadJobs/mutationGuards.ts";
 import { splitFlowTotal } from "../../../../lib/flows.ts";
 import { logger } from "../../../services/logger.ts";
 import { isDownloadJobCancelled } from "../../../services/downloadJobs/downloadCancellation.ts";
@@ -24,12 +19,12 @@ import type { Context } from "hono";
 import type { DownloadJob } from "../../../services/downloadJobs/downloadTracker.ts";
 import type { AppEnv, RequestUser } from "../../../middleware/requestUser.ts";
 
-export const requireFlowAccess = requirePermission("accessFlow");
+export const requirePlaylistAccess = requirePermission("accessPlaylists");
 
-export const requireFlowAccessIfSignedIn = createMiddleware<AppEnv>(async (c, next) => {
+export const requirePlaylistAccessIfSignedIn = createMiddleware<AppEnv>(async (c, next) => {
   const user = c.get("user");
-  if (user && !hasPermission(user, "accessFlow")) {
-    return c.json({ error: "Forbidden", message: "Permission required: accessFlow" }, 403);
+  if (user && !hasPermission(user, "accessPlaylists")) {
+    return c.json({ error: "Forbidden", message: "Permission required: accessPlaylists" }, 403);
   }
   await next();
 });
@@ -113,20 +108,6 @@ export const restoreFlowMutationToken = (mutation: FlowMutation) =>
     token: mutation?.token,
     previousToken: mutation?.previousToken,
   });
-
-export const pauseStaticPlaylistRetryCycle = async (playlistId: string) => {
-  await downloadWorker.setRetryCyclePaused(playlistId, true);
-  let cancelledJobs = 0;
-  await withPlaylistMutation(playlistId, async () => {
-    cancelledJobs = downloadTracker.failActiveJobsForPlaylist(playlistId, "Retry cycle paused");
-  });
-  if (downloadWorker.running) {
-    downloadWorker.wake();
-  } else {
-    await restartWorkerIfPending();
-  }
-  return cancelledJobs;
-};
 
 export const getAccessibleFlow = (user: RequestUser | undefined, flowId: string) =>
   flowPlaylistConfig.getFlowForUser(user, flowId);
@@ -212,7 +193,7 @@ export const enqueueResearchTrack = async <E extends AppEnv>(
   }
 
   const job = downloadTracker.getJob(jobId);
-  if (!job || job.playlistType !== playlistId) {
+  if (!job || !canAccessJobThroughPlaylist(user, job, playlistId)) {
     return c.json({ error: "Track not found" }, 404);
   }
 

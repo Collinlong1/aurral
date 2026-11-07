@@ -1,5 +1,5 @@
 import { flowPlaylistConfig } from "./flowPlaylistConfig.ts";
-import { playlistJobEntries } from "./playlistTracks.ts";
+import { playlistJobEntries } from "./playlistJobs.ts";
 import { playlistManager } from "./playlistManager.ts";
 
 export class PlaylistOrderError extends Error {}

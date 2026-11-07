@@ -5,6 +5,7 @@ import { downloadTracker, type DownloadTrackInput } from "./downloadJobs/downloa
 import { asAppError } from "../../lib/errors.ts";
 import { getLibraryTrackOwnership } from "./libraryQueryService.ts";
 import { logger } from "./logger.ts";
+import { keepInLibrary } from "./playlists/playlistLibrary.ts";
 
 const libraryTrackStmt = db.prepare("SELECT 1 FROM library_tracks WHERE mbid = ? LIMIT 1");
 
@@ -42,16 +43,17 @@ export function findQueuedLibraryTrackJob({
 export async function requestLibraryTrack(
   track: DownloadTrackInput,
   {
-    canonicalTrackId = null,
+    libraryTrackId = null,
     user = null,
     automatic = false,
   }: {
-    canonicalTrackId?: unknown;
+    libraryTrackId?: unknown;
     user?: Parameters<typeof recordTrackJobQueued>[1];
     automatic?: boolean;
   } = {},
 ) {
   if (!automatic) {
+    keepInLibrary(track);
     clearTrackMonitoringExclusion({
       mbid: track.trackMbid,
       artistMbid: track.artistMbid,
@@ -63,12 +65,12 @@ export async function requestLibraryTrack(
   // that track has a file on its album. The same recording elsewhere in the
   // Library, such as on a single or another edition, does not fill this album's
   // gap; the request goes on and reuses that file where it can.
-  const libraryTrackId = /^\d+$/.test(String(canonicalTrackId ?? "").trim())
-    ? Number(canonicalTrackId)
+  const ownedTrackId = /^\d+$/.test(String(libraryTrackId ?? "").trim())
+    ? Number(libraryTrackId)
     : null;
   const alreadyOwned = getLibraryTrackOwnership(
-    libraryTrackId
-      ? { trackId: libraryTrackId, albumMbid: track.albumMbid }
+    ownedTrackId
+      ? { trackId: ownedTrackId, albumMbid: track.albumMbid }
       : {
           trackMbid: track.trackMbid,
           artistName: track.artistName,
@@ -85,7 +87,7 @@ export async function requestLibraryTrack(
     : await (
         await import("./libraryManager.ts")
       ).libraryManager.monitorAurralTrack({
-        canonicalTrackId,
+        libraryTrackId,
         trackMbid: track.trackMbid,
         albumMbid: track.albumMbid,
       });
@@ -101,6 +103,13 @@ export async function requestLibraryTrack(
   }
 
   const existingJob = findQueuedLibraryTrackJob(track);
+  if (existingJob?.status === "saved") {
+    downloadTracker.setPending(existingJob.id);
+    recordTrackJobQueued(downloadTracker.getJob(existingJob.id), user);
+    const { downloadWorker } = await import("./downloadJobs/downloadWorker.ts");
+    await downloadWorker.start();
+    return { queued: true, jobId: existingJob.id };
+  }
   if (existingJob) {
     if (!automatic) recordTrackJobQueued(existingJob);
     return { queued: true, jobId: existingJob.id, alreadyQueued: true };

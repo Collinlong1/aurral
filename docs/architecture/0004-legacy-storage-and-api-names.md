@@ -12,7 +12,7 @@ The code kept the old names long after the model changed. `weeklyFlow` modules r
 
 Code uses names that match the current model:
 
-- `backend/services/downloadJobs` runs download jobs for the Library, static playlists, flows, and upgrades.
+- `backend/services/downloadJobs` runs download jobs for the Library, flows, and upgrades.
 - `backend/services/flows` builds and schedules flows.
 - `backend/services/playlists` stores flows and static playlists and runs playlist operations.
 - `backend/routes/playlists` serves `/api/playlists`.
@@ -20,23 +20,38 @@ Code uses names that match the current model:
 
 Stored data uses the current names too. When Aurral moved to its own job queue, one startup migration renamed the tables, columns, queues, task kinds, and settings keys (`backend/config/job-queue-migration.ts`). An older build cannot read the renamed data, so the migration first writes a snapshot, `aurral.pre-job-queue.db`, to the data dir.
 
-Public APIs, the Library folder, and the fields apps read keep their old names, because Aurral apps, Subsonic clients, and media servers depend on them. The table below lists each old name and what it holds now. Rename one only with a plan for existing clients.
+The JSON API uses the current names too. Version 2 of the [app contract](../src/content/docs/api/app-contract.mdx#changes-from-version-1) dropped the older names that version 1 returned beside them. `library*Id` always means a Library ID, and `provider*Id` means the ID in the service that manages the item, such as Lidarr.
 
-| Name                                                                                           | Where                                 | Holds                                                                         |
-| ---------------------------------------------------------------------------------------------- | ------------------------------------- | ----------------------------------------------------------------------------- |
-| `playlistId`                                                                                   | Job field                             | The owner, which is `library`, a flow ID, or a static playlist ID             |
-| `playlistType`                                                                                 | Job field                             | The owner again, or `quality-upgrade` for an upgrade job                      |
-| `sharedPlaylists`                                                                              | `/api/playlists/status` field         | Static playlists                                                              |
-| `sharedPlaylistStats`                                                                          | `/api/playlists/status` field         | Download counts for each static playlist                                      |
-| `canonicalJobId`                                                                               | Static playlist track field           | The Library job that the track references                                     |
-| `canonicalId`, `canonicalArtistId`, `canonicalAlbumId`, `canonicalTrackId`, `albumCanonicalId` | Library API fields                    | Library record IDs                                                            |
-| `canonical`, `canonicalInLibrary`                                                              | Library lookup responses              | Whether the answer came from the Library index rather than a live Lidarr read |
-| `/api/library/canonical`, `readPath=canonical`, `/api/library/canonical-stream`                | Library API                           | Library pages, reads, and streams                                             |
-| `/api/playlists/shared-playlists`                                                              | Playlist API                          | Static playlist routes                                                        |
-| `shared`, `shared-song`                                                                        | Subsonic IDs                          | Static playlists and their songs                                              |
-| `accessFlow`                                                                                   | User permission                       | Access to flows and static playlists                                          |
-| `aurral-weekly-flow/`                                                                          | Library folder                        | Playlist artwork and sidecar files                                            |
-| `downloadFolderPath`, `DOWNLOAD_FOLDER`                                                        | Settings key and environment variable | The Library folder, where Aurral keeps the music it adds                      |
-| `WEEKLY_FLOW_FOLDER`, `PLAYLIST_FOLDER`                                                        | Environment variables                 | Older names for `DOWNLOAD_FOLDER`, read before it                             |
+`LIBRARY_FOLDER` names the Library folder. `DOWNLOAD_FOLDER`, `WEEKLY_FLOW_FOLDER`, and `PLAYLIST_FOLDER` still work and log a warning.
+
+Playlist files live in `_playlists` in the Library folder. At boot, before the server listens, Aurral moves them there from `aurral-weekly-flow/_playlists`. It must finish first: a playlist written at the new path while uploaded artwork still sits at the old one would replace that artwork. Media servers see the move as new files. Jellyfin replaces each playlist, and Navidrome keeps the old copy beside the new one until someone deletes it.
+
+These names stay, because something outside Aurral depends on them or renaming them would cost more than it explains:
+
+| Name                         | Where                       | Holds                                                   |
+| ---------------------------- | --------------------------- | ------------------------------------------------------- |
+| `playlistId`, `playlistType` | Job fields                  | The owner, `library` or a flow ID, or `quality-upgrade` |
+| `canonicalJobId`             | Static playlist track field | The Library job that the track references               |
+| `canonicalAlbumId`           | Stored activity metadata    | The Library album, read into `libraryAlbumId`           |
+| `shared`, `shared-song`      | Subsonic IDs                | Static playlists and their songs                        |
+| `downloadFolderPath`         | Settings key                | The Library folder                                      |
+
+Subsonic clients store `shared` and `shared-song` IDs for favorites, offline caches, and playlists, so a rename would make them treat existing items as new ones.
 
 Migration code keeps the old names, such as `weeklyFlows` and `playlist_download_jobs`, because it describes data from older versions.
+
+## Upgrading from Aurral 2
+
+Aurral 3 opens a database only when Aurral 2 finished every upgrade step on it (`backend/config/upgrade-gate.ts`). Otherwise it exits before it writes anything and asks the admin to start the `2` image first. That is why 3.0 carries no code for data from before 2.x: no old path remapping, no 2.x settings readers, and no 2.x table rebuilds. Don't add any back. A new data change gets its own migration and its own marker, so it runs once.
+
+Once 3.x has settled, 3.0's own upgrade code retires the same way. Gate on each migration's own marker, not `schemaVersion` 5, because Aurral stamps 5 before those migrations run:
+
+- `migration:job-queue-v1`
+- `migration:static-playlists-reference-library-v1`
+- `migration:silence-tracks-v1`
+- `migration:webhook-events-per-webhook-v1`
+- `migration:playlist-permission-v1`
+- `migration:playlist-files-v1`
+- `migration:settings-login-v1`
+
+Three steps carry no marker because their result shows in the data: the playback server cleanup is done once its old settings are gone, and the `keep_file` and SSO adoption columns are gone once the tables lack them. The `DOWNLOAD_FOLDER`, `WEEKLY_FLOW_FOLDER`, and `PLAYLIST_FOLDER` fallbacks go in the same release.

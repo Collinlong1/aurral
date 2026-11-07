@@ -310,7 +310,7 @@ test("a track missing from an album page is requested though the Library holds i
       albumMbid: GROUP,
       trackName: "Song",
       trackMbid: "rec-song",
-      canonicalTrackId: String(songTrack.id),
+      libraryTrackId: String(songTrack.id),
     }),
   });
   const body = (await fromAlbum.json()) as { alreadyOwned?: boolean; jobId?: string };

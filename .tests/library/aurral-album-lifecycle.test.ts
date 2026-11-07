@@ -360,15 +360,15 @@ test("album-grab request rows include canonical ids and request groups", async (
   const rows = response.body.filter((item) => ids.some((id) => id === item.jobId));
   assert.equal(rows.length, 2);
   for (const row of rows) {
-    assert.equal(row.canonicalAlbumId, String(fixture.album.id));
-    assert.equal(row.albumGrab.canonicalAlbumId, String(fixture.album.id));
+    assert.equal(row.libraryAlbumId, String(fixture.album.id));
+    assert.equal(row.albumGrab.libraryAlbumId, String(fixture.album.id));
     assert.equal(row.requestGroupId, getJob(row.jobId).requestGroupId);
   }
   const albumRequest = response.body.find(
     (item) => item.kind === "album_requested" && item.albumId === String(fixture.album.id),
   );
   assert.ok(albumRequest);
-  assert.equal(albumRequest.canonicalAlbumId, String(fixture.album.id));
+  assert.equal(albumRequest.libraryAlbumId, String(fixture.album.id));
   assert.equal(albumRequest.requestGroupId, getJob(requireFixture(ids[0])).requestGroupId);
 });
 
@@ -478,10 +478,10 @@ test("track cancellation respects private flow ownership", async () => {
     ownerUserId: 4,
   });
   const id = addJob({ artistName: "Artist", trackName: "Private song" }, flow.id);
-  requestUser = testUser(3, "user", { accessFlow: true });
+  requestUser = testUser(3, "user", { accessPlaylists: true });
   assert.equal((await apiRequest(`/api/playlists/jobs/${id}/cancel`, "POST")).status, 404);
   assert.equal(getJob(id).status, "pending");
-  requestUser = testUser(4, "user", { accessFlow: true });
+  requestUser = testUser(4, "user", { accessPlaylists: true });
   assert.equal((await apiRequest(`/api/playlists/jobs/${id}/cancel`, "POST")).status, 200);
 });
 
@@ -2137,9 +2137,9 @@ type ActivityRow = {
   status: string;
   statusLabel: string;
   albumId: string;
-  canonicalAlbumId: string;
+  libraryAlbumId: string;
   requestGroupId: string;
-  albumGrab: { canonicalAlbumId: string };
+  albumGrab: { libraryAlbumId: string };
 };
 type RouteBody = {
   status: string;

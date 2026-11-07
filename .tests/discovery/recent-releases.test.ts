@@ -135,7 +135,7 @@ test("recent missing releases can exclude future releases for Release Radar", as
 
   try {
     const releases = await getRecentMissingReleases(10, {
-      artists: [{ canonicalId: String(artist.id) }],
+      artists: [{ id: String(artist.id) }],
       includeFuture: false,
       now: "2026-06-15T12:00:00Z",
     });
@@ -177,7 +177,7 @@ test("recent missing releases can be scoped to library artists", async () => {
 
   try {
     const releases = await getRecentMissingReleases(10, {
-      artists: [{ canonicalId: String(includedArtist.id) }],
+      artists: [{ id: String(includedArtist.id) }],
       now: "2026-06-15T12:00:00Z",
     });
 
@@ -222,7 +222,7 @@ test("BrainzMash refresh caches full album lookups and only fetches newly discov
     Object.fromEntries(
       (
         await getRecentMissingReleases(100, {
-          artists: [{ canonicalId: String(artist.id) }],
+          artists: [{ id: String(artist.id) }],
           now,
         })
       ).map((album) => [album.title, album.releaseDate]),
@@ -242,9 +242,9 @@ test("BrainzMash refresh caches full album lookups and only fetches newly discov
     albumDates[upcomingMbid] = "2026-11-06";
     albumDates[newMbid] = "2026-09-28";
     requireFixture(catalogues[artist.mbid]).push(catalogueRelease(newMbid, "New Release"));
-    await refresh("2026-09-29T12:00:00Z");
+    await refresh("2026-10-04T12:00:00Z");
     assert.deepEqual(albumRequests, [newMbid]);
-    assert.deepEqual(await visible("2026-09-29T12:00:00Z"), {
+    assert.deepEqual(await visible("2026-10-04T12:00:00Z"), {
       "Upcoming Release": "2026-10-20",
       "New Release": "2026-09-28",
       "Recent Release": "2026-09-10",
@@ -253,15 +253,15 @@ test("BrainzMash refresh caches full album lookups and only fetches newly discov
     catalogues[artist.mbid] = requireFixture(catalogues[artist.mbid]).filter(
       (release) => release.Id !== recentMbid,
     );
-    const result = await refresh("2026-09-30T12:00:00Z");
+    const result = await refresh("2026-10-11T12:00:00Z");
     assert.equal(result.releasesStale, 1);
-    assert.equal((await visible("2026-09-30T12:00:00Z"))["Recent Release"], undefined);
+    assert.equal((await visible("2026-10-11T12:00:00Z"))["Recent Release"], undefined);
   } finally {
     removeCalendarArtist(artist.id);
   }
 });
 
-test("repeat refreshes skip artists refreshed in the last day and only queue for artists that are due", async (t: import("vite-plus/test").TestContext) => {
+test("repeat refreshes skip artists refreshed in the last week and only queue for artists that are due", async (t: import("vite-plus/test").TestContext) => {
   const artist = createCalendarArtist("Recently Refreshed Artist");
   const releaseMbid = randomUUID();
   const catalogues = { [artist.mbid]: [catalogueRelease(releaseMbid, "Calendar Release")] };
@@ -289,8 +289,12 @@ test("repeat refreshes skip artists refreshed in the last day and only queue for
     queuedJob = scheduleReleaseMetadataRefresh();
     assert.ok(queuedJob);
 
-    const daily = await refreshReleaseMetadata({ artists: [artist], now: now + 21 * hour });
-    assert.equal(daily.artistsRefreshed, 1);
+    const nextDay = await refreshReleaseMetadata({ artists: [artist], now: now + 25 * hour });
+    assert.equal(nextDay.artistsSeen, 0);
+    assert.equal(requestCount(), requestsAfterFirst);
+
+    const weekly = await refreshReleaseMetadata({ artists: [artist], now: now + 7 * 24 * hour });
+    assert.equal(weekly.artistsRefreshed, 1);
     assert.ok(requestCount() > requestsAfterFirst);
   } finally {
     if (queuedJob) db.prepare("DELETE FROM jobs WHERE id = ?").run(queuedJob);
@@ -340,7 +344,7 @@ test("a malformed BrainzMash catalogue does not remove the last good calendar", 
       { Id: "", Title: "", Type: "", SecondaryTypes: [], ReleaseStatuses: [] },
     ];
     await assert.rejects(
-      refreshReleaseMetadata({ artists: [artist], now: Date.parse("2026-09-28T12:00:00Z") }),
+      refreshReleaseMetadata({ artists: [artist], now: Date.parse("2026-10-04T12:00:00Z") }),
       /failed for every library artist/,
     );
 
@@ -371,7 +375,7 @@ test("a failed album lookup keeps the last known release date", async (t: import
     clearMetadataProviderCaches();
     const result = await refreshReleaseMetadata({
       artists: [artist],
-      now: Date.parse("2026-09-29T12:00:00Z"),
+      now: Date.parse("2026-10-04T12:00:00Z"),
     });
 
     assert.equal(result.releasesFailed, 1);
@@ -713,7 +717,7 @@ test("an artist removed from the library during a refresh is skipped instead of 
     assert.deepEqual(
       (
         await getRecentMissingReleases(100, {
-          artists: [{ canonicalId: String(kept.id) }],
+          artists: [{ id: String(kept.id) }],
           now: "2026-09-27T12:00:00Z",
         })
       ).map((album) => album.title),

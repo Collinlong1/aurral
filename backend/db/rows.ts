@@ -106,6 +106,7 @@ export interface DownloadJobsRow {
   remote_username: string | null;
   remote_filename: string | null;
   denied_remote_sources: string | null;
+  external_path: string | null;
   quality_tier: string | null;
   quality_format: string | null;
   quality_bitrate_kbps: number | null;
@@ -119,11 +120,11 @@ export interface DownloadJobsRow {
   request_kind: string;
   quick_searched_sources: string;
   held_for_review: string | null;
-  external_path: string | null;
   album_grab_failures: number;
-  reused_library_file: number;
   managed_by: string | null;
   request_group_id: string | null;
+  reused_library_file: number;
+  started_by_playlist: string | null;
 }
 
 export interface DownloadJobsRevisionRow {
@@ -641,8 +642,6 @@ export interface UsersRow {
   is_protected: number;
   role_source: string;
   has_local_password: number;
-  needs_identity_migration: number;
-  allow_identity_adoption: number;
   api_key: string | null;
   api_key_hash: string | null;
 }

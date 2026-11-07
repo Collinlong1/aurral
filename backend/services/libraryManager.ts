@@ -52,7 +52,6 @@ import {
 import { cancelDownloadWorkForJobs } from "./downloadJobs/downloadCancellationService.ts";
 import { restoreDownloadJobCancellations } from "./downloadJobs/downloadCancellation.ts";
 import { removeEmptiedFolder, removeSidecars } from "./libraryFiles/fileTransfer.ts";
-import { removePlaylistFileIfUnshared } from "./downloadJobs/fileReuse.ts";
 import { resolveDownloadRoot } from "./downloadPaths.ts";
 import { activeLidarrRoots, libraryFolderOwner } from "./libraryFolders.ts";
 import { removePlaylistTracksWithoutDownloads } from "./playlists/trackRemoval.ts";
@@ -383,8 +382,6 @@ type AlbumAddOptions = {
   edition?: string | null;
 };
 
-// A request names monitoring as { monitored, useDefault, rules }. Older clients
-// send one monitor option instead, which maps to the same choices.
 function resolveAurralMonitoringRequest({
   monitoring,
   monitorOption,
@@ -490,7 +487,6 @@ function normalizeLibraryManager(value: unknown) {
 
 type AlbumConflictSource = {
   id?: string | number;
-  canonicalId?: string | number | null;
   providerId?: string | number | null;
   foreignAlbumId?: string | null;
   mbid?: string | null;
@@ -508,7 +504,7 @@ function buildAlbumConflict(album: AlbumConflictSource, message: string | null =
     manager: album?.managedBy || null,
     currentManager: album?.managedBy || null,
     sources: Array.isArray(album?.sources) ? album.sources : [],
-    canonicalId: album?.canonicalId || album?.id || null,
+    libraryId: album?.id || null,
     providerId: album?.providerId || album?.foreignAlbumId || album?.mbid || null,
     availability: {
       available: Boolean(album?.available),
@@ -570,7 +566,6 @@ function mapLibraryAlbum(
   const trackCount = albumTracks.length;
   return {
     id: String(album.id),
-    canonicalId: String(album.id),
     providerId: album.metadata?.id ?? null,
     artistId: String(album.artistId),
     artistName: artist?.name || album.albumArtist || null,
@@ -603,7 +598,6 @@ function mapLibraryTrack(track: LibraryTrackRecord, album: LibraryAlbumRecord | 
   const relation = (track.albums || []).find((entry) => entry.albumId === album?.id);
   return {
     id: String(track.id),
-    canonicalId: String(track.id),
     providerId: track.metadata?.id ?? null,
     albumId: album ? String(album.id) : null,
     artistId: album ? String(album.artistId) : null,
@@ -870,17 +864,11 @@ async function deleteAurralLibraryFiles(paths: string[]) {
   );
   const deletionResults = await Promise.allSettled(
     paths.map(async (filePath) => {
-      const removal = await removePlaylistFileIfUnshared(filePath, "library", {
-        deleteIfUnshared: true,
-      });
-      if (removal.action === "skipped") {
-        if (deletablePaths.has(path.resolve(filePath))) {
-          try {
-            await fsp.unlink(filePath);
-          } catch (error) {
-            const failure = asAppError(error);
-            if (failure?.code !== "ENOENT") throw error;
-          }
+      if (deletablePaths.has(path.resolve(filePath))) {
+        try {
+          await fsp.unlink(filePath);
+        } catch (error) {
+          if (asAppError(error)?.code !== "ENOENT") throw error;
         }
       }
       return filePath;
@@ -1110,7 +1098,7 @@ export function buildPlaybackQueueFromLibrary({
         title: track.title || "Unknown Track",
         artist: track.artistName || artist?.name || "Unknown Artist",
         album: album.title || "Unknown Album",
-        streamPath: `/library/canonical-stream/${encodeURIComponent(album.id)}/${encodeURIComponent(track.id)}`,
+        streamPath: `/library/stream/${encodeURIComponent(album.id)}/${encodeURIComponent(track.id)}`,
         streamFormat: file.format || null,
         quality: file.quality?.quality?.name || file.quality?.audioFormat || null,
         trackNumber: relation?.trackNumber || 0,
@@ -1434,7 +1422,7 @@ export class LibraryManager {
     const allAlbums: AlbumMonitoringView[] = Array.isArray(albums)
       ? albums
       : await this.getAlbums(artist.id, null, { forceRefresh: true });
-    let eligibleAlbums = allAlbums.filter((album) => album.canonicalId == null);
+    let eligibleAlbums = allAlbums.filter((album) => !("managedBy" in album));
 
     if (lidarr && lidarr.isConfigured() && artist?.id) {
       try {
@@ -2301,6 +2289,17 @@ export class LibraryManager {
     }
 
     const uniqueTrackedJobIds = [...new Set(trackedJobIds)];
+    for (const job of albumJobs) {
+      if (
+        job.startedByPlaylist &&
+        albumTracks.some(
+          (track) =>
+            (!requestedTrackIds || requestedTrackIds.has(Number(track.id))) &&
+            jobMatchesTrack(job, track),
+        )
+      )
+        downloadTracker.setStartedByPlaylist(job.id, null);
+    }
     const shouldStartWorker = uniqueTrackedJobIds.some((jobId) => {
       const status = downloadTracker.getJob(jobId)?.status;
       return status === "pending" || status === "downloading";
@@ -3012,7 +3011,7 @@ export class LibraryManager {
     const id = Number(reference);
     if (!/^\d+$/.test(reference) || !Number.isSafeInteger(id) || id <= 0) {
       return {
-        error: "canonicalId must be a positive integer",
+        error: "Album ID must be a positive integer",
         statusCode: 400,
         code: "invalid_canonical_id",
       };
@@ -3118,7 +3117,7 @@ export class LibraryManager {
       failed(entry)
         ? entry
         : {
-            canonicalId: entry.mappedAlbum.canonicalId,
+            libraryId: entry.mappedAlbum.id,
             ...this._summarizeAurralAlbum(entry.album, entry.library.tracks, jobsForAlbum),
           },
     );
@@ -3139,7 +3138,7 @@ export class LibraryManager {
     const trackId = Number(reference);
     if (!/^\d+$/.test(reference) || !Number.isSafeInteger(trackId) || trackId <= 0) {
       return {
-        error: "canonicalId must be a positive integer",
+        error: "Track ID must be a positive integer",
         statusCode: 400,
         code: "invalid_canonical_id",
       } as const;
@@ -3178,7 +3177,7 @@ export class LibraryManager {
           cleanupFailed ||= cancellation.cleanupFailed;
         }
         return {
-          canonicalId: String(trackId),
+          libraryId: String(trackId),
           monitored,
           cancelledJobIds,
           queuedJobIds,
@@ -3211,7 +3210,7 @@ export class LibraryManager {
         }
       }
       return {
-        canonicalId: String(trackId),
+        libraryId: String(trackId),
         monitored,
         cancelledJobIds,
         queuedJobIds,
@@ -3223,11 +3222,11 @@ export class LibraryManager {
   // A track asked for from an album's page goes to that album when the
   // Library holds it there.
   async monitorAurralTrack({
-    canonicalTrackId = null,
+    libraryTrackId = null,
     trackMbid = null,
     albumMbid = null,
   }: {
-    canonicalTrackId?: unknown;
+    libraryTrackId?: unknown;
     trackMbid?: string | null;
     albumMbid?: string | null;
   } = {}) {
@@ -3235,8 +3234,8 @@ export class LibraryManager {
     const group = String(albumMbid || "")
       .trim()
       .toLowerCase();
-    const trackId = /^\d+$/.test(String(canonicalTrackId ?? "").trim())
-      ? Number(canonicalTrackId)
+    const trackId = /^\d+$/.test(String(libraryTrackId ?? "").trim())
+      ? Number(libraryTrackId)
       : (mbid &&
           ((group && trackIdByMbidOnAlbumStmt.get(mbid, group, group)?.id) ||
             trackIdByMbidStmt.get(mbid)?.id)) ||
@@ -3259,7 +3258,7 @@ export class LibraryManager {
     const { album, mappedAlbum } = resolved;
     const result = await cancelAurralAlbumJobs(albumJobKeys(album));
     return {
-      canonicalId: mappedAlbum.canonicalId,
+      libraryId: mappedAlbum.id,
       managedBy: "aurral",
       ...result,
     };
@@ -3280,7 +3279,11 @@ export class LibraryManager {
       title: album.title,
     });
     if (!artistState) removeLibraryArtistIfEmpty(album.artistId);
-    return { success: true, canonicalId: mappedAlbum.canonicalId, excluded };
+    return {
+      success: true,
+      libraryId: mappedAlbum.id,
+      excluded,
+    };
   }
 
   async _removeAurralAlbumContents(

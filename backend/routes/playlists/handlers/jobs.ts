@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { staticPlaylistJobs } from "../../../services/playlists/playlistJobs.ts";
 import * as v from "valibot";
 import path from "path";
 import { downloadTracker } from "../../../services/downloadJobs/downloadTracker.ts";
@@ -27,7 +28,7 @@ import {
   canAccessJobType,
   canAccessPlaylistType,
   filterJobsForUser,
-  requireFlowAccess,
+  requirePlaylistAccess,
 } from "./utils.ts";
 import {
   approveBlockedJob,
@@ -74,6 +75,7 @@ import {
   getLibraryCoverUrlsForJobs,
   getLibraryTrackInfoForJobs,
 } from "../../../services/playlists/playlistTrackCovers.ts";
+import { releaseGroupCoverImageUrl } from "../../../services/releaseGroupCoverService.ts";
 import { asAppError } from "../../../../lib/errors.ts";
 import { validate } from "../../../middleware/validate.ts";
 import { isErrorStatus } from "../../shared/errorStatus.ts";
@@ -144,6 +146,22 @@ function toPublicJob(job: DownloadJob, profile: ReturnType<typeof getQualityProf
   return { ...publicJob, streamFormat: streamFormat || null };
 }
 
+function trackArtwork(
+  job: DownloadJob,
+  customArtwork: ReturnType<typeof getCustomArtworkMap>,
+  playlistId: string | null,
+  libraryCoverUrl: string | null = null,
+) {
+  // The album's online cover, else the Library album's own cover, which a track
+  // imported or linked from a file often relies on.
+  const defaultArtworkUrl =
+    (job.albumMbid ? releaseGroupCoverImageUrl(job.albumMbid) : null) || libraryCoverUrl;
+  const custom = customArtwork.get(String(job.id));
+  if (!custom) return { artworkUrl: defaultArtworkUrl };
+  const customArtworkUrl = buildCustomArtworkUrl("playlist-track", job.id, custom, { playlistId });
+  return { artworkUrl: customArtworkUrl, customArtworkUrl, defaultArtworkUrl };
+}
+
 const reviewBlockedJob = async <E extends AppEnv>(
   c: Context<E>,
   method: "approveBlockedJob" | "denyBlockedJob",
@@ -175,7 +193,7 @@ const reviewBlockedJob = async <E extends AppEnv>(
 };
 
 const canControlJob = (user: RequestUser, job: DownloadJob) =>
-  hasPermission(user, "accessFlow")
+  hasPermission(user, "accessPlaylists")
     ? canAccessJobType(user, job.playlistId || job.playlistType)
     : job.playlistType === LIBRARY_JOB_TYPE &&
       user.id != null &&
@@ -185,7 +203,7 @@ const getControllableJob = <E extends AppEnv>(c: Context<E>, user: RequestUser, 
   const job = downloadTracker.getJob(jobId);
   if (!job) return { failure: c.json({ error: "Track not found" }, 404) };
   if (!canControlJob(user, job)) {
-    return hasPermission(user, "accessFlow")
+    return hasPermission(user, "accessPlaylists")
       ? { failure: c.json({ error: "Track not found" }, 404) }
       : { failure: c.json({ error: "Forbidden" }, 403) };
   }
@@ -223,15 +241,15 @@ const containingQuery = v.object({
 
 export default new Hono<AppEnv>()
   .basePath("/playlists")
-  .get("/status", requireFlowAccess, noCache, (c) =>
-    c.json(getPlaylistStatusSnapshot({ user: c.var.user }), 200),
-  )
-  .get("/containing", requireFlowAccess, noCache, validate("query", containingQuery), (c) =>
+  .get("/status", requirePlaylistAccess, noCache, (c) => {
+    return c.json(getPlaylistStatusSnapshot({ user: c.var.user }), 200);
+  })
+  .get("/containing", requirePlaylistAccess, noCache, validate("query", containingQuery), (c) =>
     c.json({ playlists: getPlaylistsContainingTrack(c.var.user, c.req.valid("query")) }, 200),
   )
   .get(
     "/jobs/:playlistId",
-    requireFlowAccess,
+    requirePlaylistAccess,
     noCache,
     validate("query", v.object({ limit: queryValue })),
     async (c) => {
@@ -247,30 +265,11 @@ export default new Hono<AppEnv>()
           ? Math.floor(parsedLimit)
           : null;
       const staticPlaylist = flowPlaylistConfig.getStaticPlaylist(playlistId);
-      const staticPlaylistTracks = staticPlaylist?.tracks;
-      let jobs = downloadTracker.getByPlaylistType(
-        playlistId,
-        staticPlaylistTracks?.length ? null : limit,
-      );
-      if (staticPlaylistTracks?.length) {
-        const referencedJobIds = new Set<string>(
-          staticPlaylistTracks.map((track) => String(track?.canonicalJobId || "")).filter(Boolean),
-        );
-        const referencedJobs = [...referencedJobIds]
-          .map((jobId) => downloadTracker.getJob(jobId))
-          .filter((job): job is DownloadJob => Boolean(job));
-        jobs = [...referencedJobs, ...jobs].filter(
-          (job, index, values) =>
-            values.findIndex((candidate) => candidate.id === job.id) === index,
-        );
-        jobs = orderJobsByPlaylistTracks(jobs, staticPlaylistTracks);
-        if (limit != null) jobs = jobs.slice(0, limit);
-        jobs = jobs.map((job) =>
-          referencedJobIds.has(job.id) && job.playlistType !== playlistId
-            ? { ...job, playlistId: playlistId, playlistType: playlistId }
-            : job,
-        );
-      }
+      const jobs = staticPlaylist
+        ? orderJobsByPlaylistTracks(staticPlaylistJobs(staticPlaylist), staticPlaylist.tracks)
+            .slice(0, limit ?? undefined)
+            .map((job) => ({ ...job, playlistId, playlistType: playlistId }))
+        : downloadTracker.getByPlaylistType(playlistId, limit);
       const profile = getQualityProfile();
       const accessibleJobs = filterJobsForUser(user, jobs);
       const libraryOwnership = getLibraryTrackOwnershipBatch(accessibleJobs);
@@ -286,22 +285,13 @@ export default new Hono<AppEnv>()
           ...toPublicJob(job, profile),
           ...withLibraryNames(libraryInfo.get(String(job.id))),
           libraryOwned: libraryOwnership[index] === true,
-          libraryCoverUrl: libraryCovers.get(String(job.id)) ?? null,
           favoriteId: favoriteIds[index],
-          ...(customArtwork.has(String(job.id)) && {
-            artworkUrl: buildCustomArtworkUrl(
-              "playlist-track",
-              job.id,
-              customArtwork.get(String(job.id)),
-              { playlistId },
-            ),
-            customArtworkUrl: buildCustomArtworkUrl(
-              "playlist-track",
-              job.id,
-              customArtwork.get(String(job.id)),
-              { playlistId },
-            ),
-          }),
+          ...trackArtwork(
+            job,
+            customArtwork,
+            playlistId,
+            libraryCovers.get(String(job.id)) ?? null,
+          ),
         })),
         200,
       );
@@ -309,7 +299,7 @@ export default new Hono<AppEnv>()
   )
   .get(
     "/jobs",
-    requireFlowAccess,
+    requirePlaylistAccess,
     noCache,
     validate("query", v.object({ status: queryValue })),
     (c) => {
@@ -333,33 +323,20 @@ export default new Hono<AppEnv>()
           monitored: !isUnmonitored(job),
           ...(job.status === "cancelled" &&
             !downloadTracker.isWantedMissing(job) && { albumCancelled: true }),
-          ...(customArtwork.has(String(job.id)) && {
-            artworkUrl: buildCustomArtworkUrl(
-              "playlist-track",
-              job.id,
-              customArtwork.get(String(job.id)),
-              { playlistId: job.playlistType || job.playlistId },
-            ),
-            customArtworkUrl: buildCustomArtworkUrl(
-              "playlist-track",
-              job.id,
-              customArtwork.get(String(job.id)),
-              { playlistId: job.playlistType || job.playlistId },
-            ),
-          }),
+          ...trackArtwork(job, customArtwork, job.playlistType || job.playlistId),
         })),
         200,
       );
     },
   )
-  .get("/jobs/:jobId/files", requireFlowAccess, requireAdmin, noCache, (c) => {
+  .get("/jobs/:jobId/files", requirePlaylistAccess, requireAdmin, noCache, (c) => {
     const job = downloadTracker.getJob(c.req.param("jobId"));
     if (!job) return c.json({ error: "Track not found" }, 404);
     return c.json({ paths: job.finalPath ? [job.finalPath] : [] }, 200);
   })
   .get(
     "/jobs/:jobId/manual-search/sources",
-    requireFlowAccess,
+    requirePlaylistAccess,
     noCache,
     validate("query", manualSearchQuery),
     (c) => {
@@ -374,7 +351,7 @@ export default new Hono<AppEnv>()
   )
   .post(
     "/jobs/:jobId/manual-search",
-    requireFlowAccess,
+    requirePlaylistAccess,
     validate(
       "json",
       v.object({
@@ -419,7 +396,7 @@ export default new Hono<AppEnv>()
   )
   .post(
     "/jobs/:jobId/manual-search/select",
-    requireFlowAccess,
+    requirePlaylistAccess,
     validate("json", v.object({ sessionId: v.string(), resultId: v.string() })),
     async (c) => {
       const jobId = c.req.param("jobId");
@@ -467,7 +444,7 @@ export default new Hono<AppEnv>()
   )
   .get(
     "/jobs/:jobId/library-files",
-    requireFlowAccess,
+    requirePlaylistAccess,
     noCache,
     validate("query", v.object({ q: v.optional(v.string()), playlistId: v.optional(v.string()) })),
     (c) => {
@@ -481,7 +458,7 @@ export default new Hono<AppEnv>()
   )
   .post(
     "/jobs/:jobId/link-file",
-    requireFlowAccess,
+    requirePlaylistAccess,
     validate(
       "json",
       v.object({ fileId: v.pipe(v.number(), v.integer()), playlistId: v.optional(v.string()) }),
@@ -516,7 +493,7 @@ export default new Hono<AppEnv>()
   )
   .get(
     "/jobs/:jobId/disk-files",
-    requireFlowAccess,
+    requirePlaylistAccess,
     requireAdmin,
     noCache,
     validate("query", v.object({ path: v.optional(v.string()) })),
@@ -533,7 +510,7 @@ export default new Hono<AppEnv>()
   )
   .post(
     "/jobs/:jobId/import-file",
-    requireFlowAccess,
+    requirePlaylistAccess,
     requireAdmin,
     validate("json", v.object({ path: v.string(), playlistId: v.optional(v.string()) })),
     async (c) => {
@@ -561,7 +538,7 @@ export default new Hono<AppEnv>()
       }
     },
   )
-  .post("/research-missing", requireFlowAccess, async (c) => {
+  .post("/research-missing", requirePlaylistAccess, async (c) => {
     try {
       let requeued = 0;
       for (const playlistId of [LIBRARY_JOB_TYPE, ...getAccessiblePlaylistIds(c.var.user)]) {
@@ -575,7 +552,7 @@ export default new Hono<AppEnv>()
       );
     }
   })
-  .post("/quality-upgrades", requireFlowAccess, async (c) => {
+  .post("/quality-upgrades", requirePlaylistAccess, async (c) => {
     const playlistIds = getAccessiblePlaylistIds(c.var.user);
     const checkedIds = [LIBRARY_JOB_TYPE, ...playlistIds];
     const queued = isDownloadOwnerProcess()
@@ -586,7 +563,7 @@ export default new Hono<AppEnv>()
     if (queued > 0) invalidateRequestsCache();
     return c.json({ success: true, queued, playlistCount: playlistIds.length }, 200);
   })
-  .post("/quality-upgrades/:playlistId/:jobId", requireFlowAccess, async (c) => {
+  .post("/quality-upgrades/:playlistId/:jobId", requirePlaylistAccess, async (c) => {
     const playlistId = c.req.param("playlistId");
     const jobId = c.req.param("jobId");
     if (!canAccessJobType(c.var.user, playlistId)) {
@@ -616,10 +593,10 @@ export default new Hono<AppEnv>()
     invalidateRequestsCache();
     return c.json({ success: true, queued: 1, jobId }, 200);
   })
-  .post("/jobs/:jobId/approve", requireFlowAccess, (c) =>
+  .post("/jobs/:jobId/approve", requirePlaylistAccess, (c) =>
     reviewBlockedJob(c, "approveBlockedJob", c.req.param("jobId")),
   )
-  .post("/jobs/:jobId/deny", requireFlowAccess, (c) =>
+  .post("/jobs/:jobId/deny", requirePlaylistAccess, (c) =>
     reviewBlockedJob(c, "denyBlockedJob", c.req.param("jobId")),
   )
   .post("/jobs/cancel", requireAuth, async (c) => {

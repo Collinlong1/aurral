@@ -4,7 +4,7 @@ import type { PlaylistCoverPick } from "./clients/playlistArtwork.ts";
 type PlaylistArtworkField = {
   artworkUrl?: string | null;
   customArtworkUrl?: string | null;
-  libraryCoverUrl?: string | null;
+  defaultArtworkUrl?: string | null;
 };
 
 export const getPlaylistTrackStreamUrl = (jobId: string | number) =>
@@ -39,11 +39,11 @@ export const getPlaylistTrackArtworkUrl = (
 export const withAuthenticatedTrackArtwork = <T extends PlaylistArtworkField>({
   artworkUrl,
   customArtworkUrl,
-  libraryCoverUrl,
+  defaultArtworkUrl,
   ...job
 }: T) => ({
   ...job,
   artworkUrl: artworkUrl ? resolveAuthenticatedApiAssetUrl(artworkUrl) : null,
   customArtworkUrl: customArtworkUrl ? resolveAuthenticatedApiAssetUrl(customArtworkUrl) : null,
-  libraryCoverUrl: libraryCoverUrl ? resolveAuthenticatedApiAssetUrl(libraryCoverUrl) : null,
+  defaultArtworkUrl: defaultArtworkUrl ? resolveAuthenticatedApiAssetUrl(defaultArtworkUrl) : null,
 });

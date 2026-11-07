@@ -3,9 +3,9 @@ import type { IncomingMessage, Server } from "node:http";
 import { EventEmitter } from "node:events";
 import { dbOps, userOps } from "../db/helpers/index.ts";
 import { asAppError } from "../../lib/errors.ts";
+import { APP_VERSION } from "../config/constants.ts";
 import { logger } from "./logger.ts";
 import {
-  getAuthPassword,
   isProxyAuthEnabled,
   resolveLocalNetworkBypassUser,
   resolveSessionUserFromToken,
@@ -50,7 +50,7 @@ export type WebSocketChannelMessage = {
 } & WebSocketChannelPayload;
 
 export type WebSocketServerMessage =
-  | { type: "connected"; clientId: string; subscriptions: string[] }
+  | { type: "connected"; clientId: string; subscriptions: string[]; version: string }
   | { type: "subscribed"; channels: string[]; subscriptions: string[] }
   | { type: "unsubscribed"; channels: string[]; subscriptions: string[] }
   | { type: "pong"; timestamp: number }
@@ -73,9 +73,7 @@ type WebSocketClient = {
 const isAuthRequired = () => {
   const settings = dbOps.getSettings();
   if (!settings.onboardingComplete) return false;
-  const users = userOps.getAllUsers();
-  const legacyPasswords = getAuthPassword();
-  return isProxyAuthEnabled() || users.length > 0 || legacyPasswords.length > 0;
+  return isProxyAuthEnabled() || userOps.countUsers() > 0;
 };
 
 class WebSocketService extends EventEmitter {
@@ -173,6 +171,7 @@ class WebSocketService extends EventEmitter {
       type: "connected",
       clientId,
       subscriptions: Array.from(client.subscriptions),
+      version: APP_VERSION,
     });
   }
 

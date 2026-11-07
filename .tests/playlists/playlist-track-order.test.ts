@@ -51,25 +51,25 @@ let sequence = 0;
 
 async function createPlaylist(names: string[]) {
   sequence += 1;
-  const playlist = flowPlaylistConfig.createStaticPlaylist({
-    name: `Ordered ${sequence}`,
-    tracks: names.map((name) => ({ artistName: "Artist", trackName: name, albumName: "Album" })),
-  });
   const jobIds: string[] = [];
-  for (const track of playlist.tracks) {
-    const jobId = downloadTracker.addJob(track, playlist.id);
+  const tracks = [];
+  for (const name of names) {
+    const track = { artistName: "Artist", trackName: name, albumName: "Album" };
+    const jobId = downloadTracker.addJob(track, "library");
     assert.ok(jobId != null);
-    const filePath = path.join(downloadRoot!, "music", `${track.trackName}.flac`);
+    const filePath = path.join(downloadRoot!, "music", `${name}.flac`);
     await fs.mkdir(path.dirname(filePath), { recursive: true });
     await fs.writeFile(filePath, "audio");
     downloadTracker.setDone(jobId, filePath, "Album");
     jobIds.push(jobId);
+    tracks.push({ ...track, canonicalJobId: jobId });
   }
+  const playlist = flowPlaylistConfig.createStaticPlaylist({ name: `Ordered ${sequence}`, tracks });
   return { playlist, jobIds };
 }
 
 const putOrder = (playlistId: string, jobIds: string[]) =>
-  fetch(`${baseUrl}/api/playlists/shared-playlists/${playlistId}/track-order`, {
+  fetch(`${baseUrl}/api/playlists/static-playlists/${playlistId}/track-order`, {
     method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ jobIds }),
@@ -90,7 +90,7 @@ test("reorders a playlist's tracks and its playlist file", async () => {
     flowPlaylistConfig.getStaticPlaylist(playlist.id)!.tracks.map((track) => track.membershipId),
     [membershipIds[2], membershipIds[0], membershipIds[1]],
   );
-  const fileTracks = await collectPlaylistFileTracks(playlist.id, { downloadRoot });
+  const fileTracks = await collectPlaylistFileTracks(playlist.id);
   assert.deepEqual(
     fileTracks.map((entry) => path.basename(entry.path)),
     ["Three.flac", "One.flac", "Two.flac"],

@@ -1,10 +1,10 @@
 import fs from "fs/promises";
 import path from "path";
 import { db } from "../../config/db-sqlite.ts";
-import { resolveDownloadRoot } from "../downloadPaths.ts";
 import { downloadTracker, type DownloadJob } from "./downloadTracker.ts";
 import { noPlaylistDownloadedFile, refreshPlaylistAfterReuse } from "./fileReuse.ts";
 import { restoreDownloadJobCancellations } from "./downloadCancellation.ts";
+import { flowPlaylistConfig } from "../playlists/flowPlaylistConfig.ts";
 
 // A missing track can be linked to a file that is already in the Library, so
 // Aurral stops searching for it. The file stays where it is and is treated as
@@ -97,16 +97,20 @@ export async function linkLibraryFileToJob(jobId: string, fileId: number) {
     throw new LinkLibraryFileError("Aurral cannot read that file. Rescan the Library.", 409);
   }
   if (job.status === "cancelled") restoreDownloadJobCancellations([job.id]);
-  const downloadRoot = path.resolve(resolveDownloadRoot());
   const linked = downloadTracker.setDone(
     job.id,
     finalPath,
     file.albumTitle || job.albumName || null,
     file.source === "aurral" ? null : file.path,
-    { reusedLibraryFile: noPlaylistDownloadedFile(finalPath, job.id, downloadRoot) },
+    { reusedLibraryFile: noPlaylistDownloadedFile(finalPath, job.id) },
   );
   if (!linked) throw new LinkLibraryFileError("Only a missing track can be linked to a file", 409);
-  await refreshPlaylistAfterReuse(job.playlistType, job.playlistType === "library", [finalPath]);
+  // Static playlists that include this track refresh their files too.
+  await refreshPlaylistAfterReuse(
+    [job.playlistType, ...flowPlaylistConfig.getStaticPlaylistIdsUsingJobs([job.id])],
+    job.playlistType === "library",
+    [finalPath],
+  );
   return downloadTracker.getJob(job.id);
 }
 

@@ -82,7 +82,7 @@ beforeAll(async () => {
   });
 
   user = requireFixture(
-    userOps.createUser("search-routes-user", "unused", "user", { accessFlow: true }),
+    userOps.createUser("search-routes-user", "unused", "user", { accessPlaylists: true }),
   );
   const server = await listen(signedInAs(() => user).route("/api", api));
   app = { url: `http://127.0.0.1:${listeningAddress(server).port}`, server };
@@ -135,15 +135,15 @@ test("library search answers from the local library without calling the metadata
   const body: Record<"artists" | "albums" | "tracks", SearchItem[]> = await response.json();
 
   assert.deepEqual(
-    body.artists.map((item) => [item.name, item.canonicalId]),
+    body.artists.map((item) => [item.name, item.libraryId]),
     [["Harbor Collective", String(artist.id)]],
   );
   assert.deepEqual(
-    body.albums.map((item) => [item.title, item.canonicalId, item.id, item.artistName]),
+    body.albums.map((item) => [item.title, item.libraryId, item.id, item.artistName]),
     [["Quiet Harbor", String(album.id), "search-routes-release-group", "Harbor Collective"]],
   );
   assert.deepEqual(
-    body.tracks.map((item) => [item.title, item.albumCanonicalId, item.albumMbid]),
+    body.tracks.map((item) => [item.title, item.libraryAlbumId, item.albumMbid]),
     [["Lantern Song", String(album.id), "search-routes-release-group"]],
   );
   assert.equal(metadataRequests.length, 0);
@@ -550,7 +550,7 @@ test("adding library search results to a new static playlist keeps their MusicBr
   const payloads = ["Beacon Light", "Beacon Reprise"].map((title) =>
     buildTrackPlaylistPayload(requireFixture(results.find((result) => result.title === title))),
   );
-  const created = await fetch(`${app.url}/api/playlists/shared-playlists`, {
+  const created = await fetch(`${app.url}/api/playlists/static-playlists`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ name: "Beacon Picks", tracks: payloads }),
@@ -565,7 +565,9 @@ test("adding library search results to a new static playlist keeps their MusicBr
     .getStaticPlaylistsForUser(user)
     .find((entry) => entry.name === "Beacon Picks");
   assert.ok(playlist != null);
-  const jobs = downloadTracker.getByPlaylistType(playlist.id);
+  const jobs = playlist.tracks.map((track) =>
+    requireFixture(downloadTracker.getJob(track.canonicalJobId)),
+  );
   const identity = (track: {
     trackName: string | null;
     trackMbid?: string | null;

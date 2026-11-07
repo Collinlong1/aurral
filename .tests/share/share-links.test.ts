@@ -844,17 +844,20 @@ test("playlist shares play the library file an entry downloaded to", async () =>
     artistName: artist.name,
     albumName: "Mellon Collie (Deluxe Edition)",
   };
-  const playlist = flowPlaylistConfig.createStaticPlaylist({
-    name: "Remasters",
-    ownerUserId: owner.id,
-    tracks: [remaster, { trackName: "Bullet", artistName: artist.name }],
-  });
-  const jobId = downloadTracker.addJob(remaster, playlist.id);
+  const jobId = downloadTracker.addJob(remaster, "library");
   assert.ok(jobId);
   downloadTracker.setDone(
     jobId,
     path.join(paths.baseDir, "music", artist.name, "Mellon Collie", "1979.flac"),
   );
+  const playlist = flowPlaylistConfig.createStaticPlaylist({
+    name: "Remasters",
+    ownerUserId: owner.id,
+    tracks: [
+      { ...remaster, canonicalJobId: jobId },
+      { trackName: "Bullet", artistName: artist.name },
+    ],
+  });
   const snapshot = resolveShareManifest(
     { kind: "playlist", targetRef: playlist.id, albumRef: null },
     { kind: "playlist", title: playlist.name },
@@ -871,7 +874,9 @@ test("playlist shares play the library file an entry downloaded to", async () =>
 test("playlist shares keep missing entries and never expose tracks added after creation", async () => {
   const { flowPlaylistConfig } =
     await import("../../backend/services/playlists/flowPlaylistConfig.ts");
-  const playlistOwner = userOps.createUser("playlist-owner", "hash", "user", { accessFlow: true });
+  const playlistOwner = userOps.createUser("playlist-owner", "hash", "user", {
+    accessPlaylists: true,
+  });
   assert.ok(playlistOwner);
   const playlist = flowPlaylistConfig.createStaticPlaylist({
     name: "Shared playlist",
@@ -954,7 +959,7 @@ test("playlist shares republish changes daily without exposing files for added t
   const { flowPlaylistConfig } =
     await import("../../backend/services/playlists/flowPlaylistConfig.ts");
   const { refreshPlaylistShares } = await import("../../backend/services/shareLinks/refresh.ts");
-  const curator = userOps.createUser("curator", "hash", "user", { accessFlow: true });
+  const curator = userOps.createUser("curator", "hash", "user", { accessPlaylists: true });
   assert.ok(curator);
   const playlist = flowPlaylistConfig.createStaticPlaylist({
     name: "Synced playlist",

@@ -470,7 +470,6 @@ export interface PlaylistTracksPanelProps<T extends PlaylistPanelTrack> {
   showTrackStatus?: boolean;
   showReasons?: boolean;
   showTrackAvailability?: boolean;
-  artworkByAlbumMbid?: Record<string, string>;
   allowBulkEdit?: boolean;
   onBulkDelete?: (tracks: T[]) => unknown;
   onBulkAddToPlaylist?: (tracks: T[], target: PlaylistTrackTarget) => unknown;
@@ -522,7 +521,6 @@ export function PlaylistTracksPanel<T extends PlaylistPanelTrack>({
   showTrackStatus = false,
   showReasons = false,
   showTrackAvailability = false,
-  artworkByAlbumMbid = {},
   allowBulkEdit = false,
   onBulkDelete,
   onBulkAddToPlaylist,
@@ -634,18 +632,8 @@ export function PlaylistTracksPanel<T extends PlaylistPanelTrack>({
     setSelectedIds(new Set());
   };
 
-  // Custom art first, then the album's online cover, then the Library album's
-  // own cover, which a track imported or linked from a file often relies on.
-  const trackCover = (track: T) =>
-    track.artworkUrl ||
-    artworkByAlbumMbid[String(track.albumMbid || "")] ||
-    track.libraryCoverUrl ||
-    "";
   const toQueueTrack = (track: T) =>
-    normalizePlaylistQueueTrack(
-      { ...track, artworkUrl: trackCover(track) },
-      queueTrackOverrides(track, recordHistory),
-    );
+    normalizePlaylistQueueTrack(track, queueTrackOverrides(track, recordHistory));
 
   const handlePlayTrack = (track: T) => {
     if (!track?.streamUrl) return;
@@ -728,7 +716,7 @@ export function PlaylistTracksPanel<T extends PlaylistPanelTrack>({
         onOpen: canOpenAlbum ? () => onNavigateAlbum!(track) : null,
       },
       cover: {
-        src: trackCover(track),
+        src: track.artworkUrl || "",
         label: track.albumName || track.trackName,
         ...albumLink,
         onOpen: canOpenAlbum ? () => onNavigateAlbum!(track) : null,

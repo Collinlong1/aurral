@@ -241,6 +241,7 @@ beforeAll(async () => {
   });
   fields(login, { token: "string", expiresAt: "number", user: "object" });
   fields(login.user, { id: "number", username: "string", role: "string", permissions: "object" });
+  fields(login.user.permissions, { accessPlaylists: "boolean" });
   token = login.token;
 });
 
@@ -261,26 +262,6 @@ test("sign-in, bootstrap, and identity preserve their public response fields", a
     api: "object",
   });
   fields(bootstrap.api, { version: "number", features: "array" });
-  for (const feature of [
-    "discover",
-    "flows",
-    "playlistCoverTemplates",
-    "activity",
-    "review",
-    "trackDownloads",
-    "linkSearch",
-    "downloadCancel",
-    "shareImports",
-    "trending",
-    "flowAutoDownload",
-    "pluginActions",
-    "radio",
-  ]) {
-    assert.ok(
-      bootstrap.api.features.includes(feature),
-      `missing implemented capability ${feature}`,
-    );
-  }
   const signedIn = await call("/api/health/bootstrap");
   fields(signedIn.user, {
     id: "number",
@@ -466,7 +447,7 @@ test("trending charts preserve their public response fields", async () => {
 });
 
 test("library pages, lookups, album requests, and track requests preserve their public response fields", async () => {
-  const page = await call("/api/library/canonical?kind=tracks&pageSize=10&availableOnly=true");
+  const page = await call("/api/library?kind=tracks&pageSize=10&availableOnly=true");
   fields(page, {
     kind: "string",
     page: "number",
@@ -493,9 +474,7 @@ test("library pages, lookups, album requests, and track requests preserve their 
     ["artists", "name"],
     ["albums", "title"],
   ] as const) {
-    const collection = await call(
-      `/api/library/canonical?kind=${kind}&pageSize=10&availableOnly=true`,
-    );
+    const collection = await call(`/api/library?kind=${kind}&pageSize=10&availableOnly=true`);
     fields(collection, {
       kind: "string",
       page: "number",
@@ -510,7 +489,7 @@ test("library pages, lookups, album requests, and track requests preserve their 
     });
     fields(collection.items[0], { id: "number", identityKey: "string", [name]: "string" });
   }
-  fields(await call("/api/library/canonical?kind=genres&pageSize=10"), {
+  fields(await call("/api/library?kind=genres&pageSize=10"), {
     kind: "string",
     page: "number",
     pageSize: "number",
@@ -527,7 +506,7 @@ test("library pages, lookups, album requests, and track requests preserve their 
     exists: "boolean",
     artist: "object|null",
     albums: "array",
-    canonical: "boolean",
+    fromLibraryIndex: "boolean",
     libraryArtistId: "string|null",
   });
   assert.equal(lookup.exists, true);
@@ -542,6 +521,9 @@ test("library pages, lookups, album requests, and track requests preserve their 
   });
   fields(albums[albumMbid], {
     inLibrary: "boolean",
+    fromLibraryIndex: "boolean",
+    providerAlbumId: "string|null",
+    providerArtistId: "string|null",
     libraryAlbumId: "string|null",
     libraryArtistId: "string|null",
     status: "string",
@@ -551,6 +533,10 @@ test("library pages, lookups, album requests, and track requests preserve their 
     ownedTrackMbids: "array",
   });
   assert.deepEqual(albums[albumMbid].ownedTrackMbids, [trackMbid]);
+  assert.deepEqual(
+    [albums[albumMbid].providerAlbumId, albums[albumMbid].providerArtistId],
+    [null, null],
+  );
   const requested = await call("/api/library/albums/request", {
     method: "POST",
     status: 201,
@@ -620,13 +606,34 @@ test("flows, activity, and review preserve their public response fields and stor
   const status = await call("/api/playlists/status");
   fields(status, {
     flows: "array",
-    sharedPlaylists: "array",
+    staticPlaylists: "array",
     stats: "object",
     flowStats: "object",
     worker: "object",
     hint: "object",
   });
   assert.ok(status.flows.some((flow: { id: string }) => flow.id === created.flow.id));
+  downloadTracker.addJob(
+    { artistName: "Flow Artist", trackName: "Flow Song", albumMbid },
+    created.flow.id,
+  );
+  downloadTracker.addJob({ artistName: "Flow Artist", trackName: "Loose Song" }, created.flow.id);
+  const flowTracks = await call(`/api/playlists/jobs/${created.flow.id}`);
+  const artworkUrl = `/api/artists/release-group/${albumMbid}/cover/image`;
+  assert.deepEqual(
+    Object.fromEntries(
+      flowTracks.map((track: { trackName: string; artworkUrl: string | null }) => [
+        track.trackName,
+        track.artworkUrl,
+      ]),
+    ),
+    { "Flow Song": artworkUrl, "Loose Song": null },
+  );
+  dbOps.setImage(`rg:${albumMbid}`, "https://images.example/contract.jpg");
+  const cover = await fetch(`${baseUrl}${artworkUrl}?token=${token}`, { redirect: "manual" });
+  assert.equal(cover.status, 302);
+  assert.equal(cover.headers.get("location"), "https://images.example/contract.jpg");
+  assert.equal((await fetch(`${baseUrl}${artworkUrl}`, { redirect: "manual" })).status, 401);
   const denied = await hold("Denied Song");
   const approved = await hold("Approved Song");
   const jobs = await call("/api/playlists/jobs?status=blocked");

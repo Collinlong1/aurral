@@ -80,7 +80,6 @@ const updateUserBody = v.object({
   permissions: v.optional(v.unknown()),
   role: v.optional(v.string()),
   status: v.optional(v.string()),
-  allowIdentityAdoption: v.optional(v.boolean()),
 });
 const listenHistoryBody = v.partial(
   v.object({ lastfm: nullableText, listenbrainz: nullableText, koito: nullableText }),
@@ -163,7 +162,7 @@ export default new Hono<AppEnv>()
         return c.json({ error: "User not found" }, 404);
       }
       const body = c.req.valid("json");
-      const { password, permissions, role, status, allowIdentityAdoption } = body;
+      const { password, permissions, role, status } = body;
       if (status !== undefined && !VALID_STATUSES.includes(status)) {
         return c.json({ error: "Invalid status" }, 400);
       }
@@ -171,12 +170,7 @@ export default new Hono<AppEnv>()
         return c.json({ error: INVALID_PERMISSIONS_ERROR }, 400);
       }
       if (isSelf && !isAdmin) {
-        if (
-          permissions !== undefined ||
-          role !== undefined ||
-          status !== undefined ||
-          allowIdentityAdoption !== undefined
-        ) {
+        if (permissions !== undefined || role !== undefined || status !== undefined) {
           return c.json({ error: "Forbidden" }, 403);
         }
         const updates: UserUpdate = {};
@@ -245,21 +239,6 @@ export default new Hono<AppEnv>()
           );
         }
         updates.status = status;
-      }
-      if (allowIdentityAdoption !== undefined) {
-        if (allowIdentityAdoption && !existing.needsIdentityMigration) {
-          return c.json(
-            { error: "Only accounts that predate identity linking can be approved for adoption" },
-            400,
-          );
-        }
-        if (allowIdentityAdoption && existing.isProtected) {
-          return c.json(
-            { error: "The protected recovery account cannot be approved for adoption" },
-            400,
-          );
-        }
-        updates.allowIdentityAdoption = allowIdentityAdoption;
       }
       if (Object.keys(updates).length === 0) {
         return c.json(
