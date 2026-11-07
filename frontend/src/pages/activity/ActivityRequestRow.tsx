@@ -23,8 +23,6 @@ import {
 import Tooltip from "../../components/Tooltip";
 import RouteLink from "../../components/RouteLink";
 import type { QueueEntry } from "../../utils/audioQueue.ts";
-import { ActivityRowSelect } from "./ActivityBulkCancel.tsx";
-import "./bulkCancel.css";
 
 export type ActivityRowActionProps = {
   reSearchingAlbumIds: Record<string, boolean>;
@@ -40,10 +38,6 @@ export type ActivityRowActionProps = {
   onRetry: (jobId: string | null | undefined) => void;
   onPreview: (request: ActivityRequest) => void;
   onInfo?: (request: ActivityRequest) => void;
-  // Set in the queue, where rows with jobs that can be cancelled can be picked
-  // to cancel together.
-  selectedJobIds?: ReadonlySet<string>;
-  onSelectJobs?: (jobIds: string[], selected: boolean) => void;
 };
 
 export function getStatusMeta(request: ActivityRequest) {
@@ -89,30 +83,6 @@ function getRequestMeta(request: ActivityRequest, title: string) {
 export const isBlockedTrack = (request: ActivityRequest) =>
   request.kind === "track_download" && request.status === "blocked" && !!request.jobId;
 
-// A row's status icon, after its queue checkbox when rows can be picked to cancel.
-export function ActivityRowLead({
-  request,
-  title,
-  selectedJobIds,
-  onSelectJobs,
-}: {
-  request: ActivityRequest;
-  title: string;
-} & Pick<ActivityRowActionProps, "selectedJobIds" | "onSelectJobs">) {
-  if (!onSelectJobs) return <ActivityStatusIcon request={request} />;
-  return (
-    <span className="activity-row__lead">
-      <ActivityRowSelect
-        request={request}
-        title={title}
-        selectedJobIds={selectedJobIds}
-        onSelectJobs={onSelectJobs}
-      />
-      <ActivityStatusIcon request={request} />
-    </span>
-  );
-}
-
 export function ActivityStatusIcon({ request }: { request: ActivityRequest }) {
   const status = getStatusMeta(request);
   const StatusIcon = status.icon;
@@ -157,7 +127,7 @@ export function ActivityRowActions({
   const isApproving = reviewingJob === "approve";
   const isDenying = reviewingJob === "deny";
   const activeControl = request.jobId ? controllingJobs[request.jobId] : undefined;
-  const canCancel = isCancelableDownload(request) && !blocked;
+  const canCancel = isCancelableDownload(request);
   const canRetry =
     request.kind === "track_download" &&
     !!request.jobId &&
@@ -301,12 +271,7 @@ export default function ActivityRequestRow({
 
   return (
     <article className="activity-row">
-      <ActivityRowLead
-        request={request}
-        title={displayTitle}
-        selectedJobIds={actions.selectedJobIds}
-        onSelectJobs={actions.onSelectJobs}
-      />
+      <ActivityStatusIcon request={request} />
       <div className="activity-row__details">
         <h2 className="activity-row__title">
           {rowLink ? (

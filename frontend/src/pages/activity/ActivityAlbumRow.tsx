@@ -5,7 +5,7 @@ import Tooltip from "../../components/Tooltip";
 import TooltipButton from "../../components/TooltipButton";
 import {
   ActivityRowActions,
-  ActivityRowLead,
+  ActivityStatusIcon,
   getRequestTitle,
   getStatusMeta,
   isBlockedTrack,
@@ -77,16 +77,11 @@ export default function ActivityAlbumRow({ request, ...actions }: ActivityAlbumR
       <article
         className="activity-row"
         onClick={(event) => {
-          if (event.target instanceof Element && event.target.closest("a, button, input")) return;
+          if (event.target instanceof Element && event.target.closest("a, button")) return;
           toggle();
         }}
       >
-        <ActivityRowLead
-          request={request}
-          title={title}
-          selectedJobIds={actions.selectedJobIds}
-          onSelectJobs={actions.onSelectJobs}
-        />
+        <ActivityStatusIcon request={request} />
         <div className="activity-row__details">
           <h2 className="activity-row__title">
             {request.href ? (

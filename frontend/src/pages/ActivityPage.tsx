@@ -36,8 +36,6 @@ import ActivityAlbumRow from "./activity/ActivityAlbumRow";
 import ActivityStatusTabs from "./activity/ActivityStatusTabs";
 import ActivityMissingPage from "./activity/ActivityMissingPage";
 import ActivityInfoModal from "./activity/ActivityInfoModal";
-import { ActivityBulkCancel } from "./activity/ActivityBulkCancel.tsx";
-import { useBulkSelection } from "./activity/useBulkSelection.ts";
 import { getApiErrorText } from "../utils/api/errors.ts";
 
 import { Navigate, useParams, useSearchParams } from "react-router";
@@ -181,7 +179,6 @@ function ActivityPage() {
   );
 
   const hasMoreItems = visibleCount < sortedRequests.length;
-  const bulkSelection = useBulkSelection(filteredRequests, isQueueView);
 
   const listEntries = useMemo(() => {
     if (isListLikeView) {
@@ -334,7 +331,6 @@ function ActivityPage() {
   const controlDownloadJob = async (
     jobId: string | null | undefined,
     action: "cancel" | "retry",
-    { refresh = true }: { refresh?: boolean } = {},
   ) => {
     if (!jobId || controllingJobs[jobId]) return;
     setControllingJobs((prev) => ({ ...prev, [jobId]: action }));
@@ -366,7 +362,7 @@ function ActivityPage() {
         ),
       );
       setJobErrors(({ [jobId]: _, ...rest }) => rest);
-      if (refresh) void queryClient.invalidateQueries({ queryKey: activityQueryKey });
+      void queryClient.invalidateQueries({ queryKey: activityQueryKey });
     } catch (jobError) {
       setJobErrors((prev) => ({
         ...prev,
@@ -489,14 +485,6 @@ function ActivityPage() {
         />
       )}
 
-      <ActivityBulkCancel
-        {...bulkSelection}
-        controllingJobs={controllingJobs}
-        cancelJob={(jobId) => controlDownloadJob(jobId, "cancel", { refresh: false })}
-        onCancelled={() => void queryClient.invalidateQueries({ queryKey: activityQueryKey })}
-        filtered={Boolean(activeStatus)}
-      />
-
       {filteredRequests.length === 0 ? (
         !error && (
           <StatePanel
@@ -535,7 +523,6 @@ function ActivityPage() {
                 onRetry: (jobId: string | null | undefined) => controlDownloadJob(jobId, "retry"),
                 onPreview: handleReviewPreview,
                 onInfo: setInfoRequest,
-                ...(isQueueView && bulkSelection.rowProps),
               };
               return isAlbumActivityRequest(entry.request) ? (
                 <ActivityAlbumRow key={entry.key} request={entry.request} {...rowProps} />
