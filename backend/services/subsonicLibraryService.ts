@@ -5,7 +5,6 @@ import path from "node:path";
 import type { RequestUser } from "../middleware/requestUser.ts";
 import { dbOps, userOps } from "../db/helpers/index.ts";
 import { db } from "../config/db-sqlite.ts";
-import { SUBSONIC_ARTIST_SOURCE_CHANGED_KEY } from "../db/helpers/settings.ts";
 import {
   getLibraryAlbumPage,
   getLibraryArtistPage,
@@ -688,12 +687,6 @@ const getArtworkChangedStmt = db.prepare<[], { changed_at: number | null }>(
   "SELECT MAX(updated_at) AS changed_at FROM custom_artwork WHERE entity_kind IN ('album', 'track')",
 );
 const latestArtworkChange = (artwork: Map<string, number>) => Math.max(0, ...artwork.values());
-const getArtistSourceChangedStmt = db.prepare<[string], { value: string | null }>(
-  "SELECT value FROM settings WHERE key = ?",
-);
-// Songs and albums name different artists once the artist source setting changes.
-const artistSourceChangedAt = () =>
-  Number(getArtistSourceChangedStmt.get(SUBSONIC_ARTIST_SOURCE_CHANGED_KEY)?.value) || 0;
 const getFilesChangedStmt = db.prepare<[string], { changed_at: number | null }>(
   "SELECT MAX(updated_at) AS changed_at FROM library_media_files WHERE path IN (SELECT value FROM json_each(?))",
 );
@@ -707,10 +700,7 @@ const playlistContentChangedAt = (
   jobs: DownloadJob[],
   extraPaths: (string | null | undefined)[] = [],
 ) =>
-  Math.max(
-    filesChangedAt([...jobs.map((job) => job.finalPath), ...extraPaths]),
-    artistSourceChangedAt(),
-  );
+  filesChangedAt([...jobs.map((job) => job.finalPath), ...extraPaths]);
 const epochMs = (value: number | string | null | undefined) => {
   const numeric = Number(value);
   if (Number.isFinite(numeric) && numeric > 0) return numeric;
@@ -727,13 +717,7 @@ export function getLibraryLastModified(user: SubsonicUser) {
     getCustomArtworkRevision("album"),
     getCustomArtworkRevision("track"),
   );
-  return Math.max(
-    getLibraryIndexLastModified() ?? 0,
-    stars,
-    artwork,
-    artworkRevision,
-    artistSourceChangedAt(),
-  );
+  return Math.max(getLibraryIndexLastModified() ?? 0, stars, artwork, artworkRevision);
 }
 
 export function listArtists(user: SubsonicUser) {

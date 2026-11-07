@@ -147,8 +147,6 @@ const upsertSettingStmt = db.prepare<[string, string | null]>(
   "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
 );
 const deleteSettingStmt = db.prepare<[string]>("DELETE FROM settings WHERE key = ?");
-// When Subsonic songs last switched between file-tag and library artist names.
-export const SUBSONIC_ARTIST_SOURCE_CHANGED_KEY = "subsonic:artist-source-changed-at";
 const deleteSettingsByPrefixStmt = db.prepare<[string]>(
   "DELETE FROM settings WHERE key LIKE ? || '%'",
 );
@@ -450,20 +448,11 @@ export const dbOps = {
         upsertSettingStmt.run("sharedPlaylists", dbHelpers.stringifyJSON(settings.sharedPlaylists));
       }
       if (settings.subsonic !== undefined) {
-        const artistSource = normalizeSubsonicArtistSource(settings.subsonic.artistSource);
-        const stored = readStoredSettingJson(
-          v.looseObject({ artistSource: lenient(v.string()) }),
-          "subsonic",
-        );
-        // Subsonic clients refresh what they cached once this moves.
-        if (normalizeSubsonicArtistSource(stored?.artistSource) !== artistSource) {
-          upsertSettingStmt.run(SUBSONIC_ARTIST_SOURCE_CHANGED_KEY, String(Date.now()));
-        }
         upsertSettingStmt.run(
           "subsonic",
           dbHelpers.stringifyJSON({
             favoriteAutoKeep: settings.subsonic.favoriteAutoKeep !== false,
-            artistSource,
+            artistSource: normalizeSubsonicArtistSource(settings.subsonic.artistSource),
           }),
         );
       }
