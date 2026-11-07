@@ -134,8 +134,6 @@ type SubsonicSong = {
   artistId: string;
   albumArtists: ProtocolArtist[];
   artists: ProtocolArtist[];
-  displayArtist?: string;
-  displayAlbumArtist?: string;
   contentType: string;
   created: string;
   track: number;
@@ -159,7 +157,6 @@ type SubsonicAlbum = {
   artist: string;
   artistId: string;
   artists: ProtocolArtist[];
-  displayArtist?: string;
   created: string;
   coverArt: string;
   songCount: number;
@@ -291,28 +288,6 @@ const protocolArtist = (artist: LibraryArtist | null | undefined, fallback = "Un
   musicBrainzId: artist?.mbid || "",
 });
 
-// Credits a tag name to the library artist of the same name, or else to the entity the
-// value came from, so every artist ID a client follows still opens a library artist.
-const taggedArtist = (library: IndexedLibrary, name: string, owner: ProtocolArtist) => {
-  const match = library.artistsByName.get(name.toLocaleLowerCase());
-  return match
-    ? { ...protocolArtist(match), name }
-    : { id: owner.id, name, musicBrainzId: name === owner.name ? owner.musicBrainzId : "" };
-};
-
-const taggedArtists = (
-  library: IndexedLibrary,
-  names: string[] | undefined,
-  display: string,
-  owner: ProtocolArtist,
-) => (names?.length ? names : [display]).map((name) => taggedArtist(library, name, owner));
-
-// The album's credit comes from the first of its files that has an album artist tag.
-const albumArtistTags = (album: LibraryAlbum, tracks: LibraryTrack[]) =>
-  tracks
-    .map((track) => firstFile(track, album.id, album.managedBy)?.artistTags)
-    .find((tags) => tags?.albumArtist);
-
 const albumTracks = (library: IndexedLibrary, album: LibraryAlbum) =>
   (album?.trackIds || [])
     .map((trackId) => library.tracksById.get(trackId))
@@ -406,20 +381,6 @@ const toSong = (
     musicBrainzId: track.mbid || "",
     mediaType: "song",
   };
-  if (library.tagArtists) {
-    const tags = file?.artistTags || {};
-    const albumTags =
-      !tags.albumArtist && album ? albumArtistTags(album, albumTracks(library, album)) : tags;
-    const display = tags.artist || artistValue.name;
-    const albumDisplay = albumTags?.albumArtist || artistValue.name;
-    song.artist = display;
-    song.displayArtist = display;
-    song.displayAlbumArtist = albumDisplay;
-    song.artists = tags.artist
-      ? taggedArtists(library, tags.artists, display, artistValue)
-      : [artistValue];
-    song.albumArtists = taggedArtists(library, albumTags?.albumArtists, albumDisplay, artistValue);
-  }
   const bitRate = bitRateKbps(file?.quality);
   if (bitRate) song.bitRate = bitRate;
   const releaseYear = year(album?.releaseDate);
@@ -458,15 +419,6 @@ const albumData = (library: IndexedLibrary, album: LibraryAlbum) => {
     // release-group id, so they report an empty value rather than a wrong one.
     musicBrainzId: album.mbid || "",
   };
-  if (library.tagArtists) {
-    const tags = albumArtistTags(album, tracks);
-    const display = tags?.albumArtist || artistValue.name;
-    value.artist = display;
-    value.displayArtist = display;
-    value.artists = tags
-      ? taggedArtists(library, tags.albumArtists, display, artistValue)
-      : [artistValue];
-  }
   const releaseYear = year(album.releaseDate);
   if (releaseYear != null) value.year = releaseYear;
   if (genres.length) {
@@ -525,8 +477,6 @@ const indexFocusedLibrary = (
 ) => ({
   ...library,
   starredAt,
-  // Read once per index: whether songs and albums carry their files' artist tags.
-  tagArtists: dbOps.getSettings()?.subsonic?.artistSource !== "library",
   customAlbumArtwork: getCustomArtworkMap(
     "album",
     library.albums.map((album) => album.id),
@@ -539,9 +489,6 @@ const indexFocusedLibrary = (
   albumsById: new Map(library.albums.map((album) => [album.id, album])),
   tracksById: new Map(library.tracks.map((track) => [track.id, track])),
   artistsByIdentity: new Map(library.artists.map((artist) => [artist.identityKey, artist])),
-  artistsByName: new Map(
-    library.artists.map((artist) => [artist.name.toLocaleLowerCase(), artist] as const),
-  ),
   albumsByIdentity: new Map(library.albums.map((album) => [album.identityKey, album])),
   tracksByIdentity: new Map(library.tracks.map((track) => [track.identityKey, track])),
 });
@@ -699,8 +646,7 @@ const filesChangedAt = (paths: (string | null | undefined)[]) => {
 const playlistContentChangedAt = (
   jobs: DownloadJob[],
   extraPaths: (string | null | undefined)[] = [],
-) =>
-  filesChangedAt([...jobs.map((job) => job.finalPath), ...extraPaths]);
+) => filesChangedAt([...jobs.map((job) => job.finalPath), ...extraPaths]);
 const epochMs = (value: number | string | null | undefined) => {
   const numeric = Number(value);
   if (Number.isFinite(numeric) && numeric > 0) return numeric;
@@ -839,9 +785,8 @@ export function findUniqueLibrarySong(artist: string, title: string, user?: Subs
     .map((track) => toSong(library, track))
     .filter(
       (song) =>
-        [song.artist, ...song.artists.map((entry) => entry.name)].some(
-          (name) => name.toLocaleLowerCase() === String(artist).trim().toLocaleLowerCase(),
-        ) && song.title.toLocaleLowerCase() === String(title).trim().toLocaleLowerCase(),
+        song.artist.toLocaleLowerCase() === String(artist).trim().toLocaleLowerCase() &&
+        song.title.toLocaleLowerCase() === String(title).trim().toLocaleLowerCase(),
     );
   return songs.length === 1 ? songs[0] : null;
 }

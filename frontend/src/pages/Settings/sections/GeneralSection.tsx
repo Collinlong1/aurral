@@ -53,26 +53,6 @@ export function GeneralSection() {
             aria-label="Keep flow tracks when favorited through Subsonic"
           />
         </SettingsRow>
-        <SettingsRow
-          label="Artist names"
-          htmlFor="subsonic-artist-source"
-          help="File tags show each track's ARTIST and ALBUMARTIST tags as written, like Navidrome. Library shows Aurral's artist names."
-        >
-          <Select
-            id="subsonic-artist-source"
-            value={settings.subsonic?.artistSource === "library" ? "library" : "tags"}
-            onChange={(artistSource) =>
-              updateSettings({
-                ...settings,
-                subsonic: { ...settings.subsonic, artistSource },
-              })
-            }
-            options={[
-              { value: "tags", label: "File tags" },
-              { value: "library", label: "Library" },
-            ]}
-          />
-        </SettingsRow>
       </SettingsGroup>
       <SettingsGroup title="API access">
         <ApiKeyRow

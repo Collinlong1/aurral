@@ -1560,9 +1560,6 @@ db.transaction(() => {
   }
 })();
 tryAddColumn("ALTER TABLE library_media_files ADD COLUMN artist_tag TEXT");
-// Artist credits as the file spells them. NULL means the file was indexed before this
-// column existed, so the next scan reads its tags again.
-tryAddColumn("ALTER TABLE library_media_files ADD COLUMN artist_tags_json TEXT");
 db.exec(`
   CREATE TABLE IF NOT EXISTS library_monitoring_exclusions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

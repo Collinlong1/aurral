@@ -24,7 +24,6 @@ const defaultSettings = {
   dateTimeFormat: "browser",
   subsonic: {
     favoriteAutoKeep: true,
-    artistSource: "tags",
   },
   rootFolderPath: "",
   downloadFolderPath: "",

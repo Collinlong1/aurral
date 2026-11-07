@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from "node:util";
 import * as v from "valibot";
 import { dbOps } from "../db/helpers/index.ts";
-import { MAX_REVIEW_TIMEOUT_HOURS, normalizeSubsonicArtistSource } from "../db/helpers/settings.ts";
+import { MAX_REVIEW_TIMEOUT_HOURS } from "../db/helpers/settings.ts";
 import { readIntegrationSettings } from "../db/helpers/integrationSettings.ts";
 import type { AppSettings, StoredIntegrations } from "../db/helpers/settings.ts";
 import { DATE_TIME_FORMATS, defaultData } from "../config/constants.ts";
@@ -508,9 +508,6 @@ export async function saveAppSettings(input: v.InferOutput<typeof appSettingsPat
             normalizedSubsonic.favoriteAutoKeep !== undefined
               ? normalizedSubsonic.favoriteAutoKeep !== false
               : currentSubsonic.favoriteAutoKeep !== false,
-          artistSource: normalizeSubsonicArtistSource(
-            normalizedSubsonic.artistSource ?? currentSubsonic.artistSource,
-          ),
         }
       : currentSubsonic,
     rootFolderPath:

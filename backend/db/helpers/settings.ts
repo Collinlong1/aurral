@@ -37,13 +37,6 @@ type SettingsInbox = typeof defaultData.settings.inbox;
 
 const flag = lenient(v.boolean());
 
-// Where Subsonic clients get artist names: "tags" serves each file's ARTIST and
-// ALBUMARTIST tags as written, the way Navidrome does; "library" serves Aurral's
-// artist entities. Artist IDs come from the library either way.
-export type SubsonicArtistSource = "tags" | "library";
-export const normalizeSubsonicArtistSource = (value: unknown): SubsonicArtistSource =>
-  value === "library" ? "library" : "tags";
-
 const securitySchema = v.looseObject({
   localNetworkBypass: lenient(v.looseObject({ enabled: flag })),
   ssoOnly: flag,
@@ -108,7 +101,7 @@ export interface SettingsUpdate {
   releaseTypes?: string[];
   flows?: unknown;
   sharedPlaylists?: unknown;
-  subsonic?: { favoriteAutoKeep?: boolean; artistSource?: SubsonicArtistSource };
+  subsonic?: { favoriteAutoKeep?: boolean };
   playlistWorker?: StoredPlaylistWorker;
   missingTrackSearch?: StoredMissingTrackSearch;
   reviewTimeoutHours?: number | string;
@@ -301,10 +294,7 @@ export const dbOps = {
       "releaseTypes",
     );
     const subsonic =
-      readStoredSettingJson(
-        v.looseObject({ favoriteAutoKeep: flag, artistSource: lenient(v.string()) }),
-        "subsonic",
-      ) || {};
+      readStoredSettingJson(v.looseObject({ favoriteAutoKeep: flag }), "subsonic") || {};
     const playlistWorker = normalizePlaylistWorkerSettings(
       readStoredSettingJson(v.looseObject({}), "playlistWorker"),
     );
@@ -339,7 +329,6 @@ export const dbOps = {
       releaseTypes: releaseTypes || [],
       subsonic: {
         favoriteAutoKeep: subsonic.favoriteAutoKeep !== false,
-        artistSource: normalizeSubsonicArtistSource(subsonic.artistSource),
       },
       playlistWorker,
       missingTrackSearch,
@@ -452,7 +441,6 @@ export const dbOps = {
           "subsonic",
           dbHelpers.stringifyJSON({
             favoriteAutoKeep: settings.subsonic.favoriteAutoKeep !== false,
-            artistSource: normalizeSubsonicArtistSource(settings.subsonic.artistSource),
           }),
         );
       }

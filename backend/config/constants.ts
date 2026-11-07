@@ -28,7 +28,6 @@ export const defaultData = {
     dateTimeFormat: "browser",
     subsonic: {
       favoriteAutoKeep: true,
-      artistSource: "tags" as "tags" | "library",
     },
     integrations: {
       lastfm: {

@@ -298,7 +298,6 @@ export interface LibraryMediaFilesRow {
   created_at: number;
   updated_at: number;
   artist_tag: string | null;
-  artist_tags_json: string | null;
 }
 
 export interface LibraryMonitoringExclusionsRow {

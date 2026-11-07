@@ -50,14 +50,6 @@ Subsonic clients can edit static playlists but not flows. Editing a flow returns
 
 When a Subsonic client favorites a flow track, Aurral also adds it to the Library. To keep the favorite without adding the track, turn off **Favorite flow tracks** in **Settings > General > Subsonic**. This setting does not affect tracks that are already in the Library.
 
-### Artist names in Subsonic clients
-
-By default, Subsonic clients show each track's artist the way the file's tags spell it, as Navidrome does. A song's artist is its `ARTIST` tag and its album artist is its `ALBUMARTIST` tag. OpenSubsonic clients also get the separate artists from multi-valued `ARTISTS` and `ALBUMARTISTS` tags. Aurral never splits a tag value, so a credit such as `Composer — Performer — Ensemble — Conductor` stays whole. A file with no `ARTIST` tag shows its Library artist. Artist links still open the matching Library artist.
-
-To show Aurral's Library artist names instead, open **Settings > General > Subsonic** and set **Artist names** to **Library**.
-
-Aurral reads tags when it scans a file. After you change a file's tags, the next scan picks up the change. The first scan after updating Aurral reads the artist tags of every file once.
-
 ### Play history
 
 Aurral records each `scrobble.view` call from a Subsonic client as a play. The endpoint accepts repeated `id` and `time` parameters and honors the `submission` flag. Aurral records the play in its own history first, then sends it to the scrobbling services that the user connected.

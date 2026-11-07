@@ -51,7 +51,6 @@ export const normalizeSettings = (savedSettings: SavedSettings) => {
     dateTimeFormat: normalizeDateTimeFormat(savedSettings.dateTimeFormat),
     subsonic: {
       favoriteAutoKeep: savedSettings.subsonic?.favoriteAutoKeep !== false,
-      artistSource: savedSettings.subsonic?.artistSource === "library" ? "library" : "tags",
     },
     downloadFolderPath: String(savedSettings.downloadFolderPath || "").trim(),
     reviewTimeoutHours: Number.isInteger(savedSettings.reviewTimeoutHours)
