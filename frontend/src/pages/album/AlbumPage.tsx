@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 import { AlertCircle, EyeOff, Search, Share } from "../../components/icons";
@@ -63,6 +63,7 @@ import { LIBRARY_SOURCE, useLibraryActions } from "../library/useLibraryActions.
 import {
   Cover,
   formatDuration,
+  isAlbumArtistCredit,
   trackDurationMs,
   type LibraryRemoval,
   useLibraryScanRefresh,
@@ -75,15 +76,6 @@ import { useAlbumDownload } from "./useAlbumDownload.ts";
 import { useLibraryAlbumState } from "./useLibraryAlbumState.ts";
 import { useReleaseCover } from "./useReleaseCover.ts";
 import StatePanel from "../../components/StatePanel";
-
-// A track's artist line repeats the album artist, so the row leaves it out.
-const sameArtistName = (label: ReactNode, albumArtist: string | null | undefined) =>
-  typeof label !== "string" ||
-  !label.trim() ||
-  label.trim().toLowerCase() ===
-    String(albumArtist || "")
-      .trim()
-      .toLowerCase();
 
 function AlbumPage() {
   const { ref: routeRef } = useParams();
@@ -420,7 +412,7 @@ function AlbumPage() {
       number: entry.number,
       subtitle:
         (!hasFile && entry.releaseTrack && creditFor(entry.releaseTrack)) ||
-        (sameArtistName(row.subtitle, libraryArtist?.name) ? null : row.subtitle),
+        (isAlbumArtistCredit(track, libraryArtist) ? null : row.subtitle),
       ...(hasFile && hasMissingTracks && { trailing: <OwnedTrackMark /> }),
       time: hasFile
         ? row.time

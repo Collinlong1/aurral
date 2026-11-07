@@ -74,8 +74,6 @@ export type TrackSearchResult = {
   key: string;
   title: string;
   artistName: string;
-  // The track file's ARTIST tag, which the web app shows when tracks show file tags.
-  tagArtist?: string | null;
   albumTitle: string | null;
   albumMbid: string | null;
   albumCanonicalId: string | null;
@@ -582,9 +580,6 @@ export function searchLibrary(
       key: `library-track:${track.id}`,
       title: track.title,
       artistName: details?.artistName || track.artistName || "Unknown Artist",
-      tagArtist:
-        track.files?.find((file) => file.available && file.artistTags?.artist)?.artistTags
-          ?.artist || null,
       albumTitle: details?.title || null,
       albumMbid: details?.releaseGroupMbid || null,
       albumCanonicalId: details?.canonicalId || null,

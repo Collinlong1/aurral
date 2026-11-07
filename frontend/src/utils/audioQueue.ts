@@ -39,8 +39,6 @@ export type QueueTrackInput = {
   name?: string | null;
   artist?: string | null;
   artistName?: string | null;
-  // The file's ARTIST tag, shown instead of `artist` when tracks show file tags.
-  tagArtist?: string | null;
   artistId?: string | number | null;
   artistMbid?: string | number | null;
   album?: string | null;
@@ -128,7 +126,6 @@ export function normalizeQueueTrack(track: QueueTrackInput, overrides: QueueTrac
     id: id || `track-${crypto.randomUUID()}`,
     title: track?.title ?? track?.trackName ?? track?.name ?? "Unknown Track",
     artist: track?.artist ?? track?.artistName ?? overrides.artist ?? "",
-    tagArtist: track?.tagArtist ?? overrides.tagArtist ?? null,
     album: track?.album ?? track?.albumName ?? overrides.album ?? "",
     artwork,
     artworkSource,
@@ -169,7 +166,6 @@ export function normalizePlaylistQueueTrack(
       id: track.id,
       title: track.trackName,
       artist: track.artistName,
-      tagArtist: track.tagArtist,
       album: track.albumName,
       artwork: track.artworkUrl || track.coverUrl || null,
       artworkSource: track.customArtworkUrl ? "track" : "album",

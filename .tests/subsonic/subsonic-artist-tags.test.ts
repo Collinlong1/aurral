@@ -284,27 +284,3 @@ test("a playlist track that plays a Library file is that Library song, however i
   assert.equal(entry.album, "Bach Covers");
   assert.equal(entry.artist, "AC/DC");
 });
-
-test("the web app learns which artist name tracks show, and queued tracks carry their tag", async () => {
-  const { default: health } = await import("../../backend/routes/health.ts");
-  const { toQueueTracks } = await import("../../backend/routes/library/handlers/queueTracks.ts");
-  const { signedInAs } = await import("../helpers/honoApp.ts");
-  const app = signedInAs(undefined).route("/", health);
-  const source = async () =>
-    ((await (await app.request("/health")).json()) as { trackArtistSource: string })
-      .trackArtistSource;
-  try {
-    setArtistSource("tags");
-    assert.equal(await source(), "tags");
-    setArtistSource("library");
-    assert.equal(await source(), "library");
-  } finally {
-    setArtistSource("tags");
-  }
-
-  const thunder = db
-    .prepare<[], { id: number }>("SELECT id FROM library_tracks WHERE title = 'Thunder'")
-    .get()!;
-  const [queued] = toQueueTracks([thunder.id]);
-  assert.equal(queued?.tagArtist, "AC/DC");
-});

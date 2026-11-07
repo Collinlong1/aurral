@@ -12,12 +12,9 @@ import { usePlaylistArtwork } from "../hooks/usePlaylistArtwork.ts";
 import { getArtistRecordId } from "../utils/artistTaste";
 import RouteLink from "./RouteLink";
 import Tooltip from "./Tooltip";
-import { trackArtistLabel } from "../utils/trackArtist.ts";
 
 export type SearchItem = NonNullable<Parameters<typeof getSearchResultKey>[0]> & {
   status?: string;
-  // A Library track file's ARTIST tag.
-  tagArtist?: string | null;
 };
 export type SearchImageMap = Record<string, string | null | undefined>;
 
@@ -62,11 +59,7 @@ function getSecondaryLabel(item: SearchItem) {
     return item.artistName;
   }
   if (item.type === "track") {
-    return (
-      [trackArtistLabel(item.artistName, item.tagArtist), item.albumTitle]
-        .filter(Boolean)
-        .join(" · ") || null
-    );
+    return [item.artistName, item.albumTitle].filter(Boolean).join(" · ") || null;
   }
   if (item.type === "playlist") return getPlaylistResultDetail(item);
   return null;

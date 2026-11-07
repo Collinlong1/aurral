@@ -8,7 +8,6 @@ import { isAlbumCompleteInLibrary } from "../utils/albumAddAction";
 import RouteLink from "./RouteLink";
 import ArtworkImage from "./ArtworkImage";
 import { useThemeDocument } from "../hooks/useThemeDocument.ts";
-import { trackArtistLabel } from "../utils/trackArtist.ts";
 
 type PreviewTrack = { title?: string | null };
 
@@ -26,7 +25,7 @@ function getMetaLabel(item: SearchItem | null | undefined) {
     return item.artistName ? `${label} · ${item.artistName}` : label;
   }
   if (item?.type === "track") {
-    return item.artistName ? `Song · ${trackArtistLabel(item.artistName, item.tagArtist)}` : "Song";
+    return item.artistName ? `Song · ${item.artistName}` : "Song";
   }
   if (item?.type === "playlist") {
     return item.trackCount != null

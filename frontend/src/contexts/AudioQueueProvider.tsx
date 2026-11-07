@@ -54,7 +54,6 @@ import {
   mediaSessionArtwork,
   mediaSessionPosition,
 } from "../utils/mediaSession";
-import { trackArtistLabel } from "../utils/trackArtist.ts";
 
 const SHARED_VOLUME_KEY = "aurral.preview.volume";
 const SHARED_MUTED_KEY = "aurral.preview.muted";
@@ -890,7 +889,7 @@ export function AudioQueueProvider({ children }: { children: ReactNode }) {
     mediaSession.metadata = currentTrack
       ? new MediaMetadata({
           title: currentTrack.title || "",
-          artist: trackArtistLabel(currentTrack.artist || "", currentTrack.tagArtist),
+          artist: currentTrack.artist || "",
           album: currentTrack.album || "",
           artwork: mediaSessionArtwork(currentTrack.artwork, window.location.href),
         })

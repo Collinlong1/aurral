@@ -27,7 +27,6 @@ import TooltipButton from "./TooltipButton";
 import PlayerLyrics from "./PlayerLyrics";
 import PillToggle from "./PillToggle";
 import { isAutoplayEntry } from "../utils/audioQueue";
-import { trackArtistLabel } from "../utils/trackArtist.ts";
 import { useAuth } from "../contexts/AuthContext";
 import { CreatePlaylistModal } from "./PlaylistModals";
 import { useTrackSaveActions } from "../pages/useTrackSaveActions";
@@ -94,11 +93,7 @@ function QueueRow({ entry, onPlay, onRemove }: QueueRowProps) {
         <QueueArt src={track.artwork} />
         <span className="player-queue__copy">
           <span className="player-queue__name">{title}</span>
-          {track.artist ? (
-            <span className="player-queue__artist">
-              {trackArtistLabel(track.artist, track.tagArtist)}
-            </span>
-          ) : null}
+          {track.artist ? <span className="player-queue__artist">{track.artist}</span> : null}
         </span>
       </button>
       <TooltipButton
@@ -391,9 +386,7 @@ export function PlayerQueuePanel({
                 <span className="player-queue__copy">
                   <span className="player-queue__name">{currentTrack.title}</span>
                   {currentTrack.artist ? (
-                    <span className="player-queue__artist">
-                      {trackArtistLabel(currentTrack.artist, currentTrack.tagArtist)}
-                    </span>
+                    <span className="player-queue__artist">{currentTrack.artist}</span>
                   ) : null}
                 </span>
               </div>

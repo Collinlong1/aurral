@@ -91,7 +91,6 @@ import { queryClient, queryKeys } from "../../queryClient.ts";
 import { usePluginActions } from "../../hooks/usePluginActions.ts";
 import { showFavoriteRemoved } from "../../utils/favoriteUndo.ts";
 import { libraryAlbumPath as albumLink } from "../../../../lib/albumPath.ts";
-import { fileTagArtist, trackArtistLabel } from "../../utils/trackArtist.ts";
 import {
   type LibraryPageTrack,
   type LibraryRemoval,
@@ -773,7 +772,6 @@ export function useLibraryActions({
         id: track.id,
         title: track.title,
         artist: track.artistName || artist?.name || "Unknown Artist",
-        tagArtist: fileTagArtist(track.files, album?.id ?? null),
         album: album?.title || track.albumName || "Unknown Album",
         src:
           file?.previewUrl ||
@@ -1202,10 +1200,7 @@ export function useLibraryActions({
       downloadState?.status || (backgroundDownload ? "downloading" : null),
     );
     const active = String(currentTrack?.id) === String(track.id) && matchesSource(LIBRARY_SOURCE);
-    const artistName = trackArtistLabel(
-      track.artistName || artist?.name || "Unknown Artist",
-      fileTagArtist(track.files, album?.id ?? null),
-    );
+    const artistName = track.artistName || artist?.name || "Unknown Artist";
     const albumName = album?.title || track.albumName || "Unknown Album";
     const trackNumber = track.albums?.find(
       (entry) => String(entry.albumId) === String(album?.id),

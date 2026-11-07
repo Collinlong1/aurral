@@ -200,14 +200,7 @@ const manualSearchQuery = v.object({
 
 // A Library file's current names, leaving the job's own where the Library has none.
 const withLibraryNames = (
-  info:
-    | {
-        trackName: string;
-        artistName: string | null;
-        albumName: string | null;
-        tagArtist: string | null;
-      }
-    | undefined,
+  info: { trackName: string; artistName: string | null; albumName: string | null } | undefined,
 ) =>
   info
     ? {
@@ -290,7 +283,6 @@ export default new Hono<AppEnv>()
         accessibleJobs.map((job, index) => ({
           ...toPublicJob(job, profile),
           ...withLibraryNames(libraryInfo.get(String(job.id))),
-          tagArtist: libraryInfo.get(String(job.id))?.tagArtist ?? null,
           libraryOwned: libraryOwnership[index] === true,
           libraryCoverUrl: libraryCovers.get(String(job.id)) ?? null,
           ...(customArtwork.has(String(job.id)) && {

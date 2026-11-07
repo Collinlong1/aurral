@@ -370,27 +370,6 @@ test("a playlist track playing a Library file shows the Library's current names"
     );
   };
   assert.deepEqual((await names())[libraryJob!], ["Tagged Song", "Tagged Artist", "Tagged Album"]);
-
-  // The file's ARTIST tag rides along for the web app to show.
-  const tagArtist = async () => {
-    const response = await fetch(`${baseUrl}/api/playlists/jobs/${playlist.id}`);
-    const jobs = (await response.json()) as { id: string; tagArtist: string | null }[];
-    return Object.fromEntries(jobs.map((job) => [job.id, job.tagArtist]));
-  };
-  assert.deepEqual(await tagArtist(), { [libraryJob!]: null, [otherJob!]: null });
-  db.prepare("UPDATE library_media_files SET artist_tags_json = ? WHERE path = ?").run(
-    JSON.stringify({ artist: "Tagged Artist feat. Guest" }),
-    filePath,
-  );
-  assert.deepEqual(await tagArtist(), {
-    [libraryJob!]: "Tagged Artist feat. Guest",
-    [otherJob!]: null,
-  });
-  db.prepare("UPDATE library_media_files SET artist_tags_json = ? WHERE path = ?").run(
-    "not json",
-    filePath,
-  );
-  assert.deepEqual(await tagArtist(), { [libraryJob!]: null, [otherJob!]: null });
   assert.deepEqual((await names())[otherJob!], [
     "Not In Library",
     "Nowhere Artist",
