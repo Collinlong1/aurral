@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import * as v from "valibot";
 import { dbOps } from "../db/helpers/index.ts";
@@ -151,6 +152,15 @@ export function readAppSettings() {
       },
     },
   };
+}
+
+function isReadableFile(filePath: string) {
+  try {
+    fs.accessSync(filePath, fs.constants.R_OK);
+    return fs.statSync(filePath).isFile();
+  } catch {
+    return false;
+  }
 }
 
 function normalizeIntegrationPatch(
@@ -381,6 +391,15 @@ function normalizeIntegrationPatch(
     const validation = validateDownloadFolderPath(stagingPath, undefined, { create: true });
     if (!validation.valid) return `Invalid yt-dlp staging path: ${validation.error}`;
     nextYtdlp.stagingPath = validation.path;
+    const cookiesPath = String(nextYtdlp.cookiesPath || "").trim();
+    nextYtdlp.cookiesPath = cookiesPath;
+    if (
+      cookiesPath &&
+      cookiesPath !== currentSettings.integrations?.ytdlp?.cookiesPath &&
+      !isReadableFile(cookiesPath)
+    ) {
+      return `Cannot read the yt-dlp cookies file ${nextYtdlp.cookiesPath}`;
+    }
     Reflect.deleteProperty(nextYtdlp, "binaryPath");
     Reflect.deleteProperty(nextYtdlp, "audioFormat");
     integrations.ytdlp = nextYtdlp;
@@ -603,9 +622,9 @@ export async function saveAppSettings(input: v.InferOutput<typeof appSettingsPat
     scheduleLibraryScan({ includeLidarr: lidarrActive });
     if (!lidarrActive) {
       const { invalidateLidarrArtistCache } = await import("./libraryManager.ts");
-      const { enqueueSystemTaskJob } = await import("./honkerDb.ts");
+      const { enqueueSystemTask } = await import("./jobs/queues.ts");
       invalidateLidarrArtistCache();
-      enqueueSystemTaskJob({ kind: "lidarr-files-release" });
+      enqueueSystemTask({ kind: "lidarr-files-release" });
     }
   }
   const { downloadClientRegistry } = await import("./download/downloadClientSettings.ts");
@@ -623,12 +642,12 @@ export async function saveAppSettings(input: v.InferOutput<typeof appSettingsPat
     JSON.stringify(updatedSettings.qualityProfile) !==
       JSON.stringify(currentSettings.qualityProfile)
   ) {
-    const { enqueueSystemTaskJob } = await import("./honkerDb.ts");
-    enqueueSystemTaskJob({ kind: "quality-profile-refresh" }, { priority: -10 });
+    const { enqueueSystemTask } = await import("./jobs/queues.ts");
+    enqueueSystemTask({ kind: "quality-profile-refresh" }, { priority: -10 });
   }
   if (!isDeepStrictEqual(newsBefore, getNewsSettings())) {
-    const { enqueueSystemTaskJob } = await import("./honkerDb.ts");
-    enqueueSystemTaskJob({ kind: "news-refresh" });
+    const { enqueueSystemTask } = await import("./jobs/queues.ts");
+    enqueueSystemTask({ kind: "news-refresh" });
   }
   const reconciled = reconcileLocalNetworkBypassSetting().settings;
   if (localBypassWasEnabled && reconciled?.security?.localNetworkBypass?.enabled !== true) {

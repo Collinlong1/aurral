@@ -84,6 +84,7 @@ export const defaultData = {
         enabled: true,
         priority: 50,
         stagingPath: "",
+        cookiesPath: "",
       },
       deemix: {
         enabled: false,
@@ -124,7 +125,7 @@ export const defaultData = {
         url: "",
         token: "",
         notifyDiscoveryUpdated: false,
-        notifyWeeklyFlowDone: false,
+        notifyFlowDone: false,
         notifyRequestMade: false,
         notifyRequestAvailable: false,
         notifyArtistAdded: false,

@@ -23,7 +23,6 @@ import {
   Workflow,
   Settings,
   LogOut,
-  Ban,
   ChevronLeft,
 } from "./icons";
 import Sidebar from "./Sidebar";
@@ -40,6 +39,7 @@ import {
 } from "../pages/Settings/settingsRoute";
 import { useModalDialog } from "../hooks/useModalDialog.ts";
 import { useSectionNav } from "../navigation/useSectionNav.ts";
+import { useNavBeta } from "../navigation/navBeta.ts";
 import { isLibrarySectionPath, useDiscoverRecent } from "../contexts/DiscoverRecentProvider";
 
 const SIDEBAR_THRESHOLD = 100;
@@ -114,6 +114,8 @@ function Layout({ children, headerActions }: LayoutProps) {
   const scrollPositionsRef = useRef(new Map<string, number>());
   const scrolledPageRef = useRef<{ pathname: string; search: string } | null>(null);
   const sectionNav = useSectionNav();
+  const sectionRoot = sectionNav?.root ? sectionNav : null;
+  const navBeta = useNavBeta();
   const { isDiscoverSectionActive } = useDiscoverRecent();
   const sectionBarRef = useRef<HTMLElement>(null);
   const { authRequired, canLogOut, logout, user, bootstrap } = useAuth();
@@ -166,7 +168,9 @@ function Layout({ children, headerActions }: LayoutProps) {
 
   const isActive = useCallback(
     (path: string) => {
-      if (path === "/") return isDiscoverSectionActive;
+      if (path === "/") {
+        return isDiscoverSectionActive || (navBeta && location.pathname === "/discover/news");
+      }
       if (path.startsWith("/shows")) {
         return location.pathname.startsWith("/shows");
       }
@@ -181,7 +185,7 @@ function Layout({ children, headerActions }: LayoutProps) {
       }
       return location.pathname === path;
     },
-    [isDiscoverSectionActive, location.pathname],
+    [isDiscoverSectionActive, location.pathname, navBeta],
   );
 
   const mobilePrimaryItems = [
@@ -201,7 +205,6 @@ function Layout({ children, headerActions }: LayoutProps) {
       ...(bootstrap?.ticketmasterConfigured
         ? [{ path: "/shows/all", label: "Shows", icon: Ticket }]
         : []),
-      { path: "/blocklist", label: "Blocklist", icon: Ban },
     ];
     return items.filter(
       (item) =>
@@ -218,7 +221,7 @@ function Layout({ children, headerActions }: LayoutProps) {
   }, [navigate]);
 
   useEdgeSwipeBack(mainWrapRef, {
-    enabled: !sectionNav,
+    enabled: !sectionRoot,
     onBack: handleMobileBack,
     resetKey: location.key,
   });
@@ -373,9 +376,32 @@ function Layout({ children, headerActions }: LayoutProps) {
   }, [location.pathname]);
 
   useEffect(() => {
+    if (!navBeta || !sectionRoot) return undefined;
+    const onKeyDown = (event: KeyboardEvent) => {
+      const step = event.key === "[" ? -1 : event.key === "]" ? 1 : 0;
+      if (!step || event.defaultPrevented || event.isComposing) return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target instanceof Element ? event.target : null;
+      if (
+        target?.closest("input, textarea, select, [contenteditable]:not([contenteditable='false'])")
+      ) {
+        return;
+      }
+      if (document.querySelector("[aria-modal='true']")) return;
+      const { items } = sectionRoot;
+      const next = items[items.findIndex((item) => item.active) + step];
+      if (!next) return;
+      event.preventDefault();
+      navigate(next.path, { replace: true });
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [navBeta, navigate, sectionRoot]);
+
+  useEffect(() => {
     const activeChip = sectionBarRef.current?.querySelector('[aria-current="page"]');
     activeChip?.scrollIntoView({ block: "nearest", inline: "center" });
-  }, [location.pathname, location.search, sectionNav?.id]);
+  }, [location.pathname, location.search, sectionRoot?.id]);
 
   useEffect(() => {
     let frameId: number | undefined;
@@ -457,6 +483,7 @@ function Layout({ children, headerActions }: LayoutProps) {
       data-sidebar-mode={sidebarMode}
       data-resizing={isResizing || undefined}
       data-player-docked={!playerMinimized || undefined}
+      data-nav={navBeta ? "beta" : undefined}
       style={{
         "--sidebar-width": `${sidebarWidth}px`,
       }}
@@ -496,7 +523,7 @@ function Layout({ children, headerActions }: LayoutProps) {
         }${isPlayerActive ? " app-content--player-active" : ""}`}
       >
         <header className="app-topbar">
-          {!sectionNav ? (
+          {!sectionRoot ? (
             <button
               type="button"
               className="app-mobile-back"
@@ -505,6 +532,25 @@ function Layout({ children, headerActions }: LayoutProps) {
             >
               <ChevronLeft aria-hidden="true" />
             </button>
+          ) : null}
+
+          {navBeta && sectionNav ? (
+            <nav className="app-topbar-tabs" aria-label={sectionNav.label}>
+              {sidebarMode === "icons" ? (
+                <span className="app-topbar-tabs__title">{sectionNav.title}</span>
+              ) : null}
+              {sectionNav.items.map((item) => (
+                <RouteLink
+                  key={item.id}
+                  to={item.path}
+                  replace={sectionNav.root}
+                  className={`app-topbar-tabs__tab${item.active ? " is-active" : ""}`}
+                  aria-current={item.active ? "page" : undefined}
+                >
+                  {item.label}
+                </RouteLink>
+              ))}
+            </nav>
           ) : null}
 
           <GlobalSearch />
@@ -516,9 +562,9 @@ function Layout({ children, headerActions }: LayoutProps) {
           </div>
         </header>
 
-        {sectionNav ? (
-          <nav ref={sectionBarRef} className="app-section-bar" aria-label={sectionNav.label}>
-            {sectionNav.items.map((item) => (
+        {sectionRoot ? (
+          <nav ref={sectionBarRef} className="app-section-bar" aria-label={sectionRoot.label}>
+            {sectionRoot.items.map((item) => (
               <RouteLink
                 key={item.id}
                 to={item.path}

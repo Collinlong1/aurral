@@ -1,5 +1,9 @@
 import type { InferRequestType } from "hono/client";
-import { resolveApiPath } from "./api/core.ts";
+import {
+  buildAuthenticatedApiUrl,
+  resolveApiPath,
+  resolveAuthenticatedApiAssetUrl,
+} from "./api/core.ts";
 import type { libraryRadioClient } from "./api/clients/libraryRadio.ts";
 import type { LibraryTrack } from "./libraryPageData.ts";
 import { shuffle } from "../../../lib/shuffle.ts";
@@ -65,6 +69,8 @@ export type QueueTrackInput = {
   trackMbid?: string | null;
   libraryTrackId?: string | number | null;
   libraryAlbumId?: string | number | null;
+  libraryArtistId?: string | number | null;
+  favoriteId?: string | null;
 };
 
 function extensionFromPath(value: unknown) {
@@ -140,6 +146,8 @@ export function normalizeQueueTrack(track: QueueTrackInput, overrides: QueueTrac
     trackMbid: track?.trackMbid ?? overrides.trackMbid ?? null,
     libraryTrackId: track?.libraryTrackId ?? null,
     libraryAlbumId: track?.libraryAlbumId ?? null,
+    libraryArtistId: track?.libraryArtistId ?? null,
+    favoriteId: track?.favoriteId ?? null,
     ...overrides,
   };
   return {
@@ -156,6 +164,18 @@ export function normalizeQueueTrack(track: QueueTrackInput, overrides: QueueTrac
 }
 
 type QueueTrack = ReturnType<typeof normalizeQueueTrack>;
+
+export const normalizeStreamQueueTrack = ({
+  streamPath,
+  artworkUrl,
+  ...track
+}: QueueTrackInput & { streamPath: string; artworkUrl?: string | null }) =>
+  normalizeQueueTrack({
+    ...track,
+    src: buildAuthenticatedApiUrl(streamPath),
+    artwork: resolveAuthenticatedApiAssetUrl(artworkUrl),
+    recordHistory: true,
+  });
 
 export function normalizePlaylistQueueTrack(
   track: QueueTrackInput,
@@ -178,6 +198,7 @@ export function normalizePlaylistQueueTrack(
       durationMs: track.durationMs,
       libraryTrackId: track.libraryTrackId,
       libraryAlbumId: track.libraryAlbumId,
+      favoriteId: track.favoriteId,
       recordHistory: track?.recordHistory !== false,
     },
     overrides,

@@ -43,6 +43,7 @@ import {
   runQualityUpgradeCheck,
 } from "../../../services/qualityProfileService.ts";
 import { getLibraryTrackOwnershipBatch } from "../../../services/libraryQueryService.ts";
+import { playlistTrackFavoriteIds } from "../../../services/subsonicLibraryService.ts";
 import { logger, safeLogDiagnostic } from "../../../services/logger.ts";
 import {
   isDownloadOwnerProcess,
@@ -275,6 +276,7 @@ export default new Hono<AppEnv>()
       const libraryOwnership = getLibraryTrackOwnershipBatch(accessibleJobs);
       const libraryCovers = getLibraryCoverUrlsForJobs(accessibleJobs);
       const libraryInfo = getLibraryTrackInfoForJobs(accessibleJobs);
+      const favoriteIds = playlistTrackFavoriteIds(playlistId, accessibleJobs);
       const customArtwork = getCustomArtworkMap(
         "playlist-track",
         accessibleJobs.map((job) => job.id),
@@ -285,6 +287,7 @@ export default new Hono<AppEnv>()
           ...withLibraryNames(libraryInfo.get(String(job.id))),
           libraryOwned: libraryOwnership[index] === true,
           libraryCoverUrl: libraryCovers.get(String(job.id)) ?? null,
+          favoriteId: favoriteIds[index],
           ...(customArtwork.has(String(job.id)) && {
             artworkUrl: buildCustomArtworkUrl(
               "playlist-track",

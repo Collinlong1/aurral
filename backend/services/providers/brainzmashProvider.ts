@@ -223,7 +223,7 @@ function createMetadataCooldownError(remainingMs: number) {
   return error;
 }
 
-function isMetadataCircuitError(error: unknown) {
+export function isMetadataCircuitError(error: unknown) {
   const failure = asAppError(error);
   return (
     failure?.code === "ERR_METADATA_FORBIDDEN" ||
@@ -694,6 +694,14 @@ function chooseTracklist(pool: NormalizedRelease[], trackCount: number) {
 export async function getArtistByMbid(mbid: string, { signal }: MetadataRequestOptions = {}) {
   const data = await request(artistDetailSchema, `/artist/${mbid}`, {}, { signal });
   return toNormalizedArtist(data);
+}
+
+export async function getCachedArtistByMbid(mbid: string) {
+  const cached = await readCachedMetadata(
+    `${getMetadataBaseUrl()}/artist/${mbid}:{}`,
+    artistDetailSchema,
+  );
+  return cached ? toNormalizedArtist(cached.value) : null;
 }
 
 export async function getAlbumByMbid(

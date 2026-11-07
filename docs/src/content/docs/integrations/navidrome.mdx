@@ -14,7 +14,8 @@ Aurral serves the Subsonic API at `/rest`, for example `/rest/ping.view`. It sup
 - XML and JSON responses
 - Browsing and search of Library artists, albums, and tracks
 - Artwork, genres, and direct streaming with byte ranges
-- Favorites for each user
+- Favorites and ratings for each user
+- Artist photos, and biographies of artists Aurral has already looked up
 - Playlists: `createPlaylist`, `updatePlaylist`, and `deletePlaylist`
 - Flows and static playlists through `getPlaylists` and `getPlaylist`
 - Play history through `scrobble.view`
@@ -48,7 +49,7 @@ When a Subsonic client adds a flow track or static playlist track to a playlist,
 
 Subsonic clients can edit static playlists but not flows. Editing a flow returns error `50`. A client removes songs by their positions in the playlist it last loaded. If a position no longer exists, Aurral returns error `70` and changes nothing, so the client can reload the playlist and try again.
 
-When a Subsonic client favorites a flow track, Aurral also adds it to the Library. To keep the favorite without adding the track, turn off **Favorite flow tracks** in **Settings > General > Subsonic**. This setting does not affect tracks that are already in the Library.
+When a Subsonic client favorites a flow track, Aurral also adds it to the Library. To keep the favorite without adding the track, turn off **Favorite flow tracks** in **Settings > Library**. This setting does not affect tracks that are already in the Library.
 
 ### Play history
 

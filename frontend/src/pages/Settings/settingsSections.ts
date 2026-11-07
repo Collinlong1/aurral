@@ -88,7 +88,8 @@ const SETTINGS_SEARCH: Record<SettingsSectionId, Record<string, SettingsSearchEn
   },
   listening: {
     Services: "scrobbling listening history recommendations",
-    "Discovery tastes": "reset more like this less like this blocklist",
+    "Discovery tastes": "reset more like this less like this",
+    Blocklist: { item: "blocklist", keywords: "block unblock blocked artists genres hide" },
     "Last.fm": { item: "lastfm", keywords: "scrobbling listening history" },
     ListenBrainz: { item: "listenbrainz", keywords: "scrobbling user token listening history" },
     Koito: { item: "koito", keywords: "scrobbling API key URL listening history" },
@@ -100,6 +101,8 @@ const SETTINGS_SEARCH: Record<SettingsSectionId, Record<string, SettingsSearchEn
   appearance: {
     "Color scheme": "dark light system mode",
     Theme: "presets custom colors import immersive mode artwork tint",
+    Navigation: "new beta sidebar tabs top bar playlists",
+    "Artist pages": "YouTube music videos hide",
     Sidebar: { keywords: "environment art backdrop", when: "sidebarArt" },
   },
   "shared-links": {
@@ -107,7 +110,6 @@ const SETTINGS_SEARCH: Record<SettingsSectionId, Record<string, SettingsSearchEn
   },
   general: {
     Display: "date and time format all users",
-    Subsonic: "favorite flow tracks keep clients",
     "API access": "API key X-Api-Key api_key admin authentication copy rotate",
     Backup: "back up restore export import download upload config database migrate move server",
   },
@@ -119,7 +121,7 @@ const SETTINGS_SEARCH: Record<SettingsSectionId, Record<string, SettingsSearchEn
     "Default permissions": { item: "defaults", keywords: "new users permissions SSO register" },
   },
   library: {
-    "Library folder": "downloads path media root",
+    "Library folder": "downloads path media root favorite flow tracks keep",
     "Playlist files": "M3U Navidrome Plex Jellyfin media server playlists owner",
     "Read-only folders": "existing music never changes",
     "Import a folder": "ingest existing music move copy hardlink fill in missing tags",
@@ -145,7 +147,7 @@ const SETTINGS_SEARCH: Record<SettingsSectionId, Record<string, SettingsSearchEn
     NZBGet: { item: "nzbget", keywords: "Usenet download client" },
     SABnzbd: { item: "sabnzbd", keywords: "Usenet download client" },
     Tidarr: { item: "tidarr", keywords: "Tidal download client" },
-    "yt-dlp": { item: "ytdlp", keywords: "YouTube download client staging" },
+    "yt-dlp": { item: "ytdlp", keywords: "YouTube download client staging cookies" },
     deemix: { item: "deemix", keywords: "Deezer download client bitrate" },
     Prowlarr: { item: "prowlarr", keywords: "indexers indexer manager search usenet categories" },
     "Quality profile": {

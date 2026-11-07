@@ -171,6 +171,7 @@ export const normalizeSettings = (savedSettings: SavedSettings) => {
         enabled: true,
         priority: 50,
         stagingPath: "",
+        cookiesPath: "",
         ...(savedSettings.integrations?.ytdlp || {}),
       },
       deemix: {
@@ -209,7 +210,7 @@ export const normalizeSettings = (savedSettings: SavedSettings) => {
         url: "",
         token: "",
         notifyDiscoveryUpdated: false,
-        notifyWeeklyFlowDone: false,
+        notifyFlowDone: false,
         notifyRequestMade: false,
         notifyRequestAvailable: false,
         notifyArtistAdded: false,

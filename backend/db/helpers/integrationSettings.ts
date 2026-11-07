@@ -92,7 +92,7 @@ export const integrationSettingsSchema = v.looseObject({
     addPaused: flag,
   }),
   tidarr: service({ enabled: flag, url: text, apiKey: text, priority: count }),
-  ytdlp: service({ enabled: flag, priority: count, stagingPath: text }),
+  ytdlp: service({ enabled: flag, priority: count, stagingPath: text, cookiesPath: text }),
   deemix: service({ enabled: flag, url: text, bitrate: count, priority: count }),
   ticketmaster: service({
     apiKey: text,
@@ -132,7 +132,7 @@ export const integrationSettingsSchema = v.looseObject({
     url: text,
     token: text,
     notifyDiscoveryUpdated: flag,
-    notifyWeeklyFlowDone: flag,
+    notifyFlowDone: flag,
     notifyRequestMade: flag,
     notifyRequestAvailable: flag,
     notifyArtistAdded: flag,

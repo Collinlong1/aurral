@@ -71,6 +71,8 @@ type SubsonicEntry = {
   starred: string;
   genre: string;
   musicBrainzId: string;
+  artistImageUrl: string;
+  roles: string[];
   [key: string]: unknown;
 };
 type SubsonicPlaylist = SubsonicEntry & { changed: string; entry: SubsonicEntry[] };
@@ -105,7 +107,7 @@ type SubsonicPayload = {
   songsByGenre: { song: SubsonicEntry[] };
   genres: { genre: { albumCount: number; songCount: number; value: string }[] };
   artistInfo: { similarArtist: SubsonicEntry[] };
-  artistInfo2: { similarArtist: SubsonicEntry[] };
+  artistInfo2: { similarArtist: SubsonicEntry[]; largeImageUrl: string };
   lyrics: { value: string };
   lyricsList: {
     structuredLyrics: {
@@ -1031,6 +1033,7 @@ test("browses library artists, albums, and songs with stable protocol IDs", asyn
   const artistsResult = responseJson(await request("getArtists"));
   const artist = requireFixture(requireFixture(artistsResult.artists.index[0]).artist[0]);
   assert.match(artist.id, /^artist:/);
+  assert.deepEqual([...artist.roles], ["albumartist"]);
   assert.equal(artistsResult.artists.ignoredArticles, "The El La Los Las Le Les");
   const artistsXml = await request("getArtists", { f: "xml" });
   assert.match(artistsXml.body, /<artists[^>]*><index name="C"><artist id="artist:/);
@@ -1110,10 +1113,9 @@ test("browses library artists, albums, and songs with stable protocol IDs", asyn
     [...responseJson(await request("getArtistInfo", { id: artist.id })).artistInfo.similarArtist],
     [],
   );
-  assert.deepEqual(
-    [...responseJson(await request("getArtistInfo2", { id: artist.id })).artistInfo2.similarArtist],
-    [],
-  );
+  const artistInfo2 = responseJson(await request("getArtistInfo2", { id: artist.id })).artistInfo2;
+  assert.deepEqual([...artistInfo2.similarArtist], []);
+  assert.equal(artistInfo2.largeImageUrl, artist.artistImageUrl);
   assert.equal(
     responseJson(await request("getArtistInfo2", { id: "artist:missing" })).error.code,
     70,
@@ -1305,6 +1307,90 @@ test("getIndexes reports star changes through lastModified", async () => {
   assert.equal((await indexesSince(unstarred.lastModified)).index, undefined);
 });
 
+test("serves artist images at signed URLs that need no credentials", async () => {
+  const cover = path.join(path.dirname(fixturePath), "cover.jpg");
+  await writeFile(
+    cover,
+    await sharp({
+      create: { width: 24, height: 24, channels: 3, background: { r: 200, g: 40, b: 40 } },
+    })
+      .jpeg()
+      .toBuffer(),
+  );
+  const artistRow = db
+    .prepare<[], Pick<import("../../backend/db/rows.ts").LibraryArtistsRow, "id" | "mbid">>(
+      "SELECT id, mbid FROM library_artists ORDER BY id LIMIT 1",
+    )
+    .get();
+  assert.ok(artistRow != null);
+  db.prepare("UPDATE library_artists SET mbid = NULL WHERE id = ?").run(artistRow.id);
+  try {
+    const artist = requireFixture(
+      requireFixture(responseJson(await request("getArtists")).artists.index[0]).artist[0],
+    );
+    const signed = await fetch(artist.artistImageUrl);
+    assert.equal(signed.status, 200);
+    assert.match(signed.headers.get("content-type") ?? "", /^image\//);
+    assert.ok((await signed.arrayBuffer()).byteLength > 0);
+
+    const tampered = new URL(artist.artistImageUrl);
+    const sig = tampered.searchParams.get("sig") ?? "";
+    tampered.searchParams.set("sig", `${sig.startsWith("A") ? "B" : "A"}${sig.slice(1)}`);
+    assert.equal((await fetch(tampered)).status, 404);
+  } finally {
+    db.prepare("UPDATE library_artists SET mbid = ? WHERE id = ?").run(
+      artistRow.mbid,
+      artistRow.id,
+    );
+    await rm(cover, { force: true });
+  }
+});
+
+test("setRating keeps a rating per user and reports their average", async () => {
+  const song = requireFixture(
+    responseJson(await request("search3", { query: "Canonical Song" })).searchResult3.song[0],
+  );
+  const album = requireFixture(
+    responseJson(await request("getAlbumList2", { type: "newest", size: 1 })).albumList2.album[0],
+  );
+  const artistId = album.artistId;
+  const carol = userOps.createUser("rating-carol", hashPassword("password123"), "user");
+  assert.ok(carol != null);
+  const rate = (id: string, rating: number | string, u = "alice") =>
+    request("setRating", { id, rating, u }).then(responseJson);
+  const ratingOf = async (u = "alice") => {
+    const { userRating, averageRating } = responseJson(
+      await request("getSong", { id: song.id, u }),
+    ).song;
+    return { userRating, averageRating };
+  };
+
+  try {
+    const before = responseJson(await request("getIndexes")).indexes.lastModified;
+    assert.equal((await rate(song.id, 4)).status, "ok");
+    assert.ok(responseJson(await request("getIndexes")).indexes.lastModified > before);
+    assert.equal((await rate(song.id, 1, "rating-carol")).status, "ok");
+    assert.deepEqual(await ratingOf(), { userRating: 4, averageRating: 2.5 });
+    assert.deepEqual(await ratingOf("rating-carol"), { userRating: 1, averageRating: 2.5 });
+
+    assert.equal((await rate(album.id, 5)).status, "ok");
+    assert.equal(responseJson(await request("getAlbum", { id: album.id })).album.userRating, 5);
+    assert.equal((await rate(artistId, 3)).status, "ok");
+    assert.equal(
+      responseJson(await request("getArtist", { id: artistId })).artist.averageRating,
+      3,
+    );
+
+    assert.equal((await rate(song.id, 0)).status, "ok");
+    assert.deepEqual(await ratingOf(), { userRating: undefined, averageRating: 1 });
+    assert.equal((await rate(song.id, 6)).error.code, 0);
+    assert.equal((await rate("song:missing", 3)).error.code, 70);
+  } finally {
+    db.prepare("DELETE FROM subsonic_ratings").run();
+    userOps.deleteUser(carol.id);
+  }
+});
+
 test("emits OpenSubsonic XML envelopes and elements", async () => {
   const userXml = await request("getUser", { f: "xml" });
   assert.match(
@@ -1326,6 +1412,12 @@ test("emits OpenSubsonic XML envelopes and elements", async () => {
   );
   const artistDetailXml = await request("getArtist", { f: "xml", id: artist.id });
   assert.doesNotMatch(artistDetailXml.body, /<(?:artists|albumArtists|genres)(?:\s|>)/);
+  const artistInfoXml = await request("getArtistInfo2", { f: "xml", id: artist.id });
+  assert.match(
+    artistInfoXml.body,
+    /<artistInfo2><musicBrainzId>[^<]+<\/musicBrainzId><lastFmUrl>[^<]+<\/lastFmUrl>/,
+  );
+  assert.match(artistInfoXml.body, /<largeImageUrl>[^<]+<\/largeImageUrl><\/artistInfo2>/);
 
   const album = requireFixture(
     responseJson(await request("getArtist", { f: "json", id: artist.id })).artist.album[0],
@@ -1556,8 +1648,8 @@ test("creates durable Subsonic playlists around one promoted library job", async
       db
         .prepare<
           unknown[],
-          { status: import("../../backend/db/rows.ts").PlaylistDownloadJobsRow["status"] }
-        >("SELECT status FROM playlist_download_jobs WHERE id = ?")
+          { status: import("../../backend/db/rows.ts").DownloadJobsRow["status"] }
+        >("SELECT status FROM download_jobs WHERE id = ?")
         .get(canonicalJobId)?.status === "done",
   );
   const firstReady = await waitFor(async () => {
@@ -1577,11 +1669,11 @@ test("creates durable Subsonic playlists around one promoted library job", async
     .prepare<
       unknown[],
       {
-        id: import("../../backend/db/rows.ts").PlaylistDownloadJobsRow["id"];
-        finalPath: import("../../backend/db/rows.ts").PlaylistDownloadJobsRow["final_path"];
+        id: import("../../backend/db/rows.ts").DownloadJobsRow["id"];
+        finalPath: import("../../backend/db/rows.ts").DownloadJobsRow["final_path"];
       }
     >(
-      "SELECT id, final_path AS finalPath FROM playlist_download_jobs WHERE playlist_type = ? AND track_name = ?",
+      "SELECT id, final_path AS finalPath FROM download_jobs WHERE owner_type = ? AND track_name = ?",
     )
     .all("library", "Flow Song");
   assert.equal(libraryJobs.length, 1);
@@ -1652,11 +1744,8 @@ test("failed Subsonic playlist creation rolls back its playlist and jobs", async
     );
     assert.equal(
       db
-        .prepare<
-          unknown[],
-          { id: import("../../backend/db/rows.ts").PlaylistDownloadJobsRow["id"] }
-        >(
-          "SELECT id FROM playlist_download_jobs WHERE playlist_type = ? AND track_name = ? LIMIT 1",
+        .prepare<unknown[], { id: import("../../backend/db/rows.ts").DownloadJobsRow["id"] }>(
+          "SELECT id FROM download_jobs WHERE owner_type = ? AND track_name = ? LIMIT 1",
         )
         .get("library", "Canonical Song"),
       undefined,
@@ -1791,7 +1880,7 @@ test("favorites can keep Flow tracks and respect the auto-keep setting", async (
     Boolean(
       db
         .prepare<unknown[], { "1": unknown }>(
-          "SELECT 1 FROM playlist_download_jobs WHERE playlist_type = ? AND track_name = ? LIMIT 1",
+          "SELECT 1 FROM download_jobs WHERE owner_type = ? AND track_name = ? LIMIT 1",
         )
         .get("library", "Favorite Song"),
     ),
@@ -1811,8 +1900,8 @@ test("favorites can keep Flow tracks and respect the auto-keep setting", async (
   assert.equal(responseJson(await request("unstar", { id: entry.id })).status, "ok");
   assert.equal(responseJson(await request("star", { id: entry.id })).status, "ok");
   const autoKeepJob = db
-    .prepare<unknown[], { id: import("../../backend/db/rows.ts").PlaylistDownloadJobsRow["id"] }>(
-      "SELECT id FROM playlist_download_jobs WHERE playlist_type = ? AND track_name = ? LIMIT 1",
+    .prepare<unknown[], { id: import("../../backend/db/rows.ts").DownloadJobsRow["id"] }>(
+      "SELECT id FROM download_jobs WHERE owner_type = ? AND track_name = ? LIMIT 1",
     )
     .get("library", "Favorite Song");
   assert.ok(autoKeepJob);
@@ -1844,12 +1933,12 @@ test("favoriting a synced playlist track keeps it when the source removes it", a
       .prepare<
         unknown[],
         {
-          id: import("../../backend/db/rows.ts").PlaylistDownloadJobsRow["id"];
-          status: import("../../backend/db/rows.ts").PlaylistDownloadJobsRow["status"];
-          finalPath: import("../../backend/db/rows.ts").PlaylistDownloadJobsRow["final_path"];
+          id: import("../../backend/db/rows.ts").DownloadJobsRow["id"];
+          status: import("../../backend/db/rows.ts").DownloadJobsRow["status"];
+          finalPath: import("../../backend/db/rows.ts").DownloadJobsRow["final_path"];
         }
       >(
-        "SELECT id, status, final_path AS finalPath FROM playlist_download_jobs WHERE playlist_type = ? AND track_name = ? LIMIT 1",
+        "SELECT id, status, final_path AS finalPath FROM download_jobs WHERE owner_type = ? AND track_name = ? LIMIT 1",
       )
       .get("library", track.trackName);
     assert.ok(libraryJob);
@@ -1872,8 +1961,8 @@ test("favoriting a synced playlist track keeps it when the source removes it", a
     const updatedLibraryJob = db
       .prepare<
         unknown[],
-        { finalPath: import("../../backend/db/rows.ts").PlaylistDownloadJobsRow["final_path"] }
-      >("SELECT final_path AS finalPath FROM playlist_download_jobs WHERE id = ?")
+        { finalPath: import("../../backend/db/rows.ts").DownloadJobsRow["final_path"] }
+      >("SELECT final_path AS finalPath FROM download_jobs WHERE id = ?")
       .get(libraryJobId);
     assert.ok(updatedLibraryJob != null);
     await stat(updatedLibraryJob.finalPath!);
@@ -2291,7 +2380,7 @@ test("repairs repeated and form-posted IDs in playlists, favorites, and play que
   );
   const encoded = encodeURIComponent(song.id);
   const libraryJobs = db.prepare<[], { id: string }>(
-    "SELECT id FROM playlist_download_jobs WHERE playlist_type = 'library'",
+    "SELECT id FROM download_jobs WHERE owner_type = 'library'",
   );
   const priorJobs = new Set(libraryJobs.all().map((job) => job.id));
   const name = "shared%3Aplaylist%20name";
