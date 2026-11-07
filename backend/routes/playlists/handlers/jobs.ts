@@ -71,10 +71,7 @@ import {
   listDiskFiles,
   type ImportDiskFileResult,
 } from "../../../services/downloadJobs/importDiskFile.ts";
-import {
-  getLibraryCoverUrlsForJobs,
-  getLibraryTrackInfoForJobs,
-} from "../../../services/playlists/playlistTrackCovers.ts";
+import { getLibraryTrackInfoForJobs } from "../../../services/playlists/playlistTrackCovers.ts";
 import { releaseGroupCoverImageUrl } from "../../../services/releaseGroupCoverService.ts";
 import { asAppError } from "../../../../lib/errors.ts";
 import { validate } from "../../../middleware/validate.ts";
@@ -150,12 +147,8 @@ function trackArtwork(
   job: DownloadJob,
   customArtwork: ReturnType<typeof getCustomArtworkMap>,
   playlistId: string | null,
-  libraryCoverUrl: string | null = null,
 ) {
-  // The album's online cover, else the Library album's own cover, which a track
-  // imported or linked from a file often relies on.
-  const defaultArtworkUrl =
-    (job.albumMbid ? releaseGroupCoverImageUrl(job.albumMbid) : null) || libraryCoverUrl;
+  const defaultArtworkUrl = job.albumMbid ? releaseGroupCoverImageUrl(job.albumMbid) : null;
   const custom = customArtwork.get(String(job.id));
   if (!custom) return { artworkUrl: defaultArtworkUrl };
   const customArtworkUrl = buildCustomArtworkUrl("playlist-track", job.id, custom, { playlistId });
@@ -273,7 +266,6 @@ export default new Hono<AppEnv>()
       const profile = getQualityProfile();
       const accessibleJobs = filterJobsForUser(user, jobs);
       const libraryOwnership = getLibraryTrackOwnershipBatch(accessibleJobs);
-      const libraryCovers = getLibraryCoverUrlsForJobs(accessibleJobs);
       const libraryInfo = getLibraryTrackInfoForJobs(accessibleJobs);
       const favoriteIds = playlistTrackFavoriteIds(playlistId, accessibleJobs);
       const customArtwork = getCustomArtworkMap(
@@ -286,12 +278,7 @@ export default new Hono<AppEnv>()
           ...withLibraryNames(libraryInfo.get(String(job.id))),
           libraryOwned: libraryOwnership[index] === true,
           favoriteId: favoriteIds[index],
-          ...trackArtwork(
-            job,
-            customArtwork,
-            playlistId,
-            libraryCovers.get(String(job.id)) ?? null,
-          ),
+          ...trackArtwork(job, customArtwork, playlistId),
         })),
         200,
       );

@@ -301,45 +301,6 @@ test("keeps album art already in the Library folder and skips crowded folders", 
   assert.deepEqual(await copyAlbumImages(crowded, target), []);
 });
 
-test("a playlist track linked to a Library file gets that album's cover", async () => {
-  const { flowPlaylistConfig } =
-    await import("../../backend/services/playlists/flowPlaylistConfig.ts");
-  await addLibraryFile("Link Artist", "Cover Album", "Covered Song");
-  const [coveredJob, missingJob] = [
-    { artistName: "Link Artist", trackName: "Covered Song" },
-    { artistName: "Link Artist", trackName: "Still Missing" },
-  ].map((track) => {
-    const jobId = downloadTracker.addJob({ ...track, managedBy: "aurral" }, "library");
-    assert.ok(jobId != null);
-    downloadTracker.setFailed(jobId, "No matching source result");
-    return jobId;
-  });
-  const playlist = flowPlaylistConfig.createStaticPlaylist({
-    name: `Covers ${Date.now()}`,
-    tracks: [
-      { artistName: "Link Artist", trackName: "Covered Song", canonicalJobId: coveredJob! },
-      { artistName: "Link Artist", trackName: "Still Missing", canonicalJobId: missingJob! },
-    ],
-  });
-  const [file] = await searchFiles(coveredJob!, "covered song");
-  assert.equal((await linkFile(coveredJob!, file!.fileId)).status, 200);
-  const albumId = (
-    db.prepare("SELECT id FROM library_albums WHERE title = ?").get("Cover Album") as {
-      id: number;
-    }
-  ).id;
-
-  const response = await fetch(`${baseUrl}/api/playlists/jobs/${playlist.id}`);
-  assert.equal(response.status, 200);
-  const jobs = (await response.json()) as { id: string; artworkUrl: string | null }[];
-  // With no album MBID for an online cover, the track uses the Library album's cover.
-  assert.match(
-    String(jobs.find((job) => job.id === coveredJob)?.artworkUrl),
-    new RegExp(`^/api/library/albums/${albumId}/cover`),
-  );
-  assert.equal(jobs.find((job) => job.id === missingJob)?.artworkUrl, null);
-});
-
 test("a playlist track playing a Library file shows the Library's current names", async () => {
   const { flowPlaylistConfig } =
     await import("../../backend/services/playlists/flowPlaylistConfig.ts");
