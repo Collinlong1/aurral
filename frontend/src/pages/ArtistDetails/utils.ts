@@ -85,7 +85,6 @@ interface LibraryAlbum extends Pick<ReleaseGroup, "mbid" | "foreignAlbumId"> {
   id?: string | number | null;
   artistId?: string | number | null;
   monitored?: boolean;
-  statistics?: { sizeOnDisk?: number | null; trackFileCount?: number | null } | null;
 }
 
 export const getApiErrorText = (error: unknown, key: "message" | "error") => {
@@ -128,27 +127,14 @@ export const getTagColor = (name: string | null | undefined) => {
 
 export const isVisibleLibraryAlbum = (
   album: LibraryAlbum | null | undefined,
-  {
-    requestingAlbum = null,
-    discographyIds = null,
-  }: { requestingAlbum?: string | null; discographyIds?: ReadonlySet<string> | null } = {},
+  { requestingAlbum = null }: { requestingAlbum?: string | null } = {},
 ) => {
   if (!album || String(album.id ?? "").startsWith("pending-")) return false;
   if (album.monitored) return true;
-  if (
-    requestingAlbum &&
+  return (
+    !!requestingAlbum &&
     (album.mbid === requestingAlbum || album.foreignAlbumId === requestingAlbum)
-  ) {
-    return true;
-  }
-  // Owned albums that match a release group already show their status in the
-  // discography. Owned albums with no match there (no MusicBrainz match, or a
-  // release missing from the artist's list) have nowhere else to appear.
-  const hasFiles =
-    (album.statistics?.sizeOnDisk ?? 0) > 0 || (album.statistics?.trackFileCount ?? 0) > 0;
-  if (!hasFiles || !discographyIds) return false;
-  const albumIds = [album.mbid, album.foreignAlbumId].filter(Boolean);
-  return !albumIds.some((id) => discographyIds?.has(String(id)));
+  );
 };
 
 export const deduplicateAlbums = <T extends LibraryAlbum>(albums: T[]): T[] => {

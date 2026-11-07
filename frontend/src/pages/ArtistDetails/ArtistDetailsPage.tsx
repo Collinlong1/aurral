@@ -570,7 +570,6 @@ function ArtistDetailsPage() {
           handleReSearchMissingDownloads={library.handleReSearchMissingDownloads}
           onVisibleCoverIdsChange={setVisibleLibraryCoverIds}
           artistName={artistDisplayName}
-          discographyLoading={loadingReleases || loadingAppearsOn}
         />
       )}
 
