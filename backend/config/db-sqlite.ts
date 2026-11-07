@@ -911,37 +911,6 @@ db.transaction(() => {
   );
 }).immediate();
 
-// Script events moved from one set of switches for every script onto each
-// script, the same way webhook events did.
-const scriptEventsMigrationKey = "migration:script-events-per-script-v1";
-db.transaction(() => {
-  const claimed = db
-    .prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)")
-    .run(scriptEventsMigrationKey, "1");
-  if (claimed.changes === 0) return;
-  const stored = db
-    .prepare<[], Pick<SettingsRow, "value">>(
-      "SELECT value FROM settings WHERE key = 'integrations' AND json_valid(value)",
-    )
-    .get();
-  const integrations = v.safeParse(
-    v.looseObject({
-      scripts: v.optional(v.array(v.looseObject({}))),
-      scriptEvents: v.optional(v.record(v.string(), v.unknown())),
-    }),
-    stored ? JSON.parse(stored.value) : null,
-  );
-  if (!integrations.success || !integrations.output.scriptEvents) return;
-  const { scriptEvents, scripts, ...rest } = integrations.output;
-  const events = Object.keys(scriptEvents).filter((event) => scriptEvents[event] === true);
-  db.prepare("UPDATE settings SET value = ? WHERE key = 'integrations'").run(
-    JSON.stringify({
-      ...rest,
-      ...(scripts && { scripts: scripts.map((script) => ({ ...script, events })) }),
-    }),
-  );
-}).immediate();
-
 const perUserDiscoveryMigrationKey = "migration:per-user-discovery-v1";
 db.transaction(() => {
   const claimed = db

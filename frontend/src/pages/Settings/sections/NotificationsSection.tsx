@@ -23,7 +23,6 @@ import {
   SettingsServiceRow,
   useSettingsItem,
 } from "../SettingsLayout";
-import { ScriptDetail, ScriptsGroups, resolveScriptItem } from "./ScriptsSettings";
 
 type Integrations = SettingsState["integrations"];
 type Webhook = Integrations["webhooks"][number];
@@ -378,20 +377,9 @@ export function NotificationsSection() {
   const item = useSettingsItem();
   const { gotify, webhooks } = settings.integrations;
   const webhookItem = resolveWebhookItem(webhooks, item);
-  const scriptItem = resolveScriptItem(settings.integrations.scripts, item);
 
   if (item === "gotify") return <GotifyDetail />;
   if (webhookItem) return <WebhookDetail key={item} index={webhookItem.index} />;
-  if (scriptItem) {
-    return (
-      <ScriptDetail
-        key={item}
-        index={scriptItem.index}
-        EventToggles={EventToggles}
-        eventLabels={EVENT_LABELS}
-      />
-    );
-  }
 
   return (
     <SettingsPage title="Notifications">
@@ -430,7 +418,6 @@ export function NotificationsSection() {
           ))
         )}
       </SettingsGroup>
-      <ScriptsGroups EventToggles={EventToggles} eventLabels={EVENT_LABELS} />
     </SettingsPage>
   );
 }

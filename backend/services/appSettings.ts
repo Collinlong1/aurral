@@ -24,7 +24,6 @@ import { getNewsSettings, normalizeNewsFeeds, normalizeNewsGroups } from "./apiC
 import { normalizeQualityProfile } from "./qualityProfileModel.ts";
 import { getMusicDataSourceName } from "./musicDataSource/index.ts";
 import { asAppError } from "../../lib/errors.ts";
-import { normalizeScriptSettings, readableScriptSettings } from "./scriptHooks.ts";
 
 const objectValue = v.record(v.string(), v.unknown());
 const asObject = (value: unknown) => (v.is(objectValue, value) ? value : undefined);
@@ -143,7 +142,7 @@ export function readAppSettings() {
     rootWarnings: resolveLibraryRootWarnings(settings),
     downloadFolderPath: settings.downloadFolderPath || resolveDownloadRoot(),
     integrations: {
-      ...readableScriptSettings(settings.integrations || {}),
+      ...(settings.integrations || {}),
       news: getNewsSettings(),
       ytdlp: {
         ...(settings.integrations?.ytdlp || {}),
@@ -157,7 +156,6 @@ function normalizeIntegrationPatch(
   integrations: StoredIntegrations,
   currentSettings: AppSettings,
 ): string | null {
-  normalizeScriptSettings(integrations);
   const lidarr = asObject(integrations.lidarr);
   if (lidarr?.externalUrl !== undefined) {
     const trimmedExternalUrl = String(lidarr.externalUrl).trim();
