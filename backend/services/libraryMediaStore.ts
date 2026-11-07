@@ -977,8 +977,6 @@ export function moveLibraryMediaFilePath(source: string, fromPath: string, toPat
   return moved;
 }
 
-const isNameKey = (key: string | null | undefined) => String(key || "").startsWith("name:");
-
 // An upgrade can bring a file with new identity tags. The track keeps its
 // row, favorites, and monitoring, or folds into the track that already has them.
 export function rekeyLibraryTrack(trackId: number, identityKey: string | null) {
@@ -1003,19 +1001,16 @@ export function rekeyLibraryTrack(trackId: number, identityKey: string | null) {
         ).run(key, now(), id);
         return { id, changed: true };
       }
-      // An untagged track's place came from its file's tags; on an album that
-      // already lists the track it folds into, that album's place stands, so
-      // the song is not listed twice.
-      db.prepare<[number, number, number, number]>(
+      db.prepare<[number, number, number]>(
         `INSERT OR IGNORE INTO library_album_tracks (album_id, track_id, disc_number, track_number, created_at)
        SELECT link.album_id, ?, link.disc_number, link.track_number, link.created_at
        FROM library_album_tracks AS link
        WHERE link.track_id = ? AND NOT EXISTS (
          SELECT 1 FROM library_album_tracks AS kept
          WHERE kept.album_id = link.album_id AND kept.track_id = ?
-           AND (? OR (kept.disc_number = link.disc_number AND kept.track_number = link.track_number))
+           AND kept.disc_number = link.disc_number AND kept.track_number = link.track_number
        )`,
-      ).run(target.id, id, target.id, isNameKey(track.identity_key) ? 1 : 0);
+      ).run(target.id, id, target.id);
       db.prepare<[number, number]>(
         "UPDATE library_media_files SET track_id = ? WHERE track_id = ?",
       ).run(target.id, id);
@@ -1200,6 +1195,8 @@ export function unlinkLibraryAlbumTrackWithoutMedia(albumId: number, trackId: nu
   }
   return removed;
 }
+
+const isNameKey = (key: string | null | undefined) => String(key || "").startsWith("name:");
 
 // A file whose tags gained MusicBrainz IDs is still the album and track it
 // was, so those rows take the new identity with their favorites, play counts,
@@ -1813,10 +1810,7 @@ type LibraryTrackCopy = Pick<LibraryAlbumTracksRow, "album_id" | "disc_number" |
 // as one disc for a release of several, the only one with its title that has
 // no file, when no other copy left has that title. A copy tagged with a
 // recording the album's release does not list, as a song downloaded twice
-// carries, is the song the release lists at its place. An untagged copy with
-// no file left, whose file was retagged and moved to the one tagged track
-// with its title that has files, is dropped: it stood for that file, and kept
-// showing as a missing track no download could fill.
+// carries, is the song the release lists at its place.
 function foldLibraryTrackCopies() {
   const links = db
     .prepare<[], LibraryTrackCopy>(
@@ -1880,14 +1874,6 @@ function foldLibraryTrackCopies() {
     for (const [track, match] of [...copies, ...folds]) {
       if (!match) continue;
       becomeAlbumTrack(albumId, track, match);
-      changed += 1;
-    }
-    const folded = new Set(folds.filter(([, match]) => match).map(([track]) => track.id));
-    for (const track of left) {
-      if (folded.has(track.id) || track.has_files) continue;
-      const named = targets.filter((entry) => songKey(entry.title) === songKey(track.title));
-      if (named.length !== 1 || !named[0]?.has_files) continue;
-      unlinkFilelessAlbumTrack(albumId, track.id);
       changed += 1;
     }
   }
