@@ -25,18 +25,8 @@ export const webhookSchema = v.looseObject({
   events: lenient(listOf(v.picklist(NOTIFICATION_EVENTS))),
 });
 
-export const scriptSettingsSchema = v.looseObject({
-  name: text,
-  file: v.string(),
-  args: lenient(listOf(v.string())),
-  timeoutSec: count,
-  enabled: flag,
-  events: lenient(listOf(v.picklist(NOTIFICATION_EVENTS))),
-});
-
 export const integrationSettingsSchema = v.looseObject({
   webhooks: lenient(listOf(webhookSchema)),
-  scripts: lenient(listOf(scriptSettingsSchema)),
   lastfm: service({
     apiKey: text,
     apiSecret: text,

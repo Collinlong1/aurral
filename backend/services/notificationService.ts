@@ -12,8 +12,6 @@ import {
   emitPluginEvent,
   pluginEventDeliverySchema,
 } from "./plugins/pluginEvents.ts";
-import { queueScripts, runScriptJob, scriptJobSchema } from "./scriptHooks.ts";
-import { findLibraryAlbumDir } from "./downloadPaths.ts";
 
 type WebhookTarget = v.InferOutput<typeof webhookSchema>;
 type WebhookHeader = NonNullable<WebhookTarget["headers"]>[number];
@@ -63,7 +61,6 @@ export const queuedNotificationSchema = v.variant("kind", [
     webhook: webhookSchema,
     vars: v.record(v.string(), v.string()),
   }),
-  scriptJobSchema,
 ]);
 
 function logDeliveryFailure(
@@ -165,7 +162,6 @@ export async function deliverQueuedNotification(
     dispatchPluginEvent(payload);
     return;
   }
-  if (payload.kind === "script") return runScriptJob(payload);
   await sendWebhookDirect(payload.webhook, payload.event, payload.vars);
 }
 
@@ -201,8 +197,6 @@ function notify(event: NotificationEvent, { title, message, vars = {}, plugin }:
         vars: resolved,
       });
     }
-    // Custom scripts run on the events switched on for them.
-    queueScripts(integrations ?? {}, event, resolved);
   } catch (error) {
     logger.warn("notifications", "Could not queue a notification", {
       event,
@@ -322,8 +316,6 @@ export function notifyRequestMade(notice: RequestNotice = {}) {
 
 export function notifyRequestAvailable(notice: RequestNotice = {}) {
   const vars = requestVars(notice);
-  // Lidarr-managed albums arrive without a path; find their Library folder.
-  vars.albumPath ||= findLibraryAlbumDir(notice.albumName, notice.artistName);
   const subject = byline(notice.albumName, notice.artistName);
   notify("notifyRequestAvailable", {
     title: "Aurral – Request",

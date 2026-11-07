@@ -218,10 +218,6 @@ export const normalizeSettings = (savedSettings: SavedSettings) => {
         ...(savedSettings.integrations?.gotify || {}),
       },
       webhooks: savedSettings.integrations?.webhooks || [],
-      // Present only while the server has custom scripts enabled.
-      ...(Array.isArray(savedSettings.integrations?.scripts) && {
-        scripts: savedSettings.integrations.scripts,
-      }),
     },
   };
 };

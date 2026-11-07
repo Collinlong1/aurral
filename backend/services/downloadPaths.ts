@@ -1,4 +1,4 @@
-import { readdirSync, statSync, type Dirent } from "fs";
+import { readdirSync, type Dirent } from "fs";
 import fs from "fs/promises";
 import path from "path";
 import {
@@ -115,29 +115,6 @@ export function buildAurralTrackDestination(
   const base = root || resolveDownloadRoot();
   const artistName = existingFolderName(base, artist);
   return path.posix.join(artistName, existingFolderName(path.join(base, artistName), album));
-}
-
-const folderName = (value: string | null | undefined, fallback: string) =>
-  sanitizePathPart(sanitizePathPart(value, "").replace(/^\.+/, ""), fallback);
-
-// The album's folder in the Library, or "" when it is not there.
-export function findLibraryAlbumDir(albumName?: string, artistName?: string) {
-  if (!String(albumName || "").trim()) return "";
-  try {
-    const root = resolveDownloadRoot();
-    const dir = path.resolve(
-      root,
-      buildAurralTrackDestination(
-        null,
-        folderName(artistName, "Unknown Artist"),
-        folderName(albumName, "Unknown Album"),
-        { root },
-      ),
-    );
-    return statSync(dir).isDirectory() ? dir : "";
-  } catch {
-    return "";
-  }
 }
 
 // The Library's naming: Artist/Album/07 - Title.ext, or 2-07 - Title.ext past
