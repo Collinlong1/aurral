@@ -1,4 +1,5 @@
-import axios from "../../../lib/axiosFetch.ts";
+import { http } from "../../../lib/http.ts";
+import { unknownList } from "../../../lib/unknownList.ts";
 import { db } from "../../config/db-sqlite.ts";
 import { userOps } from "../../db/helpers/index.ts";
 import type { LibraryArtistsRow, LibraryEntityGenresRow, PlayEventsRow } from "../../db/rows.ts";
@@ -23,13 +24,11 @@ import {
   type WrappedPeriod,
   type WrappedPlay,
 } from "./metrics.ts";
+import { isRecord } from "../../../lib/isRecord.ts";
 
 const MAX_PLAYS = 100_000;
 const PAGE_SIZE = 500;
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  !!value && typeof value === "object" && !Array.isArray(value);
 const object = (value: unknown) => (isRecord(value) ? value : {});
-const list = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
 const text = (value: unknown) => (typeof value === "string" ? value.trim() : "");
 const number = (value: unknown) => (Number.isFinite(Number(value)) ? Number(value) : 0);
 const timestamp = (value: unknown) =>
@@ -106,7 +105,7 @@ export function lastfmWrappedReader(username: string, period: Period) {
       if (!date || object(row["@attr"]).nowplaying === "true") return [];
       const artist = object(row.artist);
       const album = object(row.album);
-      const artwork = list(row.image)
+      const artwork = unknownList(row.image)
         .map((image) => text(object(image)["#text"]))
         .filter(Boolean)
         .at(-1);
@@ -154,7 +153,9 @@ export function listenbrainzWrappedReader(username: string, period: Period, toke
         artist: text(metadata.artist_name),
         album: text(metadata.release_name),
         trackMbid: text(additional.recording_mbid) || text(mapping.recording_mbid),
-        artistMbid: text(list(additional.artist_mbids)[0]) || text(list(mapping.artist_mbids)[0]),
+        artistMbid:
+          text(unknownList(additional.artist_mbids)[0]) ||
+          text(unknownList(mapping.artist_mbids)[0]),
         albumMbid: text(additional.release_mbid) || text(mapping.release_mbid),
         durationMs:
           number(additional.duration_ms) || number(additional.duration) * 1000 || undefined,
@@ -174,17 +175,17 @@ export function listenbrainzWrappedReader(username: string, period: Period, toke
 
 export function koitoReader(baseUrl: string, token: string | undefined, period: Period) {
   return async (page: number): Promise<Page> => {
-    const { data }: { data: unknown } = await axios.get(
+    const { data }: { data: unknown } = await http.get(
       `${normalizeKoitoBaseUrl(baseUrl)}/apis/web/v1/listens`,
       {
-        params: {
+        query: {
           from: Math.floor(period.start / 1000),
           to: Math.ceil(period.end / 1000) - 1,
           page,
           limit: PAGE_SIZE,
         },
         headers: token ? { Authorization: `Token ${token}` } : {},
-        timeout: 20_000,
+        timeoutMs: 20_000,
       },
     );
     const result = object(data);
@@ -193,7 +194,7 @@ export function koitoReader(baseUrl: string, token: string | undefined, period: 
       plays: result.items.map((value): WrappedPlay => {
         const row = object(value);
         const track = object(row.track);
-        const artist = object(list(track.artists)[0]);
+        const artist = object(unknownList(track.artists)[0]);
         return {
           source: "koito",
           account: baseUrl,

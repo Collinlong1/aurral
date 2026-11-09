@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
+import fsPromises, { access, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import zlib from "node:zlib";
@@ -138,6 +138,46 @@ test("a plugin installs off from a compressed zip link and updates from the same
   served = plugin("1.1.0");
   await updatePluginFromSource("box");
   assert.equal((await listPlugins()).plugins[0]?.manifest?.version, "1.1.0");
+});
+
+// The staging folder can be its own mount, so the move into the plugins
+// folder crosses disks, where a rename fails with EXDEV.
+function renameAcrossDisks() {
+  const rename = fsPromises.rename.bind(fsPromises);
+  return vi.spyOn(fsPromises, "rename").mockImplementation(async (from, to) => {
+    if (String(from).includes(`${path.sep}plugin-installs${path.sep}`))
+      throw Object.assign(new Error("cross-device link not permitted"), { code: "EXDEV" });
+    return rename(from, to);
+  });
+}
+
+test("an update installs when the staging folder is on another disk", async (t) => {
+  let served = plugin("1.0.0");
+  const server = await createMockHttpServer((_request, response) => response.end(served));
+  t.onTestFinished(server.close);
+  const url = `${server.url}/box.zip`;
+  await installPluginLink((await inspectPluginLink(url)).token, ["box"]);
+
+  renameAcrossDisks();
+  served = plugin("1.1.0");
+  await updatePluginFromSource("box");
+  assert.equal((await listPlugins()).plugins[0]?.manifest?.version, "1.1.0");
+  assert.deepEqual(await readdir(pluginsDir()), ["box"]);
+});
+
+test("a failed update puts the installed plugin back", async (t) => {
+  let served = plugin("1.0.0");
+  const server = await createMockHttpServer((_request, response) => response.end(served));
+  t.onTestFinished(server.close);
+  const url = `${server.url}/box.zip`;
+  await installPluginLink((await inspectPluginLink(url)).token, ["box"]);
+
+  renameAcrossDisks();
+  vi.spyOn(fsPromises, "cp").mockRejectedValue(new Error("disk full"));
+  served = plugin("1.1.0");
+  await assert.rejects(updatePluginFromSource("box"), /disk full/);
+  assert.deepEqual(await readdir(pluginsDir()), ["box"]);
+  assert.equal((await listPlugins()).plugins[0]?.manifest?.version, "1.0.0");
 });
 
 test("a GitHub repo link offers each plugin in it and installs the ones chosen", async (t) => {

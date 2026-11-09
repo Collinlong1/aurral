@@ -737,6 +737,56 @@ test("a Subsonic playlist reuses the album owner's Library job for a featured so
   );
 });
 
+test("a Subsonic playlist reuses a Library file tagged with release and release group MBIDs", async (t: import("vite-plus/test").TestContext) => {
+  const { scanMusicRoot } = await import("../../backend/services/libraryFileScanner.ts");
+  const { getLibrary } = await import("../../backend/services/libraryQueryService.ts");
+  const { downloadTracker } =
+    await import("../../backend/services/downloadJobs/downloadTracker.ts");
+  const { playlistManager } = await import("../../backend/services/playlists/playlistManager.ts");
+  vi.spyOn(playlistManager, "requestPlaylistSync").mockImplementation(() => {});
+  vi.spyOn(playlistManager, "scheduleScanLibrary").mockReturnValue(0);
+  const root = await mkdtemp(path.join(tmpdir(), "aurral-subsonic-release-mbid-"));
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const file = path.join(root, "01.flac");
+  await promisify(execFile)("ffmpeg", [
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    "-nostdin",
+    "-f",
+    "lavfi",
+    "-i",
+    "sine=frequency=440:duration=0.1",
+    "-metadata",
+    "album_artist=Release Owner",
+    "-metadata",
+    "artist=Release Owner",
+    "-metadata",
+    "album=Release Album",
+    "-metadata",
+    "title=Release Song",
+    "-metadata",
+    "MUSICBRAINZ_ALBUMID=7d0e4c34-5f0c-4c55-8f5e-1a2b3c4d5e6f",
+    "-metadata",
+    "MUSICBRAINZ_RELEASEGROUPID=0a9b8c7d-6e5f-4a3b-9c2d-1e0f9a8b7c6d",
+    file,
+  ]);
+  await scanMusicRoot({ rootPath: root, source: "aurral" });
+  const libraryTrack = getLibrary({ availableOnly: true }).tracks.find((entry) =>
+    entry.files.some((media) => media.path === file),
+  );
+  assert.ok(libraryTrack != null);
+
+  const playlist = await subsonic.createSubsonicPlaylist(testUser(77, { role: "admin" }), {
+    name: "Release Song",
+    songIds: [idFor("song", libraryTrack.identityKey)],
+  });
+  assert.ok(playlist != null);
+
+  const job = downloadTracker.getJob(playlist.tracks[0]?.canonicalJobId);
+  assert.deepEqual([job?.status, job?.finalPath], ["done", file]);
+});
+
 test("favorite reads preserve shared relationships, media filters, and user isolation", async () => {
   const { getLibrary } = await import("../../backend/services/libraryQueryService.ts");
   const existing = db
@@ -1260,4 +1310,45 @@ test("splits semicolon genre tags into separate Subsonic genres", () => {
       .sort((left, right) => left.localeCompare(right))
       .map((value) => ({ value, albumCount: 1, songCount: 1 })),
   );
+});
+
+test("albums report the disc titles their files agree on", () => {
+  const artist = upsertLibraryArtist({ identityKey: "disc-titles:artist", name: "Box Artist" });
+  const album = upsertLibraryAlbum({
+    identityKey: "disc-titles:album",
+    artistId: artist.id,
+    title: "Box Set",
+    albumArtist: artist.name,
+  });
+  [
+    [1, "Tone Poems"],
+    [1, "Tone Poems"],
+    [2, "Bruckner"],
+    [2, "Mahler"],
+    [3, null],
+  ].forEach(([discNumber, discsubtitle], index) => {
+    const track = upsertLibraryTrack({
+      identityKey: `disc-titles:track-${index}`,
+      title: `Track ${index}`,
+      artistName: artist.name,
+      metadata: { tags: { discsubtitle: discsubtitle ? [discsubtitle] : [] } },
+    });
+    linkLibraryAlbumTrack({
+      albumId: album.id,
+      trackId: track.id,
+      discNumber: Number(discNumber),
+      trackNumber: index + 1,
+    });
+    upsertLibraryMediaFile({
+      trackId: track.id,
+      source: "lidarr",
+      path: `/test/disc-titles/${index}.flac`,
+      format: "flac",
+      available: true,
+    });
+  });
+
+  assert.deepEqual(getAlbum(idFor("album", "disc-titles:album"))?.discTitles, [
+    { disc: 1, title: "Tone Poems" },
+  ]);
 });

@@ -198,7 +198,12 @@ test("an upgrade tries its pinned release alone, no attempt for its album takes 
       requireFixture(queued[1]).releaseMbid,
       requireFixture(queued[1]).allowedSources,
     ],
-    [true, [upgradeId], "upgrade-album-release", ["slskd", "usenet", "deemix"]],
+    [
+      true,
+      [upgradeId],
+      "upgrade-album-release",
+      ["slskd", "usenet", "tidarr", "deemix", "qbittorrent"],
+    ],
   );
 
   tracker.releaseFromAlbumGrab(
@@ -771,12 +776,31 @@ test("restart reuses the queued album pipeline instead of submitting another gra
     }),
     true,
   );
+  const solo = (trackName: string) =>
+    requireFixture(createTrackedJob(tracker, { artistName: "Solo", trackName }, "static"));
+  const downloading = solo("Downloading");
+  const waiting = solo("Waiting");
+  for (const id of [downloading, waiting]) {
+    assert.equal(tracker.enqueueDownloadPipeline(id, { release: null }), true);
+  }
+  tracker.setDownloading(downloading);
 
   tracker.resetDownloadingToPending();
   const restarted = new DownloadTracker({ enqueuePipeline });
   assert.equal(restarted.enqueueDownloadPipeline(requireFixture(ids[1])), true);
   assert.equal(restarted.enqueueDownloadPipeline(requireFixture(ids[0])), true);
   assert.equal(restarted.enqueueDownloadPipeline(single), true);
+  for (const [id, status] of [
+    [downloading, "downloading"],
+    [waiting, "pending"],
+  ] as const) {
+    assert.equal(restarted.enqueueDownloadPipeline(id, { release: null }), false);
+    assert.equal(trackedJob(restarted, id).status, status);
+    assert.equal(
+      queues.downloadPipelineQueue.list().filter((entry) => entry.payload?.jobId === id).length,
+      1,
+    );
+  }
   const after = queues.downloadPipelineQueue
     .list()
     .filter((entry) => entry.payload?.jobId === ids[0]);
@@ -795,18 +819,47 @@ test("restart reuses the queued album pipeline instead of submitting another gra
 test("a web-side tracker reads job changes made by the flow owner", () => {
   const tracker = new DownloadTracker();
   const id = createTrackedJob(tracker, { artistName: "Artist", trackName: "Song" }, "playlist");
+  const accented = createTrackedJob(
+    tracker,
+    { artistName: "Artist", trackName: "Ébène" },
+    "playlist",
+  );
+  const withNul = createTrackedJob(tracker, { artistName: "Artist", trackName: "Nul" }, "playlist");
   const flowConnection = new Database(isolatedState.dbPath);
   try {
-    flowConnection.prepare("UPDATE download_jobs SET status = 'done' WHERE id = ?").run(id);
+    const finish = flowConnection.prepare(
+      "UPDATE download_jobs SET status = 'done', final_path = ?, track_name = ? WHERE id = ?",
+    );
+    finish.run("/music/Artist/Song.flac", "Song", id);
+    finish.run("/music/Artist/Ebene.flac", "\tÉBÈNE ", accented);
+    finish.run("/music/Artist/Nul.flac", "SONG\u0000É", withNul);
     const previousEnv = process.env.NODE_ENV;
     try {
       process.env.NODE_ENV = "production";
       assert.equal(tracker.getJob(id)?.status, "done");
-      assert.equal(tracker.getStats().done, 1);
-      assert.equal(tracker.getStatsByPlaylistType(["playlist"]).playlist?.done, 1);
       assert.deepEqual(
-        tracker.getByPlaylistType("playlist").map((job) => job.id),
-        [id],
+        [
+          tracker.getDoneByTrackName("  SONG ").map((job) => job.id),
+          tracker.getDoneByTrackName("Other").map((job) => job.id),
+          tracker.getDoneByTrackName("ébène").map((job) => job.id),
+          tracker.getDoneByTrackName("song\u0000é").map((job) => job.id),
+          tracker.getDoneByFinalPath("/music/Artist/../Artist/Song.flac").map((job) => job.id),
+          tracker.getDoneByFinalPath("/music/Other.flac").map((job) => job.id),
+        ],
+        [[id], [], [accented], [withNul], [id], []],
+      );
+      assert.deepEqual(
+        [...tracker.getJobs([id, "missing"])].map(([key, job]) => [key, job.status]),
+        [[id, "done"]],
+      );
+      assert.equal(tracker.getStats().done, 3);
+      assert.equal(tracker.getStatsByPlaylistType(["playlist"]).playlist?.done, 3);
+      assert.deepEqual(
+        tracker
+          .getByPlaylistType("playlist")
+          .map((job) => job.id)
+          .sort(),
+        [id, accented, withNul].sort(),
       );
     } finally {
       process.env.NODE_ENV = previousEnv;
@@ -816,7 +869,7 @@ test("a web-side tracker reads job changes made by the flow owner", () => {
   }
 });
 
-test("a web-side tracker does not reset an active flow download on import", () => {
+test("a web-side tracker keeps an active flow download on import and loads jobs before writing", () => {
   const tracker = new DownloadTracker();
   const id = createTrackedJob(tracker, { artistName: "Artist", trackName: "Song" }, "playlist");
   assert.ok(id != null);
@@ -826,6 +879,8 @@ test("a web-side tracker does not reset an active flow download on import", () =
     process.env.NODE_ENV = "production";
     const webTracker = new DownloadTracker();
     assert.equal(webTracker.getJob(id)?.status, "downloading");
+    webTracker.setFailed(id, "Stopped");
+    assert.equal(webTracker.getJob(id)?.status, "failed");
   } finally {
     process.env.NODE_ENV = previousEnv;
   }
@@ -939,6 +994,32 @@ test("a worker starts no more searches than its concurrency allows", async () =>
     assert.equal(dispatched.mock.calls.length, 0);
     worker.updateWorkerSettings({ concurrency: 2 });
     worker.processLoop?.();
+    assert.deepEqual(
+      dispatched.mock.calls.map((call) => call[0].id),
+      [jobId],
+    );
+  } finally {
+    worker.stop();
+  }
+});
+
+test("starting a running, idle worker picks up jobs queued after it went idle", async () => {
+  const worker = new DownloadWorker(isolatedState.baseDir);
+  const dispatched = vi.spyOn(worker, "processJob").mockImplementation(async () => {});
+  vi.spyOn(worker, "scheduleReuseLinkRepair").mockImplementation(() => {});
+  db.prepare("DELETE FROM jobs WHERE queue = 'download-pipeline'").run();
+  await worker.start();
+  try {
+    assert.equal(dispatched.mock.calls.length, 0);
+    const jobId = createTrackedJob(
+      trackerModule.downloadTracker,
+      { artistName: "Artist", trackName: "Requested Later" },
+      "library",
+    );
+    // An album or track request queues its jobs, then starts the worker.
+    await worker.start();
+    // A wake runs the loop after the worker's short cooldown.
+    await new Promise((resolve) => setTimeout(resolve, 1000));
     assert.deepEqual(
       dispatched.mock.calls.map((call) => call[0].id),
       [jobId],

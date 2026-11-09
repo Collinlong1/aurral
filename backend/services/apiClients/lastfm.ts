@@ -1,13 +1,15 @@
-import axios from "../../../lib/axiosFetch.ts";
-import https from "https";
+import * as v from "valibot";
+import { http, isTransientNetworkError } from "../../../lib/http.ts";
 import { createHash } from "node:crypto";
 import createRateLimiter from "./rateLimiter.ts";
 import createCache from "./simpleCache.ts";
+import { createOutagePause } from "./outagePause.ts";
 import { logger } from "../logger.ts";
 import { LASTFM_API } from "../../config/constants.ts";
 import { getLastfmApiKey, getLastfmApiSecret } from "./config.ts";
-import { runSharedInflight } from "../sharedInflight.ts";
+import { runSharedInflight, type InflightRequests } from "../sharedInflight.ts";
 import { asAppError } from "../../../lib/errors.ts";
+import { lenient, lenientCount, lenientText, oneOrMany, readOne } from "../integrationData.ts";
 
 interface LastfmScrobbleEvent {
   playedAt: number | string;
@@ -27,28 +29,69 @@ interface LastfmErrorDetails {
   error: unknown;
 }
 
-const lastfmCache = createCache(300);
+const lastfmText = lenientText;
+const lastfmCount = lenientCount;
+const lastfmRank = lenient(v.looseObject({ rank: lastfmCount }));
+
+const lastfmImageSchema = v.looseObject({ size: lastfmText, "#text": lastfmText });
+const lastfmTagSchema = v.looseObject({ name: lastfmText, count: lastfmCount });
+const lastfmArtistSchema = v.looseObject({
+  name: lastfmText,
+  "#text": lastfmText,
+  mbid: lastfmText,
+  match: lastfmCount,
+  image: oneOrMany(lastfmImageSchema),
+  listeners: lastfmCount,
+  playcount: lastfmCount,
+  rank: lastfmCount,
+  "@attr": lastfmRank,
+});
+const lastfmTrackSchema = v.looseObject({
+  name: lastfmText,
+  mbid: lastfmText,
+  playcount: lastfmCount,
+  listeners: lastfmCount,
+  duration: lastfmCount,
+  artist: lenient(v.looseObject({ name: lastfmText, "#text": lastfmText, mbid: lastfmText })),
+  album: lenient(v.looseObject({ title: lastfmText, "#text": lastfmText })),
+  "@attr": lastfmRank,
+});
+const lastfmResponseSchema = v.looseObject({
+  error: lenient(v.number()),
+  toptags: lenient(v.looseObject({ tag: oneOrMany(lastfmTagSchema) })),
+  tags: lenient(v.looseObject({ tag: oneOrMany(lastfmTagSchema) })),
+  similarartists: lenient(v.looseObject({ artist: oneOrMany(lastfmArtistSchema) })),
+  artists: lenient(v.looseObject({ artist: oneOrMany(lastfmArtistSchema) })),
+  topartists: lenient(
+    v.looseObject({
+      artist: oneOrMany(lastfmArtistSchema),
+      "@attr": lenient(v.looseObject({ total: lastfmText })),
+    }),
+  ),
+  toptracks: lenient(v.looseObject({ track: oneOrMany(lastfmTrackSchema) })),
+  tracks: lenient(v.looseObject({ track: oneOrMany(lastfmTrackSchema) })),
+  track: lenient(lastfmTrackSchema),
+  album: lenient(
+    v.looseObject({ tracks: lenient(v.looseObject({ track: oneOrMany(lastfmTrackSchema) })) }),
+  ),
+});
+
+export type LastfmImage = v.InferOutput<typeof lastfmImageSchema>;
+export type LastfmArtist = v.InferOutput<typeof lastfmArtistSchema>;
+export type LastfmTrack = v.InferOutput<typeof lastfmTrackSchema>;
+type LastfmResponse = v.InferOutput<typeof lastfmResponseSchema>;
+
+const lastfmCache = createCache<LastfmResponse>(300);
 
 const lastfmLimiter = createRateLimiter(200);
-
-const lastfmHttpsAgent = new https.Agent({
-  keepAlive: true,
-  keepAliveMsecs: 30000,
-  maxSockets: 16,
-  maxFreeSockets: 8,
-  timeout: 15000,
-});
 
 const LASTFM_TIMEOUT_MS =
   Math.max(3000, parseInt(String(process.env.AURRAL_LASTFM_TIMEOUT_MS), 10) || 0) || 15000;
 const LASTFM_MAX_RETRIES = 2;
-const LASTFM_PAUSE_AFTER_FAILURES = 3;
-const LASTFM_PAUSE_MS = 60_000;
 
-const lastfmInflightRequests = new Map();
-const lastfmErrorLogAt = new Map();
-let lastfmFailuresInARow = 0;
-let lastfmPausedUntil = 0;
+const lastfmInflightRequests: InflightRequests = new Map();
+const lastfmErrorLogAt = new Map<string, number>();
+const lastfmPause = createOutagePause("Last.fm");
 
 const signedLastfmRequest = async (
   method: string,
@@ -68,21 +111,33 @@ const signedLastfmRequest = async (
     .join("");
   signedParams.api_sig = createHash("md5").update(`${signature}${apiSecret}`).digest("hex");
   const response = await lastfmLimiter.schedule(() =>
-    axios.post(LASTFM_API, new URLSearchParams({ ...signedParams, format: "json" }), {
-      timeout: LASTFM_TIMEOUT_MS,
-      httpsAgent: lastfmHttpsAgent,
+    http.post(LASTFM_API, new URLSearchParams({ ...signedParams, format: "json" }), {
+      timeoutMs: LASTFM_TIMEOUT_MS,
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      validateStatus: (status) => status >= 200 && status < 300,
     }),
   );
-  if (response.data?.error) {
-    throw new Error(response.data.message || `Last.fm request failed (${response.data.error})`);
+  const failure = v.safeParse(lastfmErrorSchema, response.data);
+  if (failure.success) {
+    throw new Error(failure.output.message || `Last.fm request failed (${failure.output.error})`);
   }
   return response.data;
 };
 
-export const lastfmGetSession = (token: string | null | undefined) =>
-  signedLastfmRequest("auth.getSession", { token: String(token || "").trim() });
+const lastfmErrorSchema = v.looseObject({
+  error: v.number(),
+  message: v.optional(v.string()),
+});
+
+const lastfmSessionSchema = v.looseObject({
+  session: v.optional(v.looseObject({ key: v.optional(v.string()), name: v.optional(v.string()) })),
+});
+
+export const lastfmGetSession = async (token: string | null | undefined) =>
+  readOne(
+    lastfmSessionSchema,
+    await signedLastfmRequest("auth.getSession", { token: String(token || "").trim() }),
+    { service: "Last.fm", endpoint: "auth.getSession" },
+  ).session;
 
 export const lastfmScrobble = (event: LastfmScrobbleEvent, sessionKey: string | null | undefined) =>
   signedLastfmRequest("track.scrobble", {
@@ -100,7 +155,7 @@ export async function lastfmRequest(
   method: string,
   params: Record<string, string | number | null | undefined> = {},
   options: { timeoutMs?: number; maxRetries?: number; signal?: AbortSignal } = {},
-) {
+): Promise<LastfmResponse | null> {
   const apiKey = getLastfmApiKey();
   if (!apiKey) return null;
 
@@ -119,15 +174,9 @@ export async function lastfmRequest(
     cacheKey,
     async (sharedSignal: AbortSignal) => {
       const isRetryable = (error: unknown) => {
-        const failure = asAppError(error);
-        const status = failure?.response?.status;
-        const code = failure?.code;
+        const status = asAppError(error)?.response?.status;
         return (
-          code === "ECONNABORTED" ||
-          code === "ETIMEDOUT" ||
-          code === "ECONNRESET" ||
-          code === "ENOTFOUND" ||
-          code === "EAI_AGAIN" ||
+          isTransientNetworkError(error) ||
           (status !== undefined && [408, 425, 500, 502, 503, 504].includes(status))
         );
       };
@@ -144,24 +193,28 @@ export async function lastfmRequest(
       let lastError: unknown = null;
       for (let retryCount = 0; retryCount <= maxRetries; retryCount++) {
         sharedSignal.throwIfAborted?.();
-        if (Date.now() < lastfmPausedUntil) return null;
+        if (lastfmPause.paused()) return null;
         try {
           const response = await lastfmLimiter.schedule(() =>
-            axios.get(LASTFM_API, {
-              params: {
-                method,
-                api_key: apiKey,
-                format: "json",
-                ...params,
-              },
-              timeout: timeoutMs,
-              httpsAgent: lastfmHttpsAgent,
-              signal: sharedSignal,
-            }),
+            lastfmPause.run(() =>
+              http.get(LASTFM_API, {
+                query: {
+                  method,
+                  api_key: apiKey,
+                  format: "json",
+                  ...params,
+                },
+                timeoutMs,
+                signal: sharedSignal,
+              }),
+            ),
           );
-          lastfmFailuresInARow = 0;
-          lastfmCache.set(cacheKey, response.data);
-          return response.data;
+          const data = readOne(lastfmResponseSchema, response.data, {
+            service: "Last.fm",
+            endpoint: method,
+          });
+          lastfmCache.set(cacheKey, data);
+          return data;
         } catch (error) {
           if (sharedSignal.aborted) throw sharedSignal.reason || error;
           lastError = error;
@@ -175,8 +228,8 @@ export async function lastfmRequest(
       }
       const failure = asAppError(lastError);
       const status = failure?.response?.status || null;
-      const responseData = failure?.response?.data;
-      const payloadError =
+      const responseData: unknown = failure?.response?.data;
+      const payloadError: unknown =
         (typeof responseData === "object" &&
           responseData !== null &&
           (Reflect.get(responseData, "message") || Reflect.get(responseData, "error"))) ||
@@ -188,14 +241,9 @@ export async function lastfmRequest(
         message: failure?.message || "Unknown Last.fm error",
         error: payloadError,
       };
-      lastfmFailuresInARow = status === null ? lastfmFailuresInARow + 1 : 0;
-      if (lastfmFailuresInARow >= LASTFM_PAUSE_AFTER_FAILURES) {
-        lastfmFailuresInARow = 0;
-        lastfmPausedUntil = Date.now() + LASTFM_PAUSE_MS;
-        logger.warn("api", "Last.fm is not responding, pausing requests for a minute", details);
-      } else if (details.code === "ECONNABORTED") {
+      if (details.code === "TIMEOUT") {
         logFailure(`Last.fm API timeout (${method})`, details);
-      } else {
+      } else if (details.code !== "PAUSED") {
         logFailure(`Last.fm API error (${method})`, details);
       }
       return null;

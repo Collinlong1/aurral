@@ -5,15 +5,11 @@ import type { DownloadClient } from "./downloadClient.ts";
 import { DownloadClientRegistry } from "./downloadClientRegistry.ts";
 import { SlskdClient, slskdClient, slskdSettings } from "../slskdClient.ts";
 import { NzbgetClient, nzbgetClient, nzbgetSettings } from "../nzbgetClient.ts";
-import {
-  SabnzbdClient,
-  sabnzbdClient,
-  sabnzbdSettings,
-  tidarrClient,
-  tidarrSettings,
-} from "../sabnzbdClient.ts";
+import { SabnzbdClient, sabnzbdClient, sabnzbdSettings } from "../sabnzbdClient.ts";
+import { TidarrClient, tidarrClient, tidarrSettings } from "../tidarrClient.ts";
 import { YtdlpClient, ytdlpClient, ytdlpSettings } from "../ytdlpClient.ts";
 import { DeemixClient, deemixClient, deemixSettings } from "../deemixClient.ts";
+import { QbittorrentClient, qbittorrentClient, qbittorrentSettings } from "../qbittorrentClient.ts";
 
 const definitions = Object.freeze({
   slskd: slskdSettings,
@@ -22,6 +18,7 @@ const definitions = Object.freeze({
   sabnzbd: sabnzbdSettings,
   tidarr: tidarrSettings,
   deemix: deemixSettings,
+  qbittorrent: qbittorrentSettings,
 });
 
 const factories = {
@@ -29,8 +26,9 @@ const factories = {
   ytdlp: () => new YtdlpClient(),
   nzbget: () => new NzbgetClient(),
   sabnzbd: () => new SabnzbdClient(),
-  tidarr: () => new SabnzbdClient(null, "tidarr"),
+  tidarr: () => new TidarrClient(),
   deemix: () => new DeemixClient(),
+  qbittorrent: () => new QbittorrentClient(),
 };
 
 export const downloadClientRegistry = new DownloadClientRegistry([
@@ -40,6 +38,7 @@ export const downloadClientRegistry = new DownloadClientRegistry([
   sabnzbdClient,
   tidarrClient,
   deemixClient,
+  qbittorrentClient,
 ]);
 
 export function getDownloadClientSettings() {
@@ -51,8 +50,9 @@ type BuiltInDownloadClients = {
   ytdlp: YtdlpClient;
   nzbget: NzbgetClient;
   sabnzbd: SabnzbdClient;
-  tidarr: SabnzbdClient;
+  tidarr: TidarrClient;
   deemix: DeemixClient;
+  qbittorrent: QbittorrentClient;
 };
 
 export function getDownloadClient<Key extends keyof BuiltInDownloadClients>(
@@ -74,8 +74,9 @@ export async function testDownloadClient(key: string, config: Record<string, unk
   return client.testConnection({ force: true });
 }
 
+// A download remembers its client, so Tidarr's own downloads find it by key.
 export function getUsenetClient(key: string | null = null) {
-  if (isUsenetClientKey(key)) return getDownloadClient(key);
+  if (key === "tidarr" || isUsenetClientKey(key)) return getDownloadClient(key);
   const clients = USENET_CLIENT_KEYS.map((entry) => getDownloadClient(entry));
   return clients.find((client) => client.isConfigured()) ?? getDownloadClient("nzbget");
 }

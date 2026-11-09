@@ -1,4 +1,5 @@
 import path from "node:path";
+import { asAppError } from "../../lib/errors.ts";
 import crypto from "crypto";
 import { expandAlbumGrabHistory } from "./albumGrabActivity.ts";
 import { dbOps } from "../db/helpers/index.ts";
@@ -128,9 +129,11 @@ const resolveTrackDownloadHistorySource = (downloadSource: unknown, downloadClie
       .toLowerCase();
     return client === "sabnzbd" || client === "tidarr" ? client : "nzbget";
   }
+  if (normalized === "tidarr") return "tidarr";
   if (normalized === "ytdlp") return "ytdlp";
   if (normalized === "deemix") return "deemix";
   if (normalized === "slskd") return "slskd";
+  if (normalized === "qbittorrent") return "qbittorrent";
   if (normalized === "share") return "share";
   return "unknown";
 };
@@ -142,6 +145,7 @@ const CLIENT_LABELS = {
   slskd: "slskd",
   ytdlp: "yt-dlp",
   deemix: "deemix",
+  qbittorrent: "qBittorrent",
   share: "Aurral share",
 };
 const resolveDownloadClientLabel = (downloadSource: unknown, downloadClient: unknown) => {
@@ -347,7 +351,7 @@ const queueRequestNotification = (
       }),
     )
     .catch((err) => {
-      console.warn(`[AurralHistory] ${notifyName} failed:`, err?.message || err);
+      console.warn(`[AurralHistory] ${notifyName} failed:`, asAppError(err)?.message || err);
     });
 };
 

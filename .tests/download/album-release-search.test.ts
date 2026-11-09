@@ -181,6 +181,23 @@ test("Soulseek album selection follows the quality profile", () => {
     profile: flacOnly,
   });
   assert.equal(mp3Only.decision, "skip");
+  const upgradeFromMp3 = new Map(jobs.map((job) => [job.id, "mp3-320"]));
+  assert.equal(
+    selectSoulseekAlbumFolder(copy("mp3", { bitrate: 320 }, "mp3"), jobs, {
+      manifest,
+      profile: flacFirst,
+      currentTiers: upgradeFromMp3,
+    }).decision,
+    "skip",
+  );
+  assert.equal(
+    selectSoulseekAlbumFolder(results, jobs, {
+      manifest,
+      profile: flacFirst,
+      currentTiers: upgradeFromMp3,
+    }).selected?.group.user,
+    "flac",
+  );
 });
 
 test("Soulseek album selection fits a folder without track lengths by title and position", () => {
@@ -343,4 +360,21 @@ test("Soulseek album selection fits a compilation folder by its album title", ()
       credit,
     );
   }
+});
+
+test("Soulseek album selection skips an advertised hires folder its profile rejects", () => {
+  const profile = {
+    order: ["flac-standard", "flac-hires", "mp3-320"],
+    enabled: ["flac-standard", "mp3-320"],
+    cutoff: "flac-standard",
+  };
+  const hires = copy("hires").map((file) => ({ ...file, bitDepth: 24, sampleRate: 44100 }));
+  const standard = copy("standard").map((file) => ({ ...file, bitDepth: 16, sampleRate: 44100 }));
+  assert.equal(selectSoulseekAlbumFolder(hires, jobs, { manifest, profile }).decision, "skip");
+  const selection = selectSoulseekAlbumFolder([...hires, ...standard], jobs, {
+    manifest,
+    profile,
+  });
+  assert.equal(selection.decision, "selectable");
+  assert.equal(selection.selected?.group.user, "standard");
 });

@@ -1,4 +1,6 @@
 import path from "path";
+import * as v from "valibot";
+import { lenientCount, lenientText } from "./integrationData.ts";
 import { audioContentType } from "./audioFileStream.ts";
 import { playlistJobEntries, staticPlaylistJobs } from "./playlists/playlistJobs.ts";
 import { randomUUID } from "node:crypto";
@@ -6,6 +8,7 @@ import type { RequestUser } from "../middleware/requestUser.ts";
 import { dbOps, userOps } from "../db/helpers/index.ts";
 import { db } from "../config/db-sqlite.ts";
 import {
+  getAlbumStats,
   getLibraryAlbumPage,
   getLibraryArtistPage,
   getLibraryFavoriteTargetKeys,
@@ -53,6 +56,7 @@ import { buildRadio, type RadioSeed } from "./radio.ts";
 import { getUserMix, getUserMixes, type Mix } from "./discovery/mixes.ts";
 import { isVariousArtistsCredit } from "./trackMatching/titleText.ts";
 import { withLock } from "./jobs/queue.ts";
+import { discSubtitle, discTitles } from "../../lib/discTitles.ts";
 import { withPlaylistMutationLock } from "./downloadJobs/mutationGuards.ts";
 import { processPlaylistOperation } from "./playlists/playlistOperations.ts";
 import {
@@ -447,7 +451,18 @@ const toAlbumSummary = (library: IndexedLibrary, album: LibraryAlbum) =>
 
 const toAlbum = (library: IndexedLibrary, album: LibraryAlbum) => {
   const { tracks, value } = albumData(library, album);
-  return { ...value, song: tracks.map((track) => toSong(library, track, album)) };
+  const song = tracks.map((track) => toSong(library, track, album));
+  const titles = discTitles(
+    song.map(({ discNumber }, index) => ({
+      disc: discNumber,
+      title: discSubtitle(tracks[index]?.metadata),
+    })),
+  );
+  return {
+    ...value,
+    ...(titles.size && { discTitles: [...titles].map(([disc, title]) => ({ disc, title })) }),
+    song,
+  };
 };
 
 const toArtistSummary = (
@@ -564,7 +579,10 @@ function toPlaylistSong(
     : null;
   if (owned) {
     return {
-      ...toSong(indexFocusedLibrary(owned.library, viewer), owned.track),
+      ...toSong(
+        { ...owned.library, starredAt: viewer.starredAt, ratings: viewer.ratings },
+        owned.track,
+      ),
       parent: idFor(kind, playlist.id),
       ...(customCoverArt && { coverArt: customCoverArt }),
     };
@@ -1528,10 +1546,20 @@ export function setRating(user: SubsonicUser, value: string, rating: number) {
   return true;
 }
 
+const starEntriesSchema = v.fallback(
+  v.array(
+    v.fallback(
+      v.looseObject({ id: v.optional(v.unknown()), starredAt: v.optional(v.unknown()) }),
+      {},
+    ),
+  ),
+  [],
+);
+
 export function restoreStars(user: SubsonicUser, entries: unknown) {
-  const parsed = (Array.isArray(entries) ? entries : []).map((entry) => ({
-    target: starTarget(entry?.id),
-    starredAt: Number(entry?.starredAt),
+  const parsed = v.parse(starEntriesSchema, entries).map((entry) => ({
+    target: starTarget(entry.id),
+    starredAt: Number(entry.starredAt),
   }));
   const restorable = parsed.flatMap(({ target, starredAt }) =>
     target && Number.isSafeInteger(starredAt) && starredAt > 0 ? [{ target, starredAt }] : [],
@@ -1751,6 +1779,37 @@ export function getStarredWithLibrary(
     ),
     songIds,
     library,
+  };
+}
+
+export function getLibraryFavorites(user: SubsonicUser) {
+  const { starred, songIds, library } = getStarredWithLibrary(user);
+  const ids = (entries: { id: string }[]) => entries.map((entry) => entry.id);
+  const favorite = new Set([...ids(starred.artist), ...ids(starred.album), ...ids(starred.song)]);
+  const tracks = library.tracks.filter((track) => favorite.has(idFor("song", track.identityKey)));
+  const trackAlbumIds = new Set(tracks.flatMap((track) => track.albums.map((ref) => ref.albumId)));
+  const keptAlbums = library.albums.filter(
+    (album) => trackAlbumIds.has(album.id) || favorite.has(idFor("album", album.identityKey)),
+  );
+  const stats = getAlbumStats(
+    keptAlbums.map((album) => album.id),
+    null,
+  );
+  const albums = keptAlbums.map((album) => ({
+    ...album,
+    trackCount: stats.get(String(album.id))?.trackCount ?? album.trackIds.length,
+    availableTrackCount: stats.get(String(album.id))?.availableTrackCount ?? 0,
+  }));
+  const albumArtistIds = new Set(albums.map((album) => album.artistId));
+  const artists = library.artists.filter(
+    (artist) => albumArtistIds.has(artist.id) || favorite.has(idFor("artist", artist.identityKey)),
+  );
+  return {
+    artistIds: ids(starred.artist),
+    albumIds: ids(starred.album),
+    songIds,
+    playlistSongs: starred.song.filter((song) => /^(flow|shared)-song:/.test(song.id)),
+    library: { artists, albums, tracks },
   };
 }
 
@@ -2045,13 +2104,30 @@ const cachedArtworkUrl = async (key: string) => {
   return artwork || buildImageProxyUrl(stored);
 };
 
+const customArtworkTargetSchema = v.fallback(
+  v.looseObject({
+    id: lenientCount,
+    updatedAt: lenientCount,
+    playlistKind: lenientText,
+    playlistId: lenientText,
+  }),
+  {},
+);
+
 const customArtworkTarget = (parsed: ParsedId | null) => {
   if (!parsed?.kind?.startsWith("art-")) return null;
   try {
-    const value = JSON.parse(parsed.key);
-    const id = String(value?.id || "").trim();
-    const updatedAt = Number(value?.updatedAt);
-    return id && Number.isFinite(updatedAt) ? { ...value, id, updatedAt } : null;
+    const value = v.parse(customArtworkTargetSchema, JSON.parse(parsed.key));
+    const id = String(value.id || "").trim();
+    const updatedAt = Number(value.updatedAt);
+    return id && Number.isFinite(updatedAt)
+      ? {
+          id,
+          updatedAt,
+          playlistKind: value.playlistKind ?? "",
+          playlistId: value.playlistId ?? "",
+        }
+      : null;
   } catch {
     return null;
   }
@@ -2127,7 +2203,7 @@ export async function resolvePlaylistArtwork(value: string, user: SubsonicUser) 
   const parsed = parseId(value);
   const target = parsed?.kind === "art-playlist" ? customArtworkTarget(parsed) : null;
   const playlist = target
-    ? playlistFromId(user, idFor(String(target.playlistKind), target.id))
+    ? playlistFromId(user, idFor(target.playlistKind, target.id))
     : playlistFromId(user, value);
   if (!playlist) return null;
   const artwork = await playlistManager.resolveArtworkFile(playlist.id);

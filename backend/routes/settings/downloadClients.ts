@@ -9,7 +9,7 @@ import {
   getDownloadClientSettings,
   testDownloadClient,
 } from "../../services/download/downloadClientSettings.ts";
-import { asAppError, type AppError } from "../../../lib/errors.ts";
+import { asAppError, errorResponseText, type AppError } from "../../../lib/errors.ts";
 import { isErrorStatus } from "../shared/errorStatus.ts";
 
 function validateDownloadClientTestConfig(key: string, config: Record<string, unknown>) {
@@ -33,15 +33,10 @@ function validateDownloadClientTestConfig(key: string, config: Record<string, un
   return nextConfig;
 }
 
-function notificationFailureMessage(failure: AppError | undefined) {
-  const data = failure?.response?.data;
-  const body = typeof data === "object" && data !== null ? data : undefined;
-  return (
-    (body && Reflect.get(body, "description")) ||
-    (body && Reflect.get(body, "error")) ||
-    failure?.message
-  );
-}
+const notificationFailureMessage = (failure: AppError | undefined) =>
+  errorResponseText(failure, "description") ||
+  errorResponseText(failure, "error") ||
+  failure?.message;
 
 const notificationFailureStatus = (failure: AppError | undefined) => {
   const status = failure?.response?.status;
@@ -120,8 +115,9 @@ export default new Hono<AppEnv>()
   .get("/prowlarr/indexers", requireAuth, requireAdmin, async (c) => {
     try {
       const { prowlarrClient } = await import("../../services/prowlarrClient.ts");
-      const indexers = await prowlarrClient.listUsenetIndexers({ force: true });
-      return c.json({ indexers }, 200);
+      const usenet = await prowlarrClient.listIndexers("usenet", { force: true });
+      const torrent = await prowlarrClient.listIndexers("torrent");
+      return c.json({ indexers: [...usenet, ...torrent] }, 200);
     } catch (error) {
       return c.json(
         { error: "Failed to load Prowlarr indexers", message: asAppError(error)?.message },

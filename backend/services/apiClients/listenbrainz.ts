@@ -1,5 +1,8 @@
-import axios from "../../../lib/axiosFetch.ts";
+import * as v from "valibot";
+import { http, isTransientNetworkError, type HttpOptions } from "../../../lib/http.ts";
+import { lenient, lenientCount, lenientText, readOne } from "../integrationData.ts";
 import createRateLimiter from "./rateLimiter.ts";
+import { createOutagePause } from "./outagePause.ts";
 import createCache from "./simpleCache.ts";
 import { logger } from "../logger.ts";
 import { asAppError } from "../../../lib/errors.ts";
@@ -25,7 +28,10 @@ interface ListenbrainzErrorDetails {
 }
 
 const listenbrainzCache = createCache(300);
-const listenbrainzLookupCache = createCache(3600, 200);
+const listenbrainzListensCache = createCache<
+  Map<string, { listenCount: number; listenerCount: number }>
+>(3600, 200);
+const listenbrainzDatesCache = createCache<Map<string, string>>(3600, 200);
 const LISTENBRAINZ_LOOKUP_FAILURE_TTL_SECONDS = 300;
 const LISTENBRAINZ_POPULARITY_BATCH_SIZE = 1000;
 const LISTENBRAINZ_METADATA_BATCH_SIZE = 100;
@@ -38,8 +44,16 @@ const LISTENBRAINZ_MAX_RETRIES = 2;
 
 const LISTENBRAINZ_MAX_RATE_LIMIT_WAIT_SECONDS = 15;
 
-const listenbrainzInflightRequests = new Map();
-const listenbrainzErrorLogAt = new Map();
+const listenbrainzInflightRequests = new Map<string, Promise<unknown>>();
+const listenbrainzErrorLogAt = new Map<string, number>();
+const listenbrainzPauses = new Map<string, ReturnType<typeof createOutagePause>>();
+
+const listenbrainzPause = (root: string) => {
+  const host = new URL(root).host;
+  const pause = listenbrainzPauses.get(host) ?? createOutagePause(host);
+  listenbrainzPauses.set(host, pause);
+  return pause;
+};
 
 const getRateLimitWaitMs = (error: unknown) => {
   const failure = asAppError(error);
@@ -70,17 +84,21 @@ const listenbrainzWrite = async (
   { token, data }: { token?: string | null; data?: unknown } = {},
 ) => {
   const response = await listenbrainzLimiter.schedule(() =>
-    axios.post(`${String(baseUrl).replace(/\/+$/, "")}${path}`, data, {
+    http.post(`${String(baseUrl).replace(/\/+$/, "")}${path}`, data, {
       headers: {
         Authorization: `Token ${String(token || "").trim()}`,
         "User-Agent": LISTENBRAINZ_USER_AGENT,
       },
-      timeout: LISTENBRAINZ_TIMEOUT_MS,
-      validateStatus: (status) => status >= 200 && status < 300,
+      timeoutMs: LISTENBRAINZ_TIMEOUT_MS,
     }),
   );
   return response.data;
 };
+
+const tokenValidationSchema = v.looseObject({
+  valid: v.optional(v.boolean()),
+  user_name: v.optional(v.string()),
+});
 
 export const listenbrainzValidateToken = async (
   token: string | null | undefined,
@@ -88,16 +106,18 @@ export const listenbrainzValidateToken = async (
 ) => {
   const root = normalizeListenbrainzBaseUrl(baseUrl);
   const response = await listenbrainzLimiter.schedule(() =>
-    axios.get(`${root}/1/validate-token`, {
+    http.get(`${root}/1/validate-token`, {
       headers: {
         Authorization: `Token ${String(token || "").trim()}`,
         "User-Agent": LISTENBRAINZ_USER_AGENT,
       },
-      timeout: LISTENBRAINZ_TIMEOUT_MS,
-      validateStatus: (status) => status >= 200 && status < 300,
+      timeoutMs: LISTENBRAINZ_TIMEOUT_MS,
     }),
   );
-  return response.data;
+  return readOne(tokenValidationSchema, response.data, {
+    service: "ListenBrainz",
+    endpoint: "/1/validate-token",
+  });
 };
 
 export const listenbrainzSubmit = async ({
@@ -149,7 +169,7 @@ export async function listenbrainzRequest(
     timeoutMs = LISTENBRAINZ_TIMEOUT_MS,
     data,
   }: { token?: string | null; baseUrl?: string; timeoutMs?: number; data?: unknown } = {},
-) {
+): Promise<unknown> {
   const root = normalizeListenbrainzBaseUrl(baseUrl);
   const isAuthenticated = Boolean(String(token || "").trim());
   const cacheKey = isAuthenticated
@@ -162,17 +182,13 @@ export async function listenbrainzRequest(
     if (inflight) return inflight;
   }
 
+  const pause = listenbrainzPause(root);
+  pause.check();
   const requestPromise = (async () => {
     const isRetryable = (error: unknown) => {
-      const failure = asAppError(error);
-      const status = failure?.response?.status;
-      const code = failure?.code;
+      const status = asAppError(error)?.response?.status;
       return (
-        code === "ECONNABORTED" ||
-        code === "ETIMEDOUT" ||
-        code === "ECONNRESET" ||
-        code === "ENOTFOUND" ||
-        code === "EAI_AGAIN" ||
+        isTransientNetworkError(error) ||
         (status !== undefined && [408, 425, 500, 502, 503, 504].includes(status))
       );
     };
@@ -191,18 +207,17 @@ export async function listenbrainzRequest(
     for (let retryCount = 0; retryCount <= LISTENBRAINZ_MAX_RETRIES; retryCount++) {
       try {
         const response = await listenbrainzLimiter.schedule(() => {
-          const config = {
-            params,
+          const config: HttpOptions = {
+            query: params,
             headers: {
               "User-Agent": LISTENBRAINZ_USER_AGENT,
               ...(isAuthenticated && { Authorization: `Token ${String(token).trim()}` }),
             },
-            timeout: timeoutMs,
-            validateStatus: (status: number) => (status >= 200 && status < 300) || status === 204,
+            timeoutMs,
           };
-          return data
-            ? axios.post(`${root}${path}`, data, config)
-            : axios.get(`${root}${path}`, config);
+          return pause.run(() =>
+            data ? http.post(`${root}${path}`, data, config) : http.get(`${root}${path}`, config),
+          );
         });
         const payload = response.status === 204 ? null : response.data;
         if (cacheKey) listenbrainzCache.set(cacheKey, payload);
@@ -222,19 +237,20 @@ export async function listenbrainzRequest(
     }
 
     const failure = asAppError(lastError);
-    const responseData = failure?.response?.data;
+    const responseData: unknown = failure?.response?.data;
+    const payloadError: unknown =
+      (typeof responseData === "object" &&
+        responseData !== null &&
+        (Reflect.get(responseData, "error") || Reflect.get(responseData, "message"))) ||
+      null;
     const details = {
       path,
       status: failure?.response?.status || null,
       code: failure?.code || null,
       message: failure?.message || "Unknown ListenBrainz error",
-      error:
-        (typeof responseData === "object" &&
-          responseData !== null &&
-          (Reflect.get(responseData, "error") || Reflect.get(responseData, "message"))) ||
-        null,
+      error: payloadError,
     };
-    logFailure(details);
+    if (details.code !== "PAUSED") logFailure(details);
     throw lastError;
   })();
 
@@ -255,24 +271,25 @@ const toListenCount = (value: number | null | undefined) =>
   Number.isInteger(value) && value! > 0 ? value! : null;
 
 async function cachedListenbrainzLookup<V>(
+  cache: ReturnType<typeof createCache<Map<string, V>>>,
   cacheKey: string,
   lookup: () => Promise<Map<string, V>>,
-): Promise<Map<string, V>> {
-  const cached = listenbrainzLookupCache.get(cacheKey);
+) {
+  const cached = cache.get(cacheKey);
   if (cached) return cached;
   try {
     const value = await lookup();
-    listenbrainzLookupCache.set(cacheKey, value);
+    cache.set(cacheKey, value);
     return value;
   } catch {
     const empty = new Map<string, V>();
-    listenbrainzLookupCache.set(cacheKey, empty, LISTENBRAINZ_LOOKUP_FAILURE_TTL_SECONDS);
+    cache.set(cacheKey, empty, LISTENBRAINZ_LOOKUP_FAILURE_TTL_SECONDS);
     return empty;
   }
 }
 
 export const listenbrainzGetReleaseGroupListens = (releaseGroupMbids: string[]) =>
-  cachedListenbrainzLookup(`listens:${releaseGroupMbids.join(",")}`, async () => {
+  cachedListenbrainzLookup(listenbrainzListensCache, releaseGroupMbids.join(","), async () => {
     const batches = await Promise.all(
       toBatches(releaseGroupMbids, LISTENBRAINZ_POPULARITY_BATCH_SIZE).map((mbids) =>
         listenbrainzRequest(
@@ -284,21 +301,85 @@ export const listenbrainzGetReleaseGroupListens = (releaseGroupMbids: string[]) 
     );
     if (!batches.every(Array.isArray)) throw new TypeError("ListenBrainz popularity is not a list");
     const listens = new Map<string, { listenCount: number; listenerCount: number }>();
-    for (const row of batches.flat()) {
-      const listenCount = toListenCount(row?.total_listen_count);
-      const listenerCount = toListenCount(row?.total_user_count);
-      if (listenCount && listenerCount) {
+    for (const row of batches.flatMap((batch) => v.parse(popularityRowsSchema, batch))) {
+      const listenCount = toListenCount(row.total_listen_count);
+      const listenerCount = toListenCount(row.total_user_count);
+      if (row.release_group_mbid && listenCount && listenerCount) {
         listens.set(row.release_group_mbid, { listenCount, listenerCount });
       }
     }
     return listens;
   });
 
+const listenbrainzMbids = lenient(v.array(v.nullable(v.string())));
+
+export const listenbrainzTopArtistsSchema = v.fallback(
+  v.looseObject({
+    payload: lenient(
+      v.looseObject({
+        artists: lenient(
+          v.array(
+            v.fallback(
+              v.looseObject({
+                artist_name: lenientText,
+                artist_mbid: lenient(v.nullable(v.string())),
+                artist_mbids: listenbrainzMbids,
+                listen_count: lenientCount,
+              }),
+              {},
+            ),
+          ),
+        ),
+      }),
+    ),
+  }),
+  {},
+);
+
+export const listenbrainzTopRecordingsSchema = v.fallback(
+  v.looseObject({
+    payload: lenient(
+      v.looseObject({
+        recordings: lenient(
+          v.array(
+            v.fallback(
+              v.looseObject({
+                artist_name: lenientText,
+                artist_mbids: listenbrainzMbids,
+                track_name: lenientText,
+                release_name: lenient(v.nullable(v.string())),
+              }),
+              {},
+            ),
+          ),
+        ),
+      }),
+    ),
+  }),
+  {},
+);
+
+const popularityRowsSchema = v.array(
+  v.fallback(
+    v.looseObject({
+      release_group_mbid: lenientText,
+      total_listen_count: lenient(v.nullable(v.number())),
+      total_user_count: lenient(v.nullable(v.number())),
+    }),
+    {},
+  ),
+);
+
+const releaseGroupMetadataSchema = v.record(
+  v.string(),
+  v.fallback(v.looseObject({ release_group: lenient(v.looseObject({ date: lenientText })) }), {}),
+);
+
 const isReleaseGroupMetadata = (batch: unknown) =>
   Boolean(batch) && typeof batch === "object" && !Array.isArray(batch) && !("error" in batch!);
 
 export const listenbrainzGetReleaseGroupDates = (releaseGroupMbids: string[]) =>
-  cachedListenbrainzLookup(`dates:${releaseGroupMbids.join(",")}`, async () => {
+  cachedListenbrainzLookup(listenbrainzDatesCache, releaseGroupMbids.join(","), async () => {
     const batches = await Promise.all(
       toBatches(releaseGroupMbids, LISTENBRAINZ_METADATA_BATCH_SIZE).map((mbids) =>
         listenbrainzRequest("/1/metadata/release_group/", { release_group_mbids: mbids.join(",") }),
@@ -308,11 +389,13 @@ export const listenbrainzGetReleaseGroupDates = (releaseGroupMbids: string[]) =>
       throw new TypeError("ListenBrainz release group metadata is not keyed by MBID");
     }
     const dates = new Map<string, string>();
-    for (const [mbid, metadata] of batches.flatMap(Object.entries)) {
-      const date = metadata?.release_group?.date;
-      if (typeof date === "string" && date) dates.set(mbid, date);
+    for (const batch of batches) {
+      for (const [mbid, metadata] of Object.entries(v.parse(releaseGroupMetadataSchema, batch))) {
+        const date = metadata.release_group?.date;
+        if (date) dates.set(mbid, date);
+      }
     }
     return dates;
   });
 
-export { listenbrainzCache, listenbrainzLookupCache };
+export { listenbrainzCache, listenbrainzDatesCache, listenbrainzListensCache };

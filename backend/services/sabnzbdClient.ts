@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
+import * as v from "valibot";
 import { dbOps } from "../db/helpers/index.ts";
 import { normalizeBaseUrl, normalizeInteger, sanitizeNzbName } from "./usenetClientCommon.ts";
-import axios from "../../lib/axiosFetch.ts";
+import { http } from "../../lib/http.ts";
 import { removeSabnzbdDownloadFolder } from "./sabnzbdCleanup.ts";
 import { asAppError } from "../../lib/errors.ts";
+import { lenient, readOne } from "./integrationData.ts";
 
 export const sabnzbdSettings = Object.freeze({
   key: "sabnzbd",
@@ -38,11 +40,20 @@ export const sabnzbdSettings = Object.freeze({
     }),
     Object.freeze({
       key: "priority",
-      label: "Source priority",
+      label: "Track priority",
       type: "number",
       min: 1,
       max: 1000,
       section: "Downloads",
+    }),
+    Object.freeze({
+      key: "albumPriority",
+      label: "Album priority",
+      type: "number",
+      min: 1,
+      max: 1000,
+      section: "Downloads",
+      hint: "Empty uses track priority.",
     }),
     Object.freeze({
       key: "addPaused",
@@ -64,60 +75,6 @@ export const sabnzbdSettings = Object.freeze({
   validation: Object.freeze({ required: ["url", "apiKey"], url: ["url"] }),
   testConnection: true,
 });
-
-export const tidarrSettings = Object.freeze({
-  key: "tidarr",
-  label: "Tidarr",
-  subtitle: "Tidal",
-  enabledDefault: false,
-  testRequiresEnabled: true,
-  fields: Object.freeze([
-    Object.freeze({ key: "enabled", label: "Enable Tidarr", type: "toggle" }),
-    Object.freeze({
-      key: "url",
-      label: "Server URL",
-      type: "url",
-      required: true,
-      section: "Connection",
-      placeholder: "http://localhost:8484",
-    }),
-    Object.freeze({
-      key: "apiKey",
-      label: "API key",
-      type: "password",
-      required: true,
-      secret: true,
-      section: "Connection",
-    }),
-    Object.freeze({
-      key: "priority",
-      label: "Source priority",
-      type: "number",
-      min: 1,
-      max: 1000,
-      section: "Downloads",
-    }),
-  ]),
-  defaults: Object.freeze({
-    enabled: false,
-    url: "",
-    apiKey: "",
-    priority: 20,
-  }),
-  validation: Object.freeze({ required: ["url", "apiKey"], url: ["url"] }),
-  testConnection: true,
-});
-
-const TIDARR_RELEASE_GUID = /^(\d+)-(?:hires_lossless|lossless|high|low)$/;
-
-// Tidarr lists an album once per quality, and every listing downloads as the same item.
-export function usenetReleaseIdentity(guid: string | null | undefined) {
-  const id = String(guid || "")
-    .trim()
-    .toLowerCase();
-  const tidalAlbum = TIDARR_RELEASE_GUID.exec(id)?.[1];
-  return tidalAlbum ? `tidarr:${tidalAlbum}` : id;
-}
 
 const SABNZBD_API_CLIENTS = {
   sabnzbd: { name: "SABnzbd", apiPath: "/api" },
@@ -141,12 +98,41 @@ type SabnzbdConnection = {
   configured: boolean;
   connected: boolean;
   message: string;
+  warning?: boolean;
   version?: string | null;
   downloadPath?: string | null;
   directories?: Awaited<ReturnType<SabnzbdClient["getDownloadDirectories"]>>;
 };
 
-type SabnzbdSlot = { nzo_id: string; storage?: string | null };
+const slotSchema = v.looseObject({
+  nzo_id: v.string(),
+  storage: v.nullish(v.string()),
+  status: v.optional(v.string()),
+});
+const slotsSchema = v.optional(v.looseObject({ slots: v.optional(v.array(slotSchema)) }));
+const configEntrySchema = v.fallback(
+  v.looseObject({
+    name: lenient(v.unknown()),
+    value: lenient(v.unknown()),
+    dir: lenient(v.unknown()),
+  }),
+  {},
+);
+const configSectionSchema = lenient(
+  v.union([v.array(configEntrySchema), v.record(v.string(), v.unknown())]),
+);
+type ConfigSection = v.InferOutput<typeof configSectionSchema>;
+const sabnzbdResponseSchema = v.looseObject({
+  status: v.optional(v.unknown()),
+  error: v.optional(v.unknown()),
+  version: v.optional(v.string()),
+  nzo_ids: v.optional(v.array(v.string())),
+  queue: slotsSchema,
+  history: slotsSchema,
+  config: v.optional(v.looseObject({ misc: configSectionSchema, categories: configSectionSchema })),
+});
+
+type SabnzbdSlot = v.InferOutput<typeof slotSchema>;
 type NzbId = string | number | null | undefined;
 
 const connectionCache = new Map<
@@ -201,33 +187,29 @@ function buildNzbUpload(fileName: string, content: Buffer) {
   };
 }
 
-function readConfigValue(entries: unknown, name: string) {
+function readConfigValue(entries: ConfigSection, name: string) {
   const key = String(name || "").toLowerCase();
   if (Array.isArray(entries)) {
-    const entry = entries.find((item) => String(item?.name || "").toLowerCase() === key);
-    return entry?.value ?? "";
+    const entry = entries.find((item) => String(item.name || "").toLowerCase() === key);
+    return String(entry?.value ?? "");
   }
-  if (entries && typeof entries === "object") {
-    for (const [k, v] of Object.entries(entries)) {
-      if (String(k).toLowerCase() === key) return String(v ?? "");
-    }
+  for (const [k, value] of Object.entries(entries ?? {})) {
+    if (k.toLowerCase() === key) return String(value ?? "");
   }
   return "";
 }
 
-function readCategoryDirectory(entries: unknown, category: unknown) {
+function readCategoryDirectory(entries: ConfigSection, category: unknown) {
   const wanted = String(category || "")
     .trim()
     .toLowerCase();
   if (!wanted) return "";
   const categories = Array.isArray(entries)
     ? entries
-    : entries && typeof entries === "object"
-      ? Object.values(entries)
-      : [];
+    : Object.values(entries ?? {}).map((entry) => v.parse(configEntrySchema, entry));
   const match = categories.find(
-    (entry: { name?: unknown; dir?: unknown } | null | undefined) =>
-      String(entry?.name || "")
+    (entry) =>
+      String(entry.name || "")
         .trim()
         .toLowerCase() === wanted,
   );
@@ -286,15 +268,15 @@ export class SabnzbdClient {
       .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`)
       .join("&");
     const response = file
-      ? await axios.post(`${base}&${query}`, file.body, {
-          timeout: 45000,
+      ? await http.post(`${base}&${query}`, file.body, {
+          timeoutMs: 45000,
           headers: { "Content-Type": file.contentType },
         })
-      : await axios.get(`${base}&${query}`, { timeout: 45000 });
+      : await http.get(`${base}&${query}`, { timeoutMs: 45000 });
     if (response.status !== 200) {
       throw new Error(`${this.name} ${mode} failed: HTTP ${response.status}`);
     }
-    return response.data;
+    return readOne(sabnzbdResponseSchema, response.data, { service: this.name, endpoint: mode });
   }
 
   async appendNzb({
@@ -322,7 +304,9 @@ export class SabnzbdClient {
       { file: buildNzbUpload(nzbName, content) },
     );
     if (!result?.nzo_ids || result.nzo_ids.length === 0) {
-      throw new Error(`${this.name} rejected the NZB${result?.error ? `: ${result.error}` : ""}`);
+      throw new Error(
+        `${this.name} rejected the NZB${result?.error ? `: ${String(result.error)}` : ""}`,
+      );
     }
     return {
       nzbId: String(result.nzo_ids[0]),
@@ -351,7 +335,10 @@ export class SabnzbdClient {
     {
       deleteFiles = false,
       historyItem = null,
-    }: { deleteFiles?: boolean; historyItem?: Partial<SabnzbdSlot> | null } = {},
+    }: {
+      deleteFiles?: boolean;
+      historyItem?: Partial<Pick<SabnzbdSlot, "nzo_id" | "storage">> | null;
+    } = {},
   ) {
     const id = String(nzoId || "").trim();
     if (!id) return false;
@@ -384,7 +371,7 @@ export class SabnzbdClient {
     return result?.status === true;
   }
 
-  async sharesDownloadFolder(item: Partial<SabnzbdSlot>) {
+  async sharesDownloadFolder(item: Partial<Pick<SabnzbdSlot, "nzo_id" | "storage">>) {
     const id = String(item?.nzo_id || "").trim();
     const storage = normalizeStoragePath(item?.storage);
     if (!storage) return false;
@@ -405,7 +392,7 @@ export class SabnzbdClient {
       this.api("get_config", { section: "misc" }).catch(() => null),
       this.api("get_config", { section: "categories" }).catch(() => null),
     ]);
-    const entries = miscResult?.config?.misc || [];
+    const entries = miscResult?.config?.misc;
     return {
       completedPath: "",
       categoryDestDir: readCategoryDirectory(categoryResult?.config?.categories, settings.category),
@@ -441,10 +428,12 @@ export class SabnzbdClient {
     let result: SabnzbdConnection;
     try {
       const [versionRes, directories] = await Promise.all([
-        axios.get(`${this._apiUrl()}&mode=version`, { timeout: 15000 }),
+        http.get(`${this._apiUrl()}&mode=version`, { timeoutMs: 15000 }),
         this.getDownloadDirectories(),
       ]);
-      const version = versionRes.data?.version || null;
+      const version =
+        readOne(sabnzbdResponseSchema, versionRes.data, { service: this.name, endpoint: "version" })
+          .version || null;
       result = {
         ok: true,
         configured: true,
@@ -468,4 +457,3 @@ export class SabnzbdClient {
 }
 
 export const sabnzbdClient = new SabnzbdClient();
-export const tidarrClient = new SabnzbdClient(null, "tidarr");

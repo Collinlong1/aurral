@@ -7,8 +7,10 @@ import { activePluginSources, pluginSourceLabel } from "./plugins/pluginStore.ts
 const SOURCE_LABELS = {
   slskd: "Soulseek",
   usenet: "Usenet",
+  tidarr: "Tidarr",
   deemix: "deemix",
   ytdlp: "yt-dlp",
+  qbittorrent: "qBittorrent",
   share: "Aurral share",
 };
 
@@ -16,6 +18,12 @@ function normalizePriority(value: unknown, fallback: number) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
   return Math.trunc(parsed);
+}
+
+function normalizeAlbumPriority(value: unknown) {
+  if (value == null || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
 }
 
 function getIntegrations() {
@@ -37,6 +45,15 @@ function getUsenetPriority() {
   return normalizePriority(dbOps.getSettings()?.integrations?.[key]?.priority, 20);
 }
 
+function getTidarrPriority() {
+  return normalizePriority(getIntegrations().tidarr?.priority, 20);
+}
+
+function getUsenetAlbumPriority() {
+  const { key } = getUsenetClient();
+  return normalizeAlbumPriority(dbOps.getSettings()?.integrations?.[key]?.albumPriority);
+}
+
 function getDeemixPriority() {
   const deemix = getIntegrations().deemix || {};
   return normalizePriority(deemix.priority, 15);
@@ -54,15 +71,16 @@ export function getDownloadSourceStatus() {
   const tidarrClient = getDownloadClient("tidarr");
   const ytdlpClient = getDownloadClient("ytdlp");
   const deemixClient = getDownloadClient("deemix");
+  const qbittorrentClient = getDownloadClient("qbittorrent");
   const slskdConfigured = isSlskdEnabled() && slskdClient.isConfigured();
   const prowlarrConfigured = prowlarrClient.isConfigured();
   const nzbgetConfigured = nzbgetClient.isConfigured();
   const sabnzbdConfigured = sabnzbdClient.isConfigured();
   const tidarrConfigured = tidarrClient.isConfigured();
-  const usenetConfigured =
-    prowlarrConfigured && (nzbgetConfigured || sabnzbdConfigured || tidarrConfigured);
+  const usenetConfigured = prowlarrConfigured && (nzbgetConfigured || sabnzbdConfigured);
   const ytdlpConfigured = ytdlpClient.isConfigured();
   const deemixConfigured = deemixClient.isConfigured();
+  const qbittorrentConfigured = prowlarrConfigured && qbittorrentClient.isConfigured();
   return {
     slskd: {
       id: "slskd",
@@ -70,6 +88,7 @@ export function getDownloadSourceStatus() {
       enabled: isSlskdEnabled(),
       configured: slskdConfigured,
       priority: getSlskdPriority(),
+      albumPriority: normalizeAlbumPriority(getIntegrations().slskd?.albumPriority),
     },
     usenet: {
       id: "usenet",
@@ -77,10 +96,18 @@ export function getDownloadSourceStatus() {
       enabled: usenetConfigured,
       configured: usenetConfigured,
       priority: getUsenetPriority(),
+      albumPriority: getUsenetAlbumPriority(),
       prowlarrConfigured,
       nzbgetConfigured,
       sabnzbdConfigured,
-      tidarrConfigured,
+    },
+    tidarr: {
+      id: "tidarr",
+      label: SOURCE_LABELS.tidarr,
+      enabled: getIntegrations().tidarr?.enabled === true,
+      configured: tidarrConfigured,
+      priority: getTidarrPriority(),
+      albumPriority: normalizeAlbumPriority(getIntegrations().tidarr?.albumPriority),
     },
     deemix: {
       id: "deemix",
@@ -88,6 +115,7 @@ export function getDownloadSourceStatus() {
       enabled: deemixClient.isEnabled(),
       configured: deemixConfigured,
       priority: getDeemixPriority(),
+      albumPriority: normalizeAlbumPriority(getIntegrations().deemix?.albumPriority),
     },
     ytdlp: {
       id: "ytdlp",
@@ -96,24 +124,54 @@ export function getDownloadSourceStatus() {
       configured: ytdlpConfigured,
       priority: getYtdlpPriority(),
     },
+    qbittorrent: {
+      id: "qbittorrent",
+      label: SOURCE_LABELS.qbittorrent,
+      enabled: qbittorrentClient.getStatus().enabled,
+      configured: qbittorrentConfigured,
+      priority: normalizePriority(getIntegrations().qbittorrent?.priority, 30),
+      albumPriority: normalizeAlbumPriority(getIntegrations().qbittorrent?.albumPriority),
+    },
   };
 }
 
-export function getEnabledDownloadSources() {
+export type SourceOrder = "track" | "album";
+
+const sourceRank = (
+  source: { priority: number; albumPriority?: number | null },
+  order: SourceOrder,
+) => (order === "album" ? (source.albumPriority ?? source.priority) : source.priority);
+
+export function getEnabledDownloadSources(order: SourceOrder = "track") {
   const status = getDownloadSourceStatus();
   const sources = [];
   if (status.slskd.configured) sources.push(status.slskd);
   if (status.usenet.configured) sources.push(status.usenet);
+  if (status.tidarr.configured) sources.push(status.tidarr);
   if (status.deemix.configured) sources.push(status.deemix);
   if (status.ytdlp.configured) sources.push(status.ytdlp);
+  if (status.qbittorrent.configured) sources.push(status.qbittorrent);
   sources.push(...activePluginSources());
-  return sources.sort((left, right) => {
-    if (left.priority !== right.priority) return left.priority - right.priority;
-    return left.id.localeCompare(right.id);
-  });
+  return sources.sort(
+    (left, right) =>
+      sourceRank(left, order) - sourceRank(right, order) || left.id.localeCompare(right.id),
+  );
 }
 
-const ALBUM_GRAB_SOURCE_IDS = ["slskd", "usenet", "deemix"];
+const ALBUM_GRAB_SOURCE_IDS = ["slskd", "usenet", "tidarr", "deemix", "qbittorrent"];
+
+// Sources whose search knows the quality a track already has, so an upgrade
+// asks them only for better copies.
+export const upgradeSourceIds = () => [
+  "slskd",
+  "usenet",
+  "tidarr",
+  "deemix",
+  "qbittorrent",
+  ...activePluginSources()
+    .filter((source) => source.upgrades)
+    .map((source) => source.id),
+];
 
 export const isAlbumGrabSource = (source: { id: string; albums?: boolean }) =>
   ALBUM_GRAB_SOURCE_IDS.includes(source.id) || source.albums === true;
@@ -143,9 +201,11 @@ export function getDownloadSourceNotConfiguredMessage() {
   const status = getDownloadSourceStatus();
   const pieces = [];
   if (!status.slskd.configured) pieces.push("slskd");
-  if (!status.usenet.configured) pieces.push("Prowlarr + SABnzbd/NZBGet/Tidarr");
+  if (!status.usenet.configured) pieces.push("Prowlarr + SABnzbd/NZBGet");
+  if (!status.tidarr.configured) pieces.push("Tidarr");
   if (!status.deemix.configured) pieces.push("deemix");
   if (!status.ytdlp.configured) pieces.push("yt-dlp");
+  if (!status.qbittorrent.configured) pieces.push("Prowlarr + qBittorrent");
   return `No download source is configured. Configure ${pieces.join(" or ")} in Settings → Downloads, or turn on a download source plugin, to enable downloads for flows and playlists.`;
 }
 

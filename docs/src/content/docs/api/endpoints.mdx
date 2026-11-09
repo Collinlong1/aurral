@@ -213,7 +213,7 @@ Cancelling an album stops pending and active downloads and keeps tracks that
 already finished. Requesting the album again retries cancelled and failed
 tracks. Without a configured download source, an Aurral album request saves
 the album and reports `download_source_missing` instead of queueing downloads.
-For Aurral-managed albums, a complete Usenet, Soulseek, or deemix release can
+For Aurral-managed albums, a complete Usenet, Tidarr, Soulseek, or deemix release can
 fill several track jobs with one download attempt. If only some files verify,
 the remaining tracks continue through per-track fallback. Lidarr-managed
 albums keep Lidarr acquisition behavior.
@@ -233,6 +233,7 @@ album, and responds with `monitored: true`.
 | `GET`  | `/api/artists/:mbid/similar`              | Similar artists                                                   |
 | `GET`  | `/api/artists/:mbid/video`                | Find a video for a named artist and track                         |
 | `GET`  | `/api/artists/:mbid/cover`                | Artist image metadata; `refresh=true` retries a stale link        |
+| `GET`  | `/api/artists/:mbid/image`                | Artist image: Library art, or a redirect; `w` picks a width       |
 | `GET`  | `/api/artists/:mbid/preview`              | Deezer top tracks and preview URLs                                |
 | `GET`  | `/api/deezer/preview/:trackId.mp3`        | Redirect to a current Deezer preview for a track                  |
 | `GET`  | `/api/artists/:mbid/stream`               | Stream progressive artist metadata with SSE                       |

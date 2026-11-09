@@ -1,4 +1,5 @@
 import path from "path";
+import * as v from "valibot";
 import fs from "fs/promises";
 import type { ICommonTagsResult, IAudioMetadata } from "music-metadata";
 import { isVariousArtistsCredit } from "./trackMatching/titleText.ts";
@@ -6,6 +7,7 @@ import { asAppError } from "../../lib/errors.ts";
 import { logger, safeLogDiagnostic } from "./logger.ts";
 import { AURRAL_IDENTITY_TAG, writeAudioTags } from "./audioTags.ts";
 import { getAlbumByMbid } from "./providers/brainzmashProvider.ts";
+import { isNzbSource } from "./usenetClientCommon.ts";
 import { musicbrainzGetReleaseTrackCredits } from "./apiClients/musicbrainz.ts";
 import { formatArtistCredit } from "../../lib/artistCredit.ts";
 
@@ -30,7 +32,22 @@ export type DownloadTrackFields = {
   manualReplacementSearch?: boolean;
 };
 
-export type AurralIdentity = { artistMbid?: string; albumMbid?: string; trackMbid?: string };
+const aurralIdentitySchema = v.object({
+  artistMbid: v.optional(v.string()),
+  albumMbid: v.optional(v.string()),
+  trackMbid: v.optional(v.string()),
+});
+
+export type AurralIdentity = v.InferOutput<typeof aurralIdentitySchema>;
+
+const parseIdentity = (text: string) => {
+  try {
+    const parsed = v.safeParse(aurralIdentitySchema, JSON.parse(text));
+    return parsed.success ? parsed.output : null;
+  } catch {
+    return null;
+  }
+};
 
 export type IdentitySource = {
   native?: IAudioMetadata["native"];
@@ -93,23 +110,25 @@ export function stringifyStringListJson(value: unknown) {
 }
 
 export function buildAurralIdentity(metadata: DownloadTrackFields = {}) {
-  const identity = Object.fromEntries(
-    (["artistMbid", "albumMbid", "trackMbid"] as const)
-      .map((key) => [key, String(metadata?.[key] || "").trim()])
-      .filter(([, value]) => value),
-  );
+  const identity: AurralIdentity = {};
+  for (const key of ["artistMbid", "albumMbid", "trackMbid"] as const) {
+    const value = String(metadata?.[key] || "").trim();
+    if (value) identity[key] = value;
+  }
   return Object.keys(identity).length > 0 ? identity : null;
 }
 
-export function parseAurralIdentityComment(value: unknown) {
-  const comments = Array.isArray(value) ? value : [value];
-  for (const entry of comments) {
-    const text = String(typeof entry === "object" ? entry?.text || "" : entry || "").trim();
+const commentText = (entry: unknown) =>
+  String(
+    entry && typeof entry === "object" ? ("text" in entry && entry.text) || "" : entry || "",
+  ).trim();
+
+function parseAurralIdentityComment(value: unknown) {
+  for (const entry of Array.isArray(value) ? value : [value]) {
+    const text = commentText(entry);
     if (!text.startsWith(AURRAL_IDENTITY_PREFIX)) continue;
-    try {
-      const parsed = JSON.parse(text.slice(AURRAL_IDENTITY_PREFIX.length));
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
-    } catch {}
+    const identity = parseIdentity(text.slice(AURRAL_IDENTITY_PREFIX.length));
+    if (identity) return identity;
   }
   return null;
 }
@@ -118,27 +137,23 @@ const nativeTags = (metadata: IdentitySource) =>
   Object.values(metadata?.native || {}).flatMap((tags) => (Array.isArray(tags) ? tags : []));
 
 // Older versions kept the marker in the comment, then the grouping tag.
-export function readLegacyAurralIdentity(metadata: IdentitySource) {
-  const nativeComments = nativeTags(metadata)
+function readLegacyAurralIdentity(metadata: IdentitySource) {
+  const nativeComments: unknown[] = nativeTags(metadata)
     .filter((tag) => ["txxx:comment", "comm"].includes(String(tag?.id || "").toLowerCase()))
     .map((tag) => tag.value);
   const found = [
     parseAurralIdentityComment(nativeComments),
     parseAurralIdentityComment(metadata?.common?.comment),
     parseAurralIdentityComment(metadata?.common?.grouping),
-  ].filter(Boolean);
-  return found.length ? Object.assign({}, ...found) : null;
+  ].filter((identity) => identity !== null);
+  return found.length ? found.reduce((merged, identity) => ({ ...merged, ...identity })) : null;
 }
 
 const OWN_IDENTITY_TAG = new RegExp(`(^|:)${AURRAL_IDENTITY_TAG}$`, "i");
 
 export function readAurralIdentity(metadata: IdentitySource): AurralIdentity | null {
   const tag = nativeTags(metadata).find((entry) => OWN_IDENTITY_TAG.test(String(entry?.id || "")));
-  let own = null;
-  try {
-    const parsed = JSON.parse(String(tag?.value ?? ""));
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) own = parsed;
-  } catch {}
+  const own = parseIdentity(String(tag?.value ?? ""));
   const legacy = readLegacyAurralIdentity(metadata);
   return own || legacy ? { ...(legacy || {}), ...(own || {}) } : null;
 }
@@ -183,11 +198,11 @@ export function resolveBlockedJobSourceFilename(job: BlockedJobFields) {
   const remote = String(job?.remoteFilename || "").trim() || null;
   const staging = String(job?.stagingPath || "").trim();
   const staged = staging ? path.basename(staging) || null : null;
-  return job?.downloadSource === "usenet" ? staged || remote : remote || staged;
+  return isNzbSource(job?.downloadSource) ? staged || remote : remote || staged;
 }
 
 export function resolveBlockedJobReleaseTitle(job: BlockedJobFields) {
-  if (job?.downloadSource !== "usenet") return null;
+  if (!isNzbSource(job?.downloadSource)) return null;
   return String(job?.releaseTitle || "").trim() || null;
 }
 
@@ -308,13 +323,8 @@ export async function writeImportedFileMetadata(
   }
 }
 
-const albumGenres = async (albumMbid: string | null | undefined) =>
-  albumMbid
-    ? getAlbumByMbid(albumMbid).then(
-        (album) => album.genres.slice(0, 5),
-        () => undefined,
-      )
-    : undefined;
+const albumInfo = async (albumMbid: string | null | undefined) =>
+  albumMbid ? getAlbumByMbid(albumMbid).catch(() => null) : null;
 
 async function trackCredit({ releaseMbid, trackMbid, recordingMbidAliases }: DownloadTrackFields) {
   if (!releaseMbid || !trackMbid) return null;
@@ -329,31 +339,36 @@ async function trackCredit({ releaseMbid, trackMbid, recordingMbidAliases }: Dow
 // A compilation's tracks keep their own performer as the artist. The download
 // job knows which track it fetched, so its identity replaces the uploader's.
 export async function writeAudioMetadata(filePath: string, metadata: DownloadTrackFields = {}) {
-  const credit = await trackCredit(metadata);
+  const [credit, album] = await Promise.all([trackCredit(metadata), albumInfo(metadata.albumMbid)]);
   const performer = isVariousArtistsCredit(metadata.artistName, metadata.artistMbid)
     ? metadata.artistAliases?.[0]
     : null;
+  const albumArtists = Array.isArray(album?.artists) ? album.artists : [];
+  const mainArtist =
+    albumArtists.find((entry) => entry.id === album?.artistId) || albumArtists[0] || null;
+  const albumArtist = mainArtist?.name || metadata.artistName;
+  const albumArtistMbid = mainArtist?.id || metadata.artistMbid;
   return writeAudioTags(
     filePath,
     {
       title: metadata.trackName,
       artist: credit ? formatArtistCredit(credit) : performer || metadata.artistName,
       artists: credit?.map((entry) => entry.name),
-      albumArtist: metadata.artistName,
+      albumArtist,
       album: metadata.albumName,
       artistMbid: credit
         ? credit.flatMap((entry) => (entry.mbid ? [entry.mbid] : []))
         : performer
           ? undefined
           : metadata.artistMbid,
-      albumArtistMbid: metadata.artistMbid,
+      albumArtistMbid,
       releaseGroupMbid: metadata.albumMbid,
       releaseMbid: metadata.releaseMbid,
       recordingMbid: metadata.trackMbid,
       year: metadata.releaseYear,
       trackNumber: metadata.trackNumber,
       discNumber: metadata.discNumber,
-      genres: await albumGenres(metadata.albumMbid),
+      genres: album?.genres.slice(0, 5),
     },
     { identity: buildAurralIdentity(metadata) },
   );

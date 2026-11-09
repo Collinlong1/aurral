@@ -1,6 +1,6 @@
 import * as v from "valibot";
 import { isOwnKey } from "../../../lib/ownKey.ts";
-import axios from "../../../lib/axiosFetch.ts";
+import { http, isTransientNetworkError } from "../../../lib/http.ts";
 import { asAppError } from "../../../lib/errors.ts";
 import createCache from "../apiClients/simpleCache.ts";
 import { dbOps } from "../../db/helpers/index.ts";
@@ -34,7 +34,7 @@ import createRateLimiter from "../apiClients/rateLimiter.ts";
 import { musicbrainzGet, releaseGroupSchema } from "../apiClients/musicbrainzHttp.ts";
 import { readMany, readOne } from "../integrationData.ts";
 import { albumSearchTexts, parseSearchQuery, rankByMatch } from "../searchText.ts";
-import { runSharedInflight } from "../sharedInflight.ts";
+import { runSharedInflight, type InflightRequests } from "../sharedInflight.ts";
 import { logger, safeLogDiagnostic } from "../logger.ts";
 import { setTimeout as delay } from "node:timers/promises";
 import {
@@ -112,16 +112,16 @@ const METADATA_REQUEST_LEASE_MS = 2 * 60_000;
 const METADATA_REQUEST_LEASE_POLL_MS = 250;
 const METADATA_MAX_QUEUED_REQUESTS =
   Math.floor(METADATA_REQUEST_TIMEOUT_MS / METADATA_REQUEST_MIN_INTERVAL_MS) - 1;
-const metadataHotCache = createCache(
+const metadataHotCache = createCache<CachedMetadata<unknown>>(
   METADATA_HOT_CACHE_TTL_SECONDS,
   METADATA_HOT_CACHE_MAX_ENTRIES,
 );
 let nextMetadataStoreCleanupAt = 0;
-const metadataNotFoundCache = createCache(
+const metadataNotFoundCache = createCache<true>(
   METADATA_NOT_FOUND_CACHE_TTL_SECONDS,
   METADATA_CACHE_MAX_ENTRIES,
 );
-const providerInflightRequests = new Map();
+const providerInflightRequests: InflightRequests = new Map();
 const providerRequestLimiter = createRateLimiter(METADATA_REQUEST_MIN_INTERVAL_MS, {
   maxQueue: METADATA_MAX_QUEUED_REQUESTS,
 });
@@ -269,19 +269,13 @@ function openMetadataCircuit(baseUrl: string, status: number, error: unknown) {
   setMetadataProviderCooldown(baseUrl, status, Date.now() + cooldownMs);
 }
 
-const RETRYABLE_ERROR_CODES: (string | undefined)[] = [
-  "ECONNABORTED",
-  "ETIMEDOUT",
-  "ECONNRESET",
-  "ENOTFOUND",
-  "EAI_AGAIN",
-];
 const RETRYABLE_STATUSES: (number | undefined)[] = [408, 425, 429, 500, 502, 503, 504];
 
 function isRetryable(error: unknown) {
   const failure = asAppError(error);
   return (
-    (typeof failure?.code === "string" && RETRYABLE_ERROR_CODES.includes(failure.code)) ||
+    isTransientNetworkError(error) ||
+    failure?.code === "ETIMEDOUT" ||
     RETRYABLE_STATUSES.includes(failure?.response?.status)
   );
 }
@@ -323,18 +317,20 @@ async function readCachedMetadata<Schema extends v.GenericSchema>(
   schema: Schema,
   { persistent = false } = {},
 ) {
-  let entry: CachedMetadata<v.InferOutput<Schema>> | null = persistent
-    ? null
-    : metadataHotCache.get(cacheKey);
+  const readHot = () =>
+    persistent
+      ? null
+      : // A cache key always holds output of the same schema.
+        ((metadataHotCache.get(cacheKey) as CachedMetadata<v.InferOutput<Schema>> | undefined) ??
+        null);
+  let entry = readHot();
   if (!entry) {
     const persisted = readStoredMetadata(
       cacheKey,
       schema,
       await dbOps.getMetadataResponseAsync(cacheKey),
     );
-    const current: CachedMetadata<v.InferOutput<Schema>> | null = persistent
-      ? null
-      : metadataHotCache.get(cacheKey);
+    const current = readHot();
     if (!persisted) {
       if (!current) return null;
       entry = current;
@@ -491,12 +487,12 @@ function refreshMetadata<Schema extends v.GenericSchema>(
                 throw error;
               }
               providerRequestStarted = true;
-              return axios.get(`${baseUrl}${path}`, {
-                params,
-                timeout: Number.isFinite(requestTimeoutMs)
+              return http.get(`${baseUrl}${path}`, {
+                query: params,
+                timeoutMs: Number.isFinite(requestTimeoutMs)
                   ? Math.max(1, Math.floor(requestTimeoutMs))
                   : METADATA_REQUEST_TIMEOUT_MS,
-                bodyTimeout: METADATA_RESPONSE_BODY_TIMEOUT_MS,
+                bodyTimeoutMs: METADATA_RESPONSE_BODY_TIMEOUT_MS,
                 headers: {
                   "User-Agent": getUserAgent(),
                 },
@@ -722,11 +718,15 @@ export async function getAlbumTracksByAlbumMbid(
 ) {
   const album = await getAlbumByMbid(albumMbid);
   const release = chooseRelease(album);
-  return Array.isArray(release?.tracks)
-    ? release.tracks
-        .filter((track) => !isSilenceTrack(track.title))
-        .map((track) => ({ ...track, releaseMbid: release.id || null }))
-    : [];
+  if (!Array.isArray(release?.tracks)) return [];
+  const discNames = new Map(release.media.map((medium) => [medium.position, medium.name]));
+  return release.tracks
+    .filter((track) => !isSilenceTrack(track.title))
+    .map((track) => ({
+      ...track,
+      releaseMbid: release.id || null,
+      discTitle: discNames.get(track.mediumNumber || 1) || null,
+    }));
 }
 
 export async function searchArtists(

@@ -37,6 +37,7 @@ import {
   isAlbumGrabSourceId,
   getSourceLabel,
   isAnyDownloadSourceConfigured,
+  type SourceOrder,
 } from "./downloadSourceService.ts";
 import { blockPipelineJobForReview, SEARCH_RESET } from "./pipelineHelpers.ts";
 import { isPipelinePayloadActive } from "./downloadJobs/downloadCancellation.ts";
@@ -44,7 +45,13 @@ import { deferForInactiveOwner } from "./downloadJobs/playlistOwnerStatus.ts";
 import { discardHeldFile } from "./downloadJobs/reviewFiles.ts";
 import { processShareDownload } from "./shareLinks/download.ts";
 import { processPluginPipelinePayload } from "./plugins/pluginDownloadSource.ts";
+import {
+  discardSourceWork as discardContractSourceWork,
+  processSourcePipelinePayload,
+} from "./download/sourcePipeline.ts";
+import { nativeDownloadSource } from "./download/nativeSources.ts";
 import { pluginIdFromSource } from "./plugins/pluginStore.ts";
+import { isNzbSource } from "./usenetClientCommon.ts";
 
 // Runs one step of a download job: it picks the next enabled source in
 // priority order and hands the step to that source's adapter. Every source
@@ -84,6 +91,9 @@ export type PipelinePayload = TrackerPayload &
 type SourceFields = Partial<
   Pick<
     PipelinePayload,
+    | "jobId"
+    | "upgrade"
+    | "albumGroupJobIds"
     | "manualSelection"
     | "allowedSources"
     | "albumGrab"
@@ -182,6 +192,14 @@ function isSourceConfigured(sourceId: string) {
   return getEnabledDownloadSources().some((source) => source.id === sourceId);
 }
 
+const sourceOrder = (payload: SourceFields): SourceOrder =>
+  (payload.jobId && downloadTracker.getJob(payload.jobId)?.requestKind === "album") ||
+  (payload.albumGrab === true &&
+    payload.upgrade === true &&
+    (payload.albumGroupJobIds?.length ?? 0) > 1)
+    ? "album"
+    : "track";
+
 export function buildNextSourcePayload<Payload extends SourceFields>(
   payload: Payload,
   failedSource: string | null = null,
@@ -191,7 +209,7 @@ export function buildNextSourcePayload<Payload extends SourceFields>(
   const allowedSources = Array.isArray(payload?.allowedSources)
     ? new Set(payload.allowedSources)
     : null;
-  const sources = getEnabledDownloadSources().filter(
+  const sources = getEnabledDownloadSources(sourceOrder(payload)).filter(
     (source) =>
       (!allowedSources || allowedSources.has(source.id)) &&
       (payload?.albumGrab !== true || isAlbumGrabSource(source)),
@@ -460,8 +478,10 @@ async function awaitAttemptRelease(payload: PipelinePayload) {
 }
 
 async function discardSourceWork(payload: PipelinePayload) {
-  if (payload.source === "slskd") await discardSlskdWork(payload as SlskdStepPayload);
-  else if (payload.source === "usenet") await discardUsenetWork(payload as UsenetStepPayload);
+  const native = nativeDownloadSource(payload.source);
+  if (native) await discardContractSourceWork(payload as PluginStepPayload, native);
+  else if (payload.source === "slskd") await discardSlskdWork(payload as SlskdStepPayload);
+  else if (isNzbSource(payload.source)) await discardUsenetWork(payload as UsenetStepPayload);
   else if (payload.source === "deemix") await discardDeemixWork(payload as DeemixStepPayload);
 }
 
@@ -570,10 +590,12 @@ async function processSourcePayload(payload: PipelinePayload): Promise<PipelineP
         )
       : null;
   }
-  if (payload.source === "usenet") {
-    if (!isSourceConfigured("usenet")) {
+  if (isNzbSource(payload.source)) {
+    if (!isSourceConfigured(payload.source)) {
       const job = downloadTracker.getJob(payload.jobId);
-      return job ? failOrTryNextSource(payload, job, "Usenet is not configured") : null;
+      return job
+        ? failOrTryNextSource(payload, job, `${getSourceLabel(payload.source)} is not configured`)
+        : null;
     }
     return processUsenetPipelinePayload(payload as UsenetStepPayload, { failOrTryNextSource });
   }
@@ -590,6 +612,18 @@ async function processSourcePayload(payload: PipelinePayload): Promise<PipelineP
       return job ? failOrTryNextSource(payload, job, "yt-dlp is not configured") : null;
     }
     return processYtdlpPipelinePayload(payload as YtdlpStepPayload, { failOrTryNextSource });
+  }
+  const native = nativeDownloadSource(payload.source);
+  if (native) {
+    if (!isSourceConfigured(native.id)) {
+      const job = downloadTracker.getJob(payload.jobId);
+      return job
+        ? failOrTryNextSource(payload, job, `${getSourceLabel(native.id)} is not configured`)
+        : null;
+    }
+    return processSourcePipelinePayload(payload as PluginStepPayload, native, {
+      failOrTryNextSource,
+    });
   }
   if (pluginIdFromSource(payload.source)) {
     return processPluginPipelinePayload(payload as PluginStepPayload, { failOrTryNextSource });

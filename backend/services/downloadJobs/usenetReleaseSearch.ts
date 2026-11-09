@@ -39,6 +39,7 @@ export interface UsenetRelease {
   indexer?: string | null;
   protocol?: string;
   categories?: number[];
+  tracks?: number | null;
 }
 
 export interface UsenetSearchContext {
@@ -55,6 +56,7 @@ export interface UsenetSearchContext {
 
 interface UsenetRankOptions {
   maxReleaseSizeMb?: number;
+  protocol?: "usenet" | "torrent";
 }
 
 type PhraseSpan = [start: number, end: number];
@@ -214,8 +216,8 @@ function readReleaseRequest(context: UsenetSearchContext) {
   };
 }
 
-export function rankUsenetReleases(
-  releases: UsenetRelease[],
+export function rankUsenetReleases<Release extends UsenetRelease>(
+  releases: Release[],
   context: UsenetSearchContext,
   options: UsenetRankOptions = {},
 ) {
@@ -237,7 +239,7 @@ export function rankUsenetReleases(
   const ranked = [];
   for (const release of Array.isArray(releases) ? releases : []) {
     if (!release?.downloadUrl || !release?.title) continue;
-    if (String(release.protocol || "").toLowerCase() !== "usenet") continue;
+    if (String(release.protocol || "").toLowerCase() !== (options.protocol ?? "usenet")) continue;
     const key = releaseKey(release);
     if (seen.has(key)) continue;
     seen.add(key);

@@ -1,7 +1,7 @@
 import { dbOps } from "../db/helpers/index.ts";
 import type { StoredIntegrations } from "../db/helpers/settings.ts";
 import { normalizeBaseUrl, normalizeInteger } from "./usenetClientCommon.ts";
-import axios from "../../lib/axiosFetch.ts";
+import { http, type HttpOptions } from "../../lib/http.ts";
 import { asAppError } from "../../lib/errors.ts";
 
 type DeemixConfig = NonNullable<StoredIntegrations["deemix"]>;
@@ -95,12 +95,6 @@ interface DeemixConnectionResult {
   message: string;
 }
 
-interface DeemixRequestOptions {
-  params?: Record<string, string | number>;
-  data?: unknown;
-  timeout?: number;
-}
-
 const FLAC_BITRATE = 9;
 const BITRATE_OPTIONS = Object.freeze([
   Object.freeze({ value: "9", label: "FLAC" }),
@@ -135,11 +129,20 @@ export const deemixSettings = Object.freeze({
     }),
     Object.freeze({
       key: "priority",
-      label: "Source priority",
+      label: "Track priority",
       type: "number",
       min: 1,
       max: 1000,
       section: "Downloads",
+    }),
+    Object.freeze({
+      key: "albumPriority",
+      label: "Album priority",
+      type: "number",
+      min: 1,
+      max: 1000,
+      section: "Downloads",
+      hint: "Empty uses track priority.",
     }),
   ]),
   defaults: Object.freeze({ enabled: false, url: "", bitrate: FLAC_BITRATE, priority: 15 }),
@@ -265,15 +268,13 @@ async function request<T = unknown>(
   settings: DeemixSettings,
   method: string,
   path: string,
-  { params, data, timeout = 30000 }: DeemixRequestOptions = {},
+  options: Pick<HttpOptions, "query" | "body" | "timeoutMs"> = {},
 ): Promise<T> {
   if (!settings.url) throw new Error("deemix URL is required");
-  const response = await axios({
+  const response = await http.request(`${settings.url}${path}`, {
     method,
-    url: `${settings.url}${path}`,
-    params,
-    data,
-    timeout,
+    timeoutMs: 30000,
+    ...options,
     headers: session.cookie ? { Cookie: session.cookie } : {},
   });
   const setCookie = response.headers?.["set-cookie"];
@@ -290,7 +291,7 @@ async function connect(settings: DeemixSettings) {
   const first = await request<DeemixConnectResponse>(settings, "GET", "/api/connect");
   const arl = String(first?.singleUser?.arl || "").trim();
   if (isLoggedIn(first) || !arl) return first;
-  await request(settings, "POST", "/api/loginArl", { data: { arl }, timeout: 45000 });
+  await request(settings, "POST", "/api/loginArl", { body: { arl }, timeoutMs: 45000 });
   return request<DeemixConnectResponse>(settings, "GET", "/api/connect");
 }
 
@@ -458,8 +459,8 @@ export class DeemixClient {
     const settings = this._getSettings();
     await requireSession(settings);
     const data = await request<DeemixSearchResponse<DeemixTrack>>(settings, "GET", "/api/search", {
-      params: { term, type: "track", start: 0, nb: Math.min(Math.max(limit, 1), 50) },
-      timeout: 45000,
+      query: { term, type: "track", start: 0, nb: Math.min(Math.max(limit, 1), 50) },
+      timeoutMs: 45000,
     });
     if (data?.error) throw new Error(`deemix search failed: ${data.error}`);
     return (Array.isArray(data?.data) ? data.data : [])
@@ -473,8 +474,8 @@ export class DeemixClient {
     const settings = this._getSettings();
     await requireSession(settings);
     const data = await request<DeemixSearchResponse<DeemixAlbum>>(settings, "GET", "/api/search", {
-      params: { term, type: "album", start: 0, nb: Math.min(Math.max(limit, 1), 50) },
-      timeout: 45000,
+      query: { term, type: "album", start: 0, nb: Math.min(Math.max(limit, 1), 50) },
+      timeoutMs: 45000,
     });
     if (data?.error) throw new Error(`deemix album search failed: ${data.error}`);
     return (Array.isArray(data?.data) ? data.data : [])
@@ -488,8 +489,8 @@ export class DeemixClient {
     const settings = this._getSettings();
     await requireSession(settings);
     const data = await request<DeemixTracklistResponse>(settings, "GET", "/api/getTracklist", {
-      params: { type: "album", id },
-      timeout: 45000,
+      query: { type: "album", id },
+      timeoutMs: 45000,
     });
     return (Array.isArray(data?.tracks) ? data.tracks : [])
       .filter((entry) => entry?.type !== "disc_separator")
@@ -515,8 +516,8 @@ export class DeemixClient {
     const settings = this._getSettings();
     const connected = await requireSession(settings);
     const data = await request<DeemixAddToQueueResponse>(settings, "POST", "/api/addToQueue", {
-      data: { url, bitrate: settings.bitrate },
-      timeout: 60000,
+      body: { url, bitrate: settings.bitrate },
+      timeoutMs: 60000,
     });
     if (data?.result !== true) {
       throw new Error(
@@ -542,7 +543,7 @@ export class DeemixClient {
     const id = String(uuid || "").trim();
     if (!id) return false;
     const settings = this._getSettings();
-    await request(settings, "POST", "/api/removeFromQueue", { params: { uuid: id } });
+    await request(settings, "POST", "/api/removeFromQueue", { query: { uuid: id } });
     return true;
   }
 }
