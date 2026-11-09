@@ -376,7 +376,10 @@ export function compareRecording(
     prepared.performerKeys,
     candidate.artists || candidate.artist,
   );
-  if (artist != null && artist < policy.minArtistNonConflictSimilarity)
+  // A file tagged with the requested recording's MusicBrainz ID is that
+  // recording, whoever its artist tag names. Classical files often credit the
+  // performers where the request names the composer.
+  if (artist != null && artist < policy.minArtistNonConflictSimilarity && !sameRecording)
     contradictions.push("artist");
   const evidence = [];
   if (sameRecording) evidence.push("recording-mbid");

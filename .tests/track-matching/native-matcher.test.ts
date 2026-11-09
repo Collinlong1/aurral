@@ -239,6 +239,29 @@ test("an explicit different artist cannot be rescued by exact title and duration
   assert.ok(result.candidates[0]?.contradictions.includes("artist"));
 });
 
+test("a file tagged with the requested recording is no artist contradiction when it credits the performers", () => {
+  const composer = {
+    title: "Romeo & Juliet, op. 64: Act II, Scene III. No. 23 Romeo and Mercutio. Andante teneroso",
+    artists: ["Сергей Сергеевич Прокофьев"],
+    durationMs: 138026,
+    recordingMbid: "0b5bd7f6-9f4c-4c39-9e43-4b1f6a3c2d11",
+  };
+  const performers = {
+    title: composer.title,
+    artists: ["Boston Symphony Orchestra, Seiji Ozawa"],
+    durationMs: 138057,
+  };
+  const tagged = verifyDownloadedRecording(composer, {
+    ...performers,
+    recordingMbid: composer.recordingMbid,
+  });
+  assert.equal(tagged.contradictions.includes("artist"), false);
+  assert.equal(tagged.decision, "matched");
+  // Without the ID, a different artist still contradicts the request.
+  const untagged = verifyDownloadedRecording(composer, performers);
+  assert.ok(untagged.contradictions.includes("artist"));
+});
+
 test("missing evidence is not counted as agreement", () => {
   const result = decideRecording(request, [{ title: "Hoppipolla" }]);
   assert.notEqual(result.decision, "selectable");
