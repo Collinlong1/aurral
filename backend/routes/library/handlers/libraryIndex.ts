@@ -27,7 +27,7 @@ import {
 } from "../../../services/libraryQueryService.ts";
 import {
   getStarredIdentityKeys,
-  getStarredWithLibrary,
+  getLibraryFavorites,
   restoreStars,
   starMany,
   unstarMany,
@@ -53,7 +53,8 @@ type FilesystemPathless<T> = T extends readonly (infer U)[]
 
 export function stripFilesystemPaths<T>(value: T): FilesystemPathless<T>;
 export function stripFilesystemPaths(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(stripFilesystemPaths);
+  if (Array.isArray(value))
+    return value.map((item: unknown): unknown => stripFilesystemPaths(item));
   if (!value || typeof value !== "object") return value;
   return Object.fromEntries(
     Object.entries(value)
@@ -292,8 +293,8 @@ export default new Hono<AppEnv>()
   })
   .get("/", ...libraryPage)
   .get("/favorites", requireAuth, noCache, (c) => {
-    const { starred, songIds, library } = getStarredWithLibrary(c.var.user);
-    return c.json({ ...starred, songIds, library: toPublicLibrary(library) }, 200);
+    const { library, ...favorites } = getLibraryFavorites(c.var.user);
+    return c.json({ ...favorites, library: toPublicLibrary(library) }, 200);
   })
   .post(
     "/favorites",

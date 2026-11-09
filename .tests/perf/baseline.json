@@ -1,0 +1,296 @@
+{
+  "app shell": {
+    "queries": {
+      "cold": 13,
+      "warm": 13
+    },
+    "bytes": 1541,
+    "scans": []
+  },
+  "library home": {
+    "queries": {
+      "cold": 127,
+      "warm": 121
+    },
+    "bytes": 187921,
+    "scans": []
+  },
+  "library albums": {
+    "queries": {
+      "cold": 20,
+      "warm": 20
+    },
+    "bytes": 142233,
+    "scans": []
+  },
+  "library albums, last page": {
+    "queries": {
+      "cold": 20,
+      "warm": 20
+    },
+    "bytes": 146256,
+    "scans": []
+  },
+  "library albums, recently added": {
+    "queries": {
+      "cold": 20,
+      "warm": 20
+    },
+    "bytes": 142233,
+    "scans": []
+  },
+  "library artists": {
+    "queries": {
+      "cold": 13,
+      "warm": 12
+    },
+    "bytes": 92726,
+    "scans": []
+  },
+  "library tracks": {
+    "queries": {
+      "cold": 21,
+      "warm": 21
+    },
+    "bytes": 132905,
+    "scans": []
+  },
+  "library genres": {
+    "queries": {
+      "cold": 4,
+      "warm": 4
+    },
+    "bytes": 1486,
+    "scans": []
+  },
+  "library genre filter": {
+    "queries": {
+      "cold": 21,
+      "warm": 20
+    },
+    "bytes": 162483,
+    "scans": []
+  },
+  "library filter": {
+    "queries": {
+      "cold": 21,
+      "warm": 20
+    },
+    "bytes": 145653,
+    "scans": []
+  },
+  "artist page": {
+    "queries": {
+      "cold": 64,
+      "warm": 62
+    },
+    "bytes": 146472,
+    "scans": []
+  },
+  "album page": {
+    "queries": {
+      "cold": 25,
+      "warm": 24
+    },
+    "bytes": 16769,
+    "scans": []
+  },
+  "favorites": {
+    "queries": {
+      "cold": 22,
+      "warm": 22
+    },
+    "bytes": 258768,
+    "scans": []
+  },
+  "search": {
+    "queries": {
+      "cold": 21,
+      "warm": 21
+    },
+    "bytes": 11814,
+    "scans": []
+  },
+  "discover recently added": {
+    "queries": {
+      "cold": 28,
+      "warm": 28
+    },
+    "bytes": 14050,
+    "scans": []
+  },
+  "discover artist": {
+    "queries": {
+      "cold": 22,
+      "warm": 5
+    },
+    "bytes": 379,
+    "scans": [],
+    "calls": {
+      "brainzmash": {
+        "cold": 1,
+        "warm": 0
+      }
+    }
+  },
+  "discover album": {
+    "queries": {
+      "cold": 17,
+      "warm": 3
+    },
+    "bytes": 244,
+    "scans": [],
+    "calls": {
+      "brainzmash": {
+        "cold": 1,
+        "warm": 0
+      }
+    }
+  },
+  "discover search": {
+    "queries": {
+      "cold": 12,
+      "warm": 3
+    },
+    "bytes": 65,
+    "scans": [],
+    "calls": {
+      "brainzmash": {
+        "cold": 1,
+        "warm": 0
+      }
+    }
+  },
+  "similar artists": {
+    "queries": {
+      "cold": 29,
+      "warm": 5
+    },
+    "bytes": 14,
+    "scans": [],
+    "calls": {
+      "api.deezer.com": {
+        "cold": 2,
+        "warm": 1
+      },
+      "brainzmash": {
+        "cold": 2,
+        "warm": 0
+      },
+      "labs.api.listenbrainz.org": {
+        "cold": 1,
+        "warm": 1
+      }
+    }
+  },
+  "playlists": {
+    "queries": {
+      "cold": 40,
+      "warm": 19
+    },
+    "bytes": 4503,
+    "scans": [
+      "download_jobs"
+    ]
+  },
+  "listening history": {
+    "queries": {
+      "cold": 4,
+      "warm": 4
+    },
+    "bytes": 48,
+    "scans": []
+  },
+  "subsonic getArtists": {
+    "queries": {
+      "cold": 9,
+      "warm": 9
+    },
+    "bytes": 43903,
+    "scans": []
+  },
+  "subsonic getAlbumList2": {
+    "queries": {
+      "cold": 43,
+      "warm": 43
+    },
+    "bytes": 147682,
+    "scans": []
+  },
+  "subsonic getArtist": {
+    "queries": {
+      "cold": 15,
+      "warm": 15
+    },
+    "bytes": 4288,
+    "scans": []
+  },
+  "subsonic getAlbum": {
+    "queries": {
+      "cold": 14,
+      "warm": 14
+    },
+    "bytes": 10268,
+    "scans": []
+  },
+  "subsonic search3": {
+    "queries": {
+      "cold": 22,
+      "warm": 22
+    },
+    "bytes": 44400,
+    "scans": []
+  },
+  "subsonic getStarred2": {
+    "queries": {
+      "cold": 15,
+      "warm": 15
+    },
+    "bytes": 302687,
+    "scans": []
+  },
+  "subsonic getRandomSongs": {
+    "queries": {
+      "cold": 15,
+      "warm": 15
+    },
+    "bytes": 44402,
+    "scans": []
+  },
+  "subsonic getGenres": {
+    "queries": {
+      "cold": 5,
+      "warm": 3
+    },
+    "bytes": 773,
+    "scans": []
+  },
+  "subsonic getSongsByGenre": {
+    "queries": {
+      "cold": 14,
+      "warm": 14
+    },
+    "bytes": 88442,
+    "scans": []
+  },
+  "subsonic playlists": {
+    "queries": {
+      "cold": 129,
+      "warm": 49
+    },
+    "bytes": 431712,
+    "scans": [
+      "library_artists"
+    ]
+  },
+  "subsonic edit playlist": {
+    "queries": {
+      "cold": 913,
+      "warm": 939
+    },
+    "bytes": 23182,
+    "scans": [
+      "download_jobs"
+    ]
+  }
+}

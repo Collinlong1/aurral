@@ -1,8 +1,9 @@
 import * as v from "valibot";
-import axios from "../../lib/axiosFetch.ts";
+import { createHttpClient, http } from "../../lib/http.ts";
 import { dbOps } from "../db/helpers/index.ts";
 import { asAppError } from "../../lib/errors.ts";
 import { readMany, readOne } from "./integrationData.ts";
+import { unknownList } from "../../lib/unknownList.ts";
 import {
   isUsenetClientKey,
   normalizeBaseUrl,
@@ -27,6 +28,7 @@ const indexerSchema = v.looseObject({
   enable: v.optional(v.boolean()),
   supportsSearch: v.optional(v.boolean()),
   priority: v.optional(v.number()),
+  fields: v.nullish(v.array(v.looseObject({ name: v.string(), value: v.optional(v.unknown()) }))),
   capabilities: v.nullish(
     v.looseObject({
       categories: categoriesSchema,
@@ -45,6 +47,8 @@ const releaseSchema = v.looseObject({
   indexer: v.nullish(v.string()),
   publishDate: v.optional(v.string()),
   downloadUrl: v.nullish(v.string()),
+  magnetUrl: v.nullish(v.string()),
+  seeders: v.nullish(v.number()),
   protocol: v.optional(v.string()),
   categories: categoriesSchema,
 });
@@ -59,17 +63,24 @@ type ProwlarrIndexerOverride = {
   downloadClient: UsenetClientKey | null;
 };
 
-type ProwlarrIndexerOverrideInput = {
-  enabled?: unknown;
-  priority?: unknown;
-  downloadClient?: unknown;
-};
+const indexerOverrideInputSchema = v.fallback(
+  v.looseObject({
+    id: v.optional(v.unknown()),
+    enabled: v.optional(v.unknown()),
+    priority: v.optional(v.unknown()),
+    downloadClient: v.optional(v.unknown()),
+  }),
+  {},
+);
 
-const normalizeIndexerOverride = (entry: ProwlarrIndexerOverrideInput | null | undefined) => ({
-  enabled: entry?.enabled !== false,
-  priority: normalizePositiveInteger(entry?.priority, null),
-  downloadClient: isUsenetClientKey(entry?.downloadClient) ? entry.downloadClient : null,
-});
+const normalizeIndexerOverride = (input: unknown) => {
+  const entry = v.parse(indexerOverrideInputSchema, input);
+  return {
+    enabled: entry.enabled !== false,
+    priority: normalizePositiveInteger(entry.priority, null),
+    downloadClient: isUsenetClientKey(entry.downloadClient) ? entry.downloadClient : null,
+  };
+};
 
 type ProwlarrSettings = ReturnType<typeof getSettings>;
 
@@ -88,7 +99,10 @@ type ProwlarrConnectionStatus = {
   indexers?: NormalizedIndexer[];
 };
 
+type Protocol = "usenet" | "torrent";
+
 type ProwlarrSearchOptions = {
+  protocol?: Protocol;
   indexers?: NormalizedIndexer[];
   categories?: number[];
   type?: string;
@@ -152,13 +166,10 @@ function normalizeCategoryList(value: unknown) {
 function normalizeIndexerOverrides(value: unknown): Record<string, ProwlarrIndexerOverride> {
   if (Array.isArray(value)) {
     return Object.fromEntries(
-      value
-        .map((entry): [string, ProwlarrIndexerOverride] | null => {
-          const id = normalizeInteger(entry?.id, null);
-          if (id == null) return null;
-          return [String(id), normalizeIndexerOverride(entry)];
-        })
-        .filter(Boolean) as [string, ProwlarrIndexerOverride][],
+      unknownList(value).flatMap((entry) => {
+        const id = normalizeInteger(v.parse(indexerOverrideInputSchema, entry).id, null);
+        return id == null ? [] : [[String(id), normalizeIndexerOverride(entry)] as const];
+      }),
     );
   }
   if (!value || typeof value !== "object") return {};
@@ -189,14 +200,14 @@ function buildClientFromCredentials(url: string, apiKey: string) {
   if (!trimmedUrl || !trimmedKey) {
     throw new Error("Prowlarr not configured");
   }
-  return axios.create({
-    baseURL: trimmedUrl,
-    timeout: 45000,
+  return createHttpClient({
+    baseUrl: trimmedUrl,
+    timeoutMs: 45000,
     headers: {
       "X-Api-Key": trimmedKey,
       Accept: "application/json",
     },
-    validateStatus: () => true,
+    okStatus: () => true,
   });
 }
 
@@ -215,6 +226,28 @@ function hasMusicCategory(supported: number[], configuredCategories = DEFAULT_MU
       return id === category;
     }),
   );
+}
+
+// Aurral searches Tidarr itself, so a Tidarr indexer in Prowlarr is left out.
+const isTidarrIndexer = (indexer: ProwlarrIndexer) =>
+  indexer.fields?.some(
+    (field) => field.name === "apiPath" && /\/api\/lidarr\/*$/u.test(String(field.value ?? "")),
+  ) === true;
+
+function listMusicIndexers(
+  indexers: ProwlarrIndexer[],
+  settings: ProwlarrSettings,
+  protocol: Protocol,
+) {
+  return indexers
+    .filter((indexer) => !isTidarrIndexer(indexer))
+    .map((indexer) => normalizeIndexer(indexer, settings))
+    .filter(
+      (entry) =>
+        entry.protocol === protocol &&
+        entry.supportsSearch &&
+        hasMusicCategory(entry.categories, settings.categories),
+    );
 }
 
 function normalizeIndexer(indexer: ProwlarrIndexer, settings: ProwlarrSettings = getSettings()) {
@@ -253,6 +286,8 @@ function normalizeRelease(release: ProwlarrRelease) {
     indexer: release.indexer?.trim() || null,
     publishDate: release.publishDate || null,
     downloadUrl: resolveProwlarrUrl(release.downloadUrl),
+    ...(release.magnetUrl?.trim() && { magnetUrl: release.magnetUrl.trim() }),
+    ...(release.seeders != null && { seeders: release.seeders }),
     protocol: release.protocol ?? "",
     categories: release.categories?.map((category) => category.id) ?? [],
   };
@@ -269,7 +304,7 @@ function formatHttpErrorBody(data: unknown): string {
       .slice(0, 500);
   }
   if (typeof data === "object") {
-    const message =
+    const message: unknown =
       Reflect.get(data, "message") ||
       Reflect.get(data, "errorMessage") ||
       Reflect.get(data, "error") ||
@@ -386,14 +421,8 @@ export class ProwlarrClient {
         service: "Prowlarr",
         endpoint: "/api/v1/indexer",
       });
-      const usenet = indexers
-        .map((entry) => normalizeIndexer(entry, settings))
-        .filter(
-          (entry) =>
-            entry.protocol === "usenet" &&
-            entry.supportsSearch &&
-            hasMusicCategory(entry.categories, settings.categories),
-        );
+      const usenet = listMusicIndexers(indexers, settings, "usenet");
+      const torrent = listMusicIndexers(indexers, settings, "torrent");
       const result = {
         ok: true,
         configured: true,
@@ -403,8 +432,8 @@ export class ProwlarrClient {
         indexerCount: indexers.length,
         usenetIndexerCount: usenet.length,
         enabledUsenetIndexerCount: usenet.filter((entry) => entry.enabled).length,
-        indexers: usenet,
-        message: `Prowlarr is connected with ${usenet.length} Usenet indexer(s)`,
+        indexers: [...usenet, ...torrent],
+        message: `Prowlarr is connected with ${usenet.length} Usenet and ${torrent.length} torrent indexer(s)`,
       };
       connectionCache = { checkedAt: Date.now(), result };
       return result;
@@ -422,7 +451,7 @@ export class ProwlarrClient {
 
   // Every search reads the indexer list, so it is kept for a few minutes.
   // The settings page asks for a fresh list.
-  async listUsenetIndexers({ force = false }: { force?: boolean } = {}) {
+  async listIndexers(protocol: Protocol, { force = false }: { force?: boolean } = {}) {
     const settings = getSettings();
     if (!this.isConfigured()) return [];
     const key = `${settings.url}\0${settings.apiKey}`;
@@ -440,22 +469,19 @@ export class ProwlarrClient {
         }),
       };
     }
-    return indexerCache.indexers
-      .map((entry) => normalizeIndexer(entry, settings))
-      .filter(
-        (entry) =>
-          entry.protocol === "usenet" &&
-          entry.supportsSearch &&
-          hasMusicCategory(entry.categories, settings.categories),
-      )
-      .sort((left, right) => {
-        if (left.priority !== right.priority) return left.priority - right.priority;
-        return left.name.localeCompare(right.name);
-      });
+    return listMusicIndexers(indexerCache.indexers, settings, protocol).sort((left, right) => {
+      if (left.priority !== right.priority) return left.priority - right.priority;
+      return left.name.localeCompare(right.name);
+    });
   }
 
   async getEnabledUsenetIndexers() {
-    const indexers = await this.listUsenetIndexers();
+    const indexers = await this.listIndexers("usenet");
+    return indexers.filter((entry) => entry.enabled);
+  }
+
+  async getEnabledTorrentIndexers() {
+    const indexers = await this.listIndexers("torrent");
     return indexers.filter((entry) => entry.enabled);
   }
 
@@ -464,10 +490,13 @@ export class ProwlarrClient {
       throw new Error("Prowlarr is not configured");
     }
     const settings = getSettings();
+    const protocol = options.protocol ?? "usenet";
     const indexers =
       Array.isArray(options.indexers) && options.indexers.length > 0
         ? options.indexers
-        : await this.getEnabledUsenetIndexers();
+        : protocol === "torrent"
+          ? await this.getEnabledTorrentIndexers()
+          : await this.getEnabledUsenetIndexers();
     if (indexers.length === 0) return [];
     const queryString = buildSearchParams({
       query,
@@ -487,7 +516,12 @@ export class ProwlarrClient {
     }
     return readMany(releaseSchema, response.data, { service: "Prowlarr", endpoint })
       .map(normalizeRelease)
-      .filter((release) => release.protocol === "usenet" && release.downloadUrl && release.title);
+      .filter(
+        (release) =>
+          release.protocol === protocol &&
+          (release.downloadUrl || release.magnetUrl) &&
+          release.title,
+      );
   }
 
   // Like Lidarr, Aurral fetches the NZB itself and hands the download client
@@ -504,10 +538,10 @@ export class ProwlarrClient {
     const limitKey = String(indexerId ?? "").trim();
     const limitedUntil = nzbLimitedUntil.get(limitKey) || 0;
     if (limitKey && limitedUntil > Date.now()) throw nzbLimitError(indexer, limitedUntil);
-    const response = await axios.get(url, {
-      responseType: "arraybuffer",
-      timeout: 60000,
-      validateStatus: () => true,
+    const response = await http.get(url, {
+      responseType: "buffer",
+      timeoutMs: 60000,
+      okStatus: () => true,
     });
     if (response.status === 429) {
       const until = Date.now() + readRetryAfterMs(response.headers?.["retry-after"]);
@@ -517,7 +551,7 @@ export class ProwlarrClient {
     if (response.status !== 200) {
       throw new Error(`The indexer did not return the NZB: HTTP ${response.status}`);
     }
-    const content = Buffer.from(response.data || []);
+    const content = Buffer.isBuffer(response.data) ? response.data : Buffer.alloc(0);
     const head = content.subarray(0, 65536).toString("utf8");
     if (!/<nzb[\s>]/iu.test(head)) {
       const error: Error & { nzbGrabSpent?: boolean } = new Error(

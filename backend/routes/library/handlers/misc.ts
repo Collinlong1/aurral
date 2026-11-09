@@ -6,6 +6,10 @@ import { noCache } from "../../../middleware/cacheHeaders.ts";
 import type { AppEnv } from "../../../middleware/requestUser.ts";
 import { validate } from "../../../middleware/validate.ts";
 import { buildImageProxyUrl } from "../../../services/imageProxyService.ts";
+import {
+  buildLibraryArtworkUrl,
+  getLibraryArtworkVersions,
+} from "../../../services/libraryArtwork.ts";
 import { fetchReleaseGroupCoverUrl } from "../../../services/releaseGroupCoverService.ts";
 import { getFreshReleasesByArtists } from "../../../services/discovery/freshReleases.ts";
 import { getUserDiscovery } from "../../../services/discovery/userDiscovery.ts";
@@ -332,7 +336,7 @@ export default new Hono<AppEnv>()
         if (result.status === "rejected") {
           logger.warn("library", "Lidarr album lookup failed", {
             foreignAlbumId,
-            message: result.reason?.message || String(result.reason),
+            message: asAppError(result.reason)?.message || String(result.reason),
           });
           continue;
         }
@@ -384,13 +388,17 @@ export default new Hono<AppEnv>()
   })
   .get("/recent", noCache, (c) => {
     try {
-      const recent = getRecentlyAddedLibraryArtists({ availableOnly: true, limit: 20 }).map(
-        (artist) => ({
-          ...artist,
-          foreignArtistId: artist.foreignArtistId || artist.mbid,
-          added: artist.addedAt,
-        }),
+      const artists = getRecentlyAddedLibraryArtists({ availableOnly: true, limit: 20 });
+      const versions = getLibraryArtworkVersions(
+        "artist",
+        artists.map((artist) => artist.id),
       );
+      const recent = artists.map((artist) => ({
+        ...artist,
+        foreignArtistId: artist.foreignArtistId || artist.mbid,
+        added: artist.addedAt,
+        coverUrl: buildLibraryArtworkUrl("artist", artist.id, versions.get(artist.id)),
+      }));
       return c.json(recent, 200);
     } catch (error) {
       return c.json(
@@ -423,7 +431,7 @@ export default new Hono<AppEnv>()
         .filter((album) => libraryReleaseIds.has(album.mbid))
         .slice(0, 6);
       const warmedVisibleCovers = await Promise.all(
-        coverTargets.map(async (album) => {
+        coverTargets.map(async (album): Promise<[string | null, string | null]> => {
           const coverId = album.mbid || album.foreignAlbumId;
           if (!coverId) return [null, null];
 
@@ -447,7 +455,9 @@ export default new Hono<AppEnv>()
       );
 
       const warmedCoverMap = Object.fromEntries(
-        warmedVisibleCovers.filter(([coverId, coverUrl]) => coverId && coverUrl),
+        warmedVisibleCovers.filter((entry): entry is [string, string] =>
+          Boolean(entry[0] && entry[1]),
+        ),
       );
 
       const withCachedCovers = recentMissing.map((album) => {

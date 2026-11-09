@@ -1,5 +1,4 @@
 import type { InferResponseType } from "hono/client";
-import type { LibraryArtistImage } from "../../../backend/services/libraryMetadata.ts";
 import type { discoveryClient } from "../utils/api/clients/discovery.ts";
 import {
   DISCOVER_SECTION_IDS,
@@ -127,10 +126,10 @@ const readStoredAt = (key: string) => {
 
 const getStoredArraySourceKey = (primaryKey: string, fallbackKey: string) => {
   try {
-    const primary = JSON.parse(localStorage.getItem(primaryKey) || "null");
+    const primary: unknown = JSON.parse(localStorage.getItem(primaryKey) || "null");
     if (Array.isArray(primary)) return primaryKey;
     if (primaryKey === fallbackKey) return null;
-    const fallback = JSON.parse(localStorage.getItem(fallbackKey) || "null");
+    const fallback: unknown = JSON.parse(localStorage.getItem(fallbackKey) || "null");
     return Array.isArray(fallback) ? fallbackKey : null;
   } catch {
     return null;
@@ -304,19 +303,4 @@ export const writeStoredDiscoverLayout = (layout: DiscoverSection[], userId: Dis
   } catch {
     console.warn("Failed to write discover layout");
   }
-};
-
-export const getLibraryArtistImage = (
-  artist: { images?: LibraryArtistImage[] | null } | null | undefined,
-) => {
-  const images = (Array.isArray(artist?.images) ? artist.images : []).filter(
-    (image) => image?.remoteUrl || image?.url || image?.Url,
-  );
-  const kind = (image: LibraryArtistImage) =>
-    String(image.coverType || image.kind || image.CoverType || "").toLowerCase();
-  const image =
-    images.find((image) => kind(image) === "poster") ||
-    images.find((image) => kind(image) === "fanart") ||
-    images[0];
-  return image?.remoteUrl || image?.url || image?.Url || null;
 };

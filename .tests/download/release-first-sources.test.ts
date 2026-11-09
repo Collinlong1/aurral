@@ -132,6 +132,18 @@ const slskd = getDownloadClient("slskd");
 const deemix = getDownloadClient("deemix");
 const ytdlp = getDownloadClient("ytdlp");
 
+const torrentIndexer = {
+  id: 7,
+  name: "Torrents",
+  protocol: "torrent",
+  musicSearch: false,
+  enabledInProwlarr: true,
+  enabled: true,
+  supportsSearch: true,
+  priority: 25,
+  categories: [3000],
+};
+
 function useSources(integrations: StoredIntegrations) {
   const settings = dbOps.getSettings();
   dbOps.updateSettings({
@@ -282,6 +294,7 @@ test("every album source is searched by release in priority order before any tra
     slskd: { enabled: true, url: "http://127.0.0.1:9", priority: 10 },
     prowlarr: { enabled: true, url: "http://127.0.0.1:9", apiKey: "disposable" },
     nzbget: { enabled: true, url: "http://127.0.0.1:9", priority: 20 },
+    qbittorrent: { enabled: true, url: "http://127.0.0.1:9", priority: 30 },
   });
   vi.spyOn(ytdlp, "isConfigured").mockImplementation(() => true);
   const ytdlpSearch = vi.spyOn(ytdlp, "search").mockImplementation(async () => []);
@@ -295,6 +308,9 @@ test("every album source is searched by release in priority order before any tra
     soulseekFolders("Priority Band", "priority Album", ["First", "Second", "Third", "Bonus"]),
   );
   vi.spyOn(prowlarrClient, "getEnabledUsenetIndexers").mockImplementation(async () => []);
+  vi.spyOn(prowlarrClient, "getEnabledTorrentIndexers").mockImplementation(async () => [
+    torrentIndexer,
+  ]);
   const usenetSearch = vi.spyOn(prowlarrClient, "search").mockImplementation(async () => []);
   const [jobId] = libraryJobs(group, ["Second"]);
   assert.ok(jobId !== undefined);
@@ -307,7 +323,7 @@ test("every album source is searched by release in priority order before any tra
       sources.push(payload.source);
   }
 
-  assert.deepEqual(sources, ["slskd", "usenet"]);
+  assert.deepEqual(sources, ["slskd", "usenet", "qbittorrent"]);
   assert.ok(usenetSearch.mock.calls.length > 0);
   assert.ok(usenetSearch.mock.calls.every((call) => !String(call[0]).includes("Second")));
   assert.equal(ytdlpSearch.mock.calls.length, 0);
@@ -315,6 +331,29 @@ test("every album source is searched by release in priority order before any tra
   assert.equal(payload.albumGrab, false);
   assert.equal(buildNextSourcePayload<CorePipelinePayload>(payload)?.source, "ytdlp");
   assert.notEqual(trackedJob(downloadTracker, jobId).status, "failed");
+});
+
+test("album requests and upgrades of several tracks of a release try sources in album priority order", () => {
+  useSources({
+    slskd: { enabled: true, url: "http://127.0.0.1:9", priority: 10, albumPriority: 30 },
+    prowlarr: { enabled: true, url: "http://127.0.0.1:9", apiKey: "disposable" },
+    nzbget: { enabled: true, url: "http://127.0.0.1:9", priority: 20, albumPriority: 5 },
+  });
+  const group = album("order", "Order Band", [
+    { id: "order-release", tracks: ["First", "Second", "Third"] },
+  ]);
+  const [track, sibling] = libraryJobs(group, ["First", "Second"]);
+  const [whole] = libraryJobs(group, ["Third"], { requestKind: "album" });
+  assert.ok(track !== undefined && sibling !== undefined && whole !== undefined);
+  const firstSource = (payload: Parameters<typeof buildNextSourcePayload>[0]) =>
+    buildNextSourcePayload(payload)?.source;
+  const upgrade = { jobId: track, albumGrab: true, upgrade: true };
+
+  assert.equal(firstSource({ jobId: track }), "slskd");
+  assert.equal(firstSource({ jobId: whole }), "usenet");
+  assert.equal(firstSource({ jobId: whole, albumGrab: true }), "usenet");
+  assert.equal(firstSource({ ...upgrade, albumGroupJobIds: [track, sibling] }), "usenet");
+  assert.equal(firstSource({ ...upgrade, albumGroupJobIds: [track] }), "slskd");
 });
 
 // yt-dlp ranked above Soulseek, with every search logged in order and

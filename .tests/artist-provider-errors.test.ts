@@ -39,7 +39,7 @@ const provider = await createMockHttpServer((req, res) => {
 process.env.BRAINZMASH_BASE_URL = provider.url;
 const [
   state,
-  { default: axios },
+  { http },
   deezer,
   { getArtistImage },
   { dbOps },
@@ -48,7 +48,7 @@ const [
   { listenbrainzSource },
 ] = await setupIsolatedBackend(
   "artist-provider-errors",
-  () => import("../lib/axiosFetch.ts"),
+  () => import("../lib/http.ts"),
   () => import("../backend/services/apiClients/deezer.ts"),
   () => import("../backend/services/imageService.ts"),
   () => import("../backend/db/helpers/index.ts"),
@@ -62,12 +62,7 @@ beforeEach(() => {
   wikidataLinked = false;
   resetDatabase(db);
   clearMetadataProviderCaches();
-  for (const cache of [
-    deezer.deezerArtistCache,
-    deezer.deezerAlbumCache,
-    deezer.deezerTopTrackCache,
-  ])
-    cache.flushAll();
+  deezer.clearDeezerCaches();
 });
 afterAll(async () => {
   await cleanupIsolatedState(state);
@@ -77,10 +72,10 @@ afterAll(async () => {
 
 function responses(
   t: TestContext,
-  respond: (url: string, options?: Parameters<typeof axios.get>[1]) => unknown,
+  respond: (url: string, options?: Parameters<typeof http.get>[1]) => unknown,
 ) {
-  const realGet = axios.get.bind(axios);
-  vi.spyOn(axios, "get").mockImplementation(async (url, options) => {
+  const realGet = http.get.bind(http);
+  vi.spyOn(http, "get").mockImplementation(async (url, options) => {
     if (String(url).startsWith(provider.url)) return realGet(url, options);
     assert.equal(new URL(url).hostname, "api.deezer.com");
     return {
@@ -113,9 +108,9 @@ test.each([
     wikidataLinked = true;
     const commonsPhoto =
       "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a1/Provider.jpg/960px-Provider.jpg";
-    const realGet = axios.get.bind(axios);
+    const realGet = http.get.bind(http);
     const asked: string[] = [];
-    vi.spyOn(axios, "get").mockImplementation(async (url, options) => {
+    vi.spyOn(http, "get").mockImplementation(async (url, options) => {
       if (String(url).startsWith(provider.url)) return realGet(url, options);
       const host = new URL(url).hostname;
       asked.push(host);
@@ -400,3 +395,23 @@ for (const origin of ["relationship", "override"] as const) {
     assert.equal(requests, 1);
   });
 }
+
+test("cached album previews still attach to each request's current tracks", async (t) => {
+  responses(t, () => ({
+    data: [{ id: 41, title: "Song", track_position: 1, preview: "https://cdn.deezer.test/41.mp3" }],
+  }));
+  const options = { deezerAlbumId: "9", cacheKey: "library:album" };
+  await deezer.enrichTracksWithDeezerPreviews(
+    [{ title: "Song", trackNumber: 1, streamPath: null }],
+    options,
+  );
+  const current = { title: "Song", trackNumber: 1, streamPath: "/music/song.flac" };
+  assert.deepEqual(await deezer.enrichTracksWithDeezerPreviews([current], options), [
+    {
+      ...current,
+      preview_url: deezer.deezerPreviewPath(41),
+      previewProvider: "deezer",
+      previewTrackId: "41",
+    },
+  ]);
+});

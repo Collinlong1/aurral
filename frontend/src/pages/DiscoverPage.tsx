@@ -45,7 +45,7 @@ import {
   type DiscoverSection,
 } from "./discoverUtils";
 import { useDiscoverData } from "./useDiscoverData";
-import type { DiscoverFeedStyle } from "../../../lib/discoverLayout.ts";
+import type { DiscoverFeedStyle, DiscoverSectionId } from "../../../lib/discoverLayout.ts";
 import { useLibraryNews } from "../hooks/useLibraryNews";
 import { formatDate, formatRelativeTime } from "../utils/dateTime.ts";
 import TooltipButton from "../components/TooltipButton";
@@ -55,6 +55,7 @@ import { useArtistTint } from "../components/CollectionHeader";
 import { lastRecommendedPath, recommendedListPath } from "../navigation/recommendedPath";
 import { recommendationReason, seedNameSet } from "./recommendedRails";
 import StatePanel from "../components/StatePanel";
+import { asApiError, resolveAuthenticatedApiAssetUrl } from "../utils/api/core.ts";
 const getArtistId = (artist: DiscoverCardArtist) => getArtistRecordId(artist);
 
 const loadServerLayout = () => parseResponse(usersClient.me["discover-layout"].$get());
@@ -115,7 +116,6 @@ function DiscoverPage() {
     appliedNearbyZip,
     setAppliedNearbyZip,
     canAddAlbum,
-    getLibraryArtistImage,
     getRecentReleaseKey,
     libraryDestination,
     handleRecentReleaseAlbumAction,
@@ -299,8 +299,8 @@ function DiscoverPage() {
   };
 
   const handleDiscoverSave = () => {
-    saveDiscoverLayout(draftSections).catch((err) => {
-      showError(err?.message || "Failed to save layout");
+    saveDiscoverLayout(draftSections).catch((err: unknown) => {
+      showError(asApiError(err)?.message || "Failed to save layout");
     });
   };
 
@@ -340,7 +340,7 @@ function DiscoverPage() {
                       id: artist.mbid || null,
                       libraryPath: `/library/artist/${encodeURIComponent(artist.id)}`,
                       name: artist.artistName,
-                      image: getLibraryArtistImage(artist),
+                      image: resolveAuthenticatedApiAssetUrl(artist.coverUrl) || null,
                       type: "Artist",
                       metaText: "",
                       subtitle: `Added ${formatRelativeTime(addedAt, { unit: "day" })}`,
@@ -667,12 +667,55 @@ function DiscoverPage() {
     return null;
   };
 
-  const newestArtist = recentlyAdded[0];
-  const tint = useArtistTint(
-    getLibraryArtistImage(newestArtist),
-    newestArtist?.mbid,
-    newestArtist?.artistName,
+  const sectionArtwork = (id: DiscoverSectionId) => {
+    switch (id) {
+      case "recentlyAdded": {
+        const artist = recentlyAdded[0];
+        return (
+          artist && {
+            image: resolveAuthenticatedApiAssetUrl(artist.coverUrl),
+            mbid: artist.mbid,
+            name: artist.artistName,
+          }
+        );
+      }
+      case "madeForYou":
+      case "playlists": {
+        const playlist = (id === "madeForYou" ? madeForYou : featuredPlaylists)[0];
+        return playlist && { image: resolveAuthenticatedApiAssetUrl(playlist.artworkUrl) };
+      }
+      case "recentReleases":
+        return recentReleases[0] && { image: recentReleases[0].coverUrl };
+      case "news": {
+        const article = newsArticles[0];
+        return (
+          article && {
+            image: article.imageUrl,
+            mbid: article.artists[0]?.artistMbid,
+            name: article.artists[0]?.artistName,
+          }
+        );
+      }
+      case "recommendedShows":
+        return nearbyShows[0] && { image: nearbyShows[0].image };
+      case "globalTop": {
+        const artist = trendingArtists?.[0];
+        return artist && { image: artist.imageUrl, mbid: artist.mbid, name: artist.name };
+      }
+      case "recommended":
+      case "genreSections": {
+        const artist = id === "recommended" ? recommendations[0] : genreSections[0]?.artists[0];
+        return artist && { image: artist.image, mbid: getArtistId(artist), name: artist.name };
+      }
+    }
+  };
+
+  const leadSection = discoverSections.find(
+    ({ id, enabled }) => enabled && (sectionPending.get(id) || sectionArtwork(id)),
   );
+  const leadArtwork =
+    leadSection && !sectionPending.get(leadSection.id) ? sectionArtwork(leadSection.id) : null;
+  const tint = useArtistTint(leadArtwork?.image, leadArtwork?.mbid, leadArtwork?.name);
 
   const sectionMayRender = (id: string) =>
     (id !== "news" || newsConfigured) && (id !== "recommendedShows" || ticketmasterConfigured);

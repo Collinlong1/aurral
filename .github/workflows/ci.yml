@@ -173,7 +173,7 @@ jobs:
 
       - name: Log into ghcr.io
         if: env.PREVIEW == 'true'
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -202,8 +202,11 @@ jobs:
           PR_NUMBER: ${{ github.event.number }}
           VERSION: ${{ steps.version.outputs.value }}
         run: |
-          gh pr comment "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" --edit-last --create-if-none --body "$(cat <<EOF
-          ## Preview image
+          marker='<!-- aurral-preview-image -->'
+          cat > "$RUNNER_TEMP/preview.md" <<EOF
+          ${marker}
+          <details>
+          <summary>Preview image: <code>${IMAGE}</code></summary>
 
           Built from \`${VERSION}\`. Each push replaces it.
 
@@ -212,8 +215,15 @@ jobs:
           \`\`\`
 
           Back up your Aurral config, point your compose service at this image, then \`docker compose pull aurral && docker compose up -d aurral\`. Switch back to your usual tag when you're done.
+          </details>
           EOF
-          )"
+          id=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate \
+            --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\") or startswith(\"## Preview image\"))) | .id" | head -n 1)
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F body=@"$RUNNER_TEMP/preview.md" > /dev/null
+          else
+            gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" -F body=@"$RUNNER_TEMP/preview.md" > /dev/null
+          fi
 
   validate:
     if: ${{ !cancelled() }}

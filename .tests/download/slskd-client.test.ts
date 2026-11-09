@@ -989,7 +989,7 @@ test("getEvents names the field that made slskd's download event unreadable", as
 });
 
 test("a search that reaches its deadline mid-request does not report slskd as failing", async () => {
-  const { onRequestFailure } = await import("../../lib/axiosFetch.ts");
+  const { onRequestFailure } = await import("../../lib/http.ts");
   const failures: string[] = [];
   onRequestFailure(({ url }) => failures.push(url));
   const server = await createMockHttpServer((req, res) => {
@@ -1009,4 +1009,23 @@ test("a search that reaches its deadline mid-request does not report slskd as fa
     onRequestFailure(() => {});
     await server.close();
   }
+});
+
+test("flattenSearchResults keeps the bit depth and sample rate slskd advertises", () => {
+  const results = slskdClient.flattenSearchResults({
+    responses: [
+      {
+        username: "peerOne",
+        files: [
+          {
+            filename: "Artist/Album/01 - Track.flac",
+            size: 123456,
+            bitDepth: 24,
+            sampleRate: 44100,
+          },
+        ],
+      },
+    ],
+  });
+  assert.deepEqual([results[0]?.bitDepth, results[0]?.sampleRate], [24, 44100]);
 });

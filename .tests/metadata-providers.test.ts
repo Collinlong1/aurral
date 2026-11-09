@@ -22,9 +22,10 @@ const [
     clearMetadataRequestStates,
     failMetadataRequest,
     getMetadataProviderBudget,
+    reserveMetadataProviderRequest,
   },
   { db },
-  { default: axios },
+  { http },
   { readAppSettings, saveAppSettings },
 ] = await setupIsolatedBackend(
   "metadata-providers",
@@ -33,7 +34,7 @@ const [
   () => import("../backend/services/providers/brainzmashProvider.ts"),
   () => import("../backend/services/metadataProviderBudget.ts"),
   () => import("../backend/config/db-sqlite.ts"),
-  () => import("../lib/axiosFetch.ts"),
+  () => import("../lib/http.ts"),
   () => import("../backend/services/appSettings.ts"),
 );
 
@@ -511,6 +512,20 @@ test("transient entity failures use a persistent cooldown instead of redownloadi
   }
 });
 
+test("a metadata request that reaches its turn a moment early by the wall clock is admitted", () => {
+  const baseUrl = "http://slots.invalid";
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    assert.equal(reserveMetadataProviderRequest(baseUrl, 100), 0);
+    vi.advanceTimersByTime(99);
+    assert.equal(reserveMetadataProviderRequest(baseUrl, 100), 0);
+    vi.advanceTimersByTime(50);
+    assert.equal(reserveMetadataProviderRequest(baseUrl, 100), 50);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 test("local request admission timeouts do not put entity metadata into cooldown", async () => {
   const previousSettings = dbOps.getSettings();
   let requests = 0;
@@ -854,8 +869,8 @@ test("album search shows no results when its MusicBrainz fallback is down", asyn
     response.setHeader("content-type", "application/json");
     response.end("[]");
   });
-  const providerGet = axios.get.bind(axios);
-  vi.spyOn(axios, "get").mockImplementation(async (url, options) => {
+  const providerGet = http.get.bind(http);
+  vi.spyOn(http, "get").mockImplementation(async (url, options) => {
     if (url.startsWith("https://musicbrainz.org/")) throw new Error("MusicBrainz unavailable");
     return providerGet(url, options);
   });

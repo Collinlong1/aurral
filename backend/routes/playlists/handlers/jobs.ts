@@ -104,10 +104,6 @@ function getManualSearchMode(value: unknown) {
 
 type ManualSearchMode = ReturnType<typeof getManualSearchMode>;
 
-type BlockedJobOutcome = Awaited<
-  ReturnType<(typeof reviewBlockedJobLocally)[keyof typeof reviewBlockedJobLocally]>
->;
-
 function getAccessibleManualSearchJob(
   user: RequestUser | undefined,
   jobId: string,
@@ -170,7 +166,7 @@ const reviewBlockedJob = async <E extends AppEnv>(
   try {
     const outcome = isDownloadOwnerProcess()
       ? await reviewBlockedJobLocally[method](jobId)
-      : await requestDownloadOwner<BlockedJobOutcome>(method, [jobId], {
+      : await requestDownloadOwner(method, [jobId], {
           timeoutMs: BLOCKED_JOB_REVIEW_TIMEOUT_MS,
         });
     if (outcome.status !== 200) {
@@ -178,7 +174,7 @@ const reviewBlockedJob = async <E extends AppEnv>(
     }
     invalidateRequestsCache();
     return c.json(
-      { success: true, ...("path" in outcome && outcome.path && { path: outcome.path }) },
+      { success: true, ...("path" in outcome && Boolean(outcome.path) && { path: outcome.path }) },
       200,
     );
   } catch (error) {
@@ -475,7 +471,7 @@ export default new Hono<AppEnv>()
       try {
         const result = isDownloadOwnerProcess()
           ? await runLinkLibraryFile(job.id, fileId)
-          : await requestDownloadOwner<LinkLibraryFileResult>(
+          : await requestDownloadOwner(
               "linkLibraryFileToJob",
               [job.id, fileId],
               { timeoutMs: 60_000 },
@@ -522,7 +518,7 @@ export default new Hono<AppEnv>()
       try {
         const result = isDownloadOwnerProcess()
           ? await importDiskFileToJob(job.id, filePath)
-          : await requestDownloadOwner<ImportDiskFileResult>(
+          : await requestDownloadOwner(
               "importDiskFileToJob",
               [job.id, filePath],
               { timeoutMs: 10 * 60 * 1000 },
@@ -557,7 +553,7 @@ export default new Hono<AppEnv>()
     const checkedIds = [LIBRARY_JOB_TYPE, ...playlistIds];
     const queued = isDownloadOwnerProcess()
       ? await runQualityUpgradeCheck({ force: true, playlistIds: checkedIds, limit: 500 })
-      : await requestDownloadOwner<number>("runQualityUpgradeChecks", [checkedIds, 500], {
+      : await requestDownloadOwner("runQualityUpgradeChecks", [checkedIds, 500], {
           timeoutMs: 30 * 60 * 1000,
         });
     if (queued > 0) invalidateRequestsCache();
@@ -608,11 +604,9 @@ export default new Hono<AppEnv>()
     try {
       const result = isDownloadOwnerProcess()
         ? await cancelTrackDownloads(jobIds)
-        : await requestDownloadOwner<Awaited<ReturnType<typeof cancelTrackDownloads>>>(
-            "cancelTrackDownloads",
-            [jobIds],
-            { timeoutMs: 2 * 60 * 1000 },
-          );
+        : await requestDownloadOwner("cancelTrackDownloads", [jobIds], {
+            timeoutMs: 2 * 60 * 1000,
+          });
       invalidateRequestsCache();
       return c.json(result, 200);
     } catch (error) {
@@ -632,10 +626,7 @@ export default new Hono<AppEnv>()
     try {
       const result = isDownloadOwnerProcess()
         ? await cancelTrackDownload(job.id)
-        : await requestDownloadOwner<Awaited<ReturnType<typeof cancelTrackDownload>>>(
-            "cancelTrackDownload",
-            [job.id],
-          );
+        : await requestDownloadOwner("cancelTrackDownload", [job.id]);
       if (result.statusCode !== undefined) {
         const { statusCode, ...body } = result;
         return c.json(body, isErrorStatus(statusCode) ? statusCode : 500);
@@ -659,10 +650,7 @@ export default new Hono<AppEnv>()
     try {
       const result = isDownloadOwnerProcess()
         ? await retryTrackDownload(job.id)
-        : await requestDownloadOwner<Awaited<ReturnType<typeof retryTrackDownload>>>(
-            "retryTrackDownload",
-            [job.id],
-          );
+        : await requestDownloadOwner("retryTrackDownload", [job.id]);
       if (result.statusCode !== undefined) {
         const { statusCode, ...body } = result;
         return c.json(body, isErrorStatus(statusCode) ? statusCode : 500);

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
 import { parseResponse, type InferResponseType } from "hono/client";
 import type { LogLevel } from "../../../../../../backend/services/logger.ts";
+import { parseReleaseVersion } from "../../../../../../lib/release-version.ts";
 import { DotLoader } from "../../../../components/DotLoader";
 import { AlertCircle, RefreshCw, TriangleAlert } from "../../../../components/icons";
 import PillToggle from "../../../../components/PillToggle";
@@ -14,6 +15,7 @@ import { logsClient } from "../../../../utils/api/clients/logs.ts";
 import { API_BASE_URL } from "../../../../utils/api/core.ts";
 import { getApiErrorMessage } from "../../../../utils/api/errors.ts";
 import { formatDate, formatTime } from "../../../../utils/dateTime.ts";
+import { copyText } from "../../../../utils/shareLink.ts";
 import { useServerSettings } from "../../SettingsProviders";
 import {
   SettingsGroup,
@@ -30,6 +32,8 @@ type Problems = InferResponseType<typeof logsClient.problems.$get, 200>;
 type Problem = Problems["problems"][number];
 
 const PAGE_SIZE = 200;
+const release = parseReleaseVersion(import.meta.env.VITE_APP_VERSION);
+const PLAYBOOK_URL = `https://raw.githubusercontent.com/lklynet/aurral/${release ? `v${release.label}` : "main"}/.github/triage/PLAYBOOK.md`;
 const TABS: { id: Tab; label: string }[] = [
   { id: "problems", label: "Problems" },
   { id: "all", label: "All" },
@@ -90,7 +94,7 @@ function triagePrompt(apiKey: string) {
   const link = (path: string, query: Record<string, string>) =>
     `${new URL(`${API_BASE_URL}/logs/${path}`, window.location.origin)}?${new URLSearchParams({ ...query, api_key: apiKey })}`;
   return [
-    "Diagnose problems in my Aurral server by following https://raw.githubusercontent.com/lklynet/aurral/main/.github/triage/PLAYBOOK.md",
+    `Diagnose problems in my Aurral server by following ${PLAYBOOK_URL}`,
     "These links are live and carry my admin API key. Fetch them again after changes, and never post them anywhere.",
     `Problems from the last day, grouped: ${link("problems", {})}`,
     `Full log with version and integrations: ${link("export", { level: "warn" })}`,
@@ -345,7 +349,9 @@ export function LogsPage() {
     onError: (error) => showError(getApiErrorMessage(error, "Couldn't change debug logging.")),
   });
   const copy = useMutation({
-    mutationFn: async () => navigator.clipboard.writeText(await exportText("warn")),
+    mutationFn: async () => {
+      if (!(await copyText(await exportText("warn")))) throw new Error("Couldn't copy the log.");
+    },
     onSuccess: () => showSuccess("Copied the last day of warnings and errors."),
     onError: (error) => showError(getApiErrorMessage(error, "Couldn't copy the log.")),
   });
@@ -354,12 +360,8 @@ export function LogsPage() {
     queryFn: ({ signal }) => parseResponse(authClient["api-key"].$get({}, { init: { signal } })),
   });
   const copyTriage = async (key: string) => {
-    try {
-      await navigator.clipboard.writeText(triagePrompt(key));
-      showSuccess("Copied a prompt with your admin API key.");
-    } catch {
-      showError("Couldn't copy the prompt.");
-    }
+    if (await copyText(triagePrompt(key))) showSuccess("Copied a prompt with your admin API key.");
+    else showError("Couldn't copy the prompt.");
   };
   const download = useMutation({
     mutationFn: async () => {
