@@ -202,18 +202,55 @@ export async function inspectPluginLink(url: string) {
   }
 }
 
+const exists = (target: string) =>
+  fs.stat(target).then(
+    () => true,
+    () => false,
+  );
+
+// The unpacked plugin can sit on another disk than the plugins folder, as
+// when the staging folder is its own mount, and a rename can't cross disks.
+// It is then copied beside the target first, so the target only ever appears
+// whole.
+async function moveFolder(from: string, to: string) {
+  try {
+    await fs.rename(from, to);
+    return;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code !== "EXDEV") throw error;
+  }
+  const incoming = `${to}.incoming`;
+  await fs.rm(incoming, { recursive: true, force: true });
+  try {
+    await fs.cp(from, incoming, { recursive: true, errorOnExist: true, force: false });
+    await fs.rename(incoming, to);
+  } catch (error) {
+    await fs.rm(incoming, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
+  await fs.rm(from, { recursive: true, force: true }).catch(() => {});
+}
+
 async function moveIntoPlace({ folder, manifest }: Found) {
   const target = pluginFolder(manifest.id);
   const previous = `${target}.previous`;
   stopPlugin(manifest.id);
+  // A .previous without its plugin is the only copy left by an update that
+  // failed part way. It goes back before anything is replaced.
+  if (!(await exists(target)) && (await exists(previous))) await fs.rename(previous, target);
   await fs.rm(previous, { recursive: true, force: true });
-  const replacing = await fs.stat(target).then(
-    () => true,
-    () => false,
-  );
+  const replacing = await exists(target);
   if (replacing) await fs.rename(target, previous);
-  await fs.mkdir(path.dirname(target), { recursive: true });
-  await fs.rename(folder, target);
+  try {
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await moveFolder(folder, target);
+  } catch (error) {
+    if (replacing) {
+      await fs.rm(target, { recursive: true, force: true }).catch(() => {});
+      await fs.rename(previous, target).catch(() => {});
+    }
+    throw error;
+  }
   await fs.rm(previous, { recursive: true, force: true });
   return replacing;
 }
