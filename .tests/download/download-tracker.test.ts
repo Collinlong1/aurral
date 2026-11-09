@@ -1003,6 +1003,32 @@ test("a worker starts no more searches than its concurrency allows", async () =>
   }
 });
 
+test("starting a running, idle worker picks up jobs queued after it went idle", async () => {
+  const worker = new DownloadWorker(isolatedState.baseDir);
+  const dispatched = vi.spyOn(worker, "processJob").mockImplementation(async () => {});
+  vi.spyOn(worker, "scheduleReuseLinkRepair").mockImplementation(() => {});
+  db.prepare("DELETE FROM jobs WHERE queue = 'download-pipeline'").run();
+  await worker.start();
+  try {
+    assert.equal(dispatched.mock.calls.length, 0);
+    const jobId = createTrackedJob(
+      trackerModule.downloadTracker,
+      { artistName: "Artist", trackName: "Requested Later" },
+      "library",
+    );
+    // An album or track request queues its jobs, then starts the worker.
+    await worker.start();
+    // A wake runs the loop after the worker's short cooldown.
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    assert.deepEqual(
+      dispatched.mock.calls.map((call) => call[0].id),
+      [jobId],
+    );
+  } finally {
+    worker.stop();
+  }
+});
+
 test("persists enriched album context for slskd matching", () => {
   const tracker = new DownloadTracker();
   const jobId = createTrackedJob(

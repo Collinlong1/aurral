@@ -494,7 +494,11 @@ export class DownloadWorker {
   }
 
   async start() {
+    // Callers start the worker after queueing jobs. A running worker whose
+    // loop went idle would otherwise leave those jobs pending until
+    // something else woke it.
     if (this.running) {
+      this.wake();
       return;
     }
 
