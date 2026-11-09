@@ -275,8 +275,8 @@
   },
   "subsonic playlists": {
     "queries": {
-      "cold": 129,
-      "warm": 49
+      "cold": 139,
+      "warm": 59
     },
     "bytes": 431712,
     "scans": [
