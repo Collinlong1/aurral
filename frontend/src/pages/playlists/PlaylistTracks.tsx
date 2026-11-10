@@ -28,6 +28,7 @@ import {
 } from "./components/playlistTrackComponents.tsx";
 import { trackCountLabel } from "./playlistTrackChanges.ts";
 import ManualMissingSearchModal from "../activity/ManualMissingSearchModal.tsx";
+import LinkLibraryFileModal from "../activity/LinkLibraryFileModal.tsx";
 import LibraryInfoModal from "../LibraryInfoModal.tsx";
 import ArtworkEditorModal from "../../components/ArtworkEditorModal.tsx";
 import { useAuth } from "../../contexts/AuthContext.tsx";
@@ -92,6 +93,7 @@ export function PlaylistTracks({
   const { showSuccess, showError } = toast;
   const [reSearchingTrackIds, setReSearchingTrackIds] = useState<Record<string, boolean>>({});
   const [manualReplacement, setManualReplacement] = useState<PlaylistTrackRow | null>(null);
+  const [linkFileTrack, setLinkFileTrack] = useState<PlaylistTrackRow | null>(null);
   const [trackInfo, setTrackInfo] = useState<{
     kind: "track";
     source: "playlist";
@@ -452,6 +454,7 @@ export function PlaylistTracks({
         reSearchingTrackIds={reSearchingTrackIds}
         onReSearchTrack={handleReSearchTrack}
         onManualReSearchTrack={(track) => track?.id && setManualReplacement(track)}
+        onLinkFileTrack={(track) => track?.id && setLinkFileTrack(track)}
         onDeleteTrack={isFlow ? undefined : handleDeleteTrack}
         onAddTrackToPlaylist={saveTrackToPlaylist}
         onMoveTrackToPlaylist={isFlow ? undefined : (track, target) => moveTracks([track], target)}
@@ -512,6 +515,19 @@ export function PlaylistTracks({
         }
         onRemove={() => parseResponse(trackArtwork.$delete(trackArtworkRequest(artworkEditor!.id)))}
         onSaved={handleArtworkSaved}
+      />
+      <LinkLibraryFileModal
+        job={linkFileTrack}
+        playlistId={linkFileTrack ? entry.id : null}
+        onClose={() => setLinkFileTrack(null)}
+        onLinked={(track, how) => {
+          showSuccess(
+            how === "imported"
+              ? `Imported a file for ${track.trackName || "the track"}`
+              : `Linked ${track.trackName || "the track"} to a Library file`,
+          );
+          void refresh();
+        }}
       />
       <ManualMissingSearchModal
         job={manualReplacement}

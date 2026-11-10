@@ -60,6 +60,11 @@ import {
   buildCustomArtworkUrl,
   getCustomArtworkMap,
 } from "../../../services/customArtworkService.ts";
+import {
+  canLinkLibraryFile,
+  runLinkLibraryFile,
+  searchLibraryFiles,
+} from "../../../services/downloadJobs/linkLibraryFile.ts";
 import { releaseGroupCoverImageUrl } from "../../../services/releaseGroupCoverService.ts";
 import { asAppError } from "../../../../lib/errors.ts";
 import { validate } from "../../../middleware/validate.ts";
@@ -394,6 +399,53 @@ export default new Hono<AppEnv>()
             message: safeLogDiagnostic(error) || "The selected result could not be queued",
           },
           409,
+        );
+      }
+    },
+  )
+  .get(
+    "/jobs/:jobId/library-files",
+    requirePlaylistAccess,
+    noCache,
+    validate("query", v.object({ q: v.optional(v.string()), playlistId: v.optional(v.string()) })),
+    (c) => {
+      const { q = "", playlistId } = c.req.valid("query");
+      const job = downloadTracker.getJob(c.req.param("jobId"));
+      if (!job || !canAccessJobThroughPlaylist(c.var.user, job, playlistId)) {
+        return c.json({ error: "Track not found" }, 404);
+      }
+      return c.json({ files: searchLibraryFiles(q) }, 200);
+    },
+  )
+  .post(
+    "/jobs/:jobId/link-file",
+    requirePlaylistAccess,
+    validate(
+      "json",
+      v.object({ fileId: v.pipe(v.number(), v.integer()), playlistId: v.optional(v.string()) }),
+    ),
+    async (c) => {
+      const { fileId, playlistId } = c.req.valid("json");
+      const job = downloadTracker.getJob(c.req.param("jobId"));
+      if (!job || !canAccessJobThroughPlaylist(c.var.user, job, playlistId)) {
+        return c.json({ error: "Track not found" }, 404);
+      }
+      if (!canLinkLibraryFile(job)) {
+        return c.json({ error: "Only a missing track can be linked to a file" }, 409);
+      }
+      try {
+        const result = isDownloadOwnerProcess()
+          ? await runLinkLibraryFile(job.id, fileId)
+          : await requestDownloadOwner("linkLibraryFileToJob", [job.id, fileId], {
+              timeoutMs: 60_000,
+            });
+        if (!result.ok) return c.json({ error: result.error }, result.status);
+        invalidateRequestsCache();
+        return c.json({ success: true, jobId: job.id, status: result.status }, 200);
+      } catch (error) {
+        return c.json(
+          { error: "Could not link the file", message: safeLogDiagnostic(error) || undefined },
+          500,
         );
       }
     },

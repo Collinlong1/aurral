@@ -2,6 +2,7 @@ import { useEffect, useRef, useMemo, useState, useCallback, type MouseEvent } fr
 import type { IconComponent } from "../../../components/icons";
 import {
   Download,
+  Link as LinkIcon,
   Info,
   ImagePlus,
   ListMusic,
@@ -72,6 +73,10 @@ interface PlaylistTrackMenuProps<T extends PlaylistPanelTrack> {
 }
 
 type PlaylistTrackLink = { to: string | null; state?: unknown };
+
+// Tracks that are Missing or Not downloaded can be linked to a Library file.
+const canLinkLibraryFile = (track: PlaylistPanelTrack | null) =>
+  ["failed", "cancelled", "saved"].includes(String(track?.status)) && !track?.upgradeForJobId;
 
 function getTrackStatusMeta(status: string | null | undefined) {
   switch (String(status || "").toLowerCase()) {
@@ -180,6 +185,7 @@ interface PlaylistTrackKebabMenuProps<T extends PlaylistPanelTrack> {
   isDeleting: boolean;
   onReSearch: ((track: T, forceReplacementSearch?: boolean) => void) | undefined;
   onManualReSearch: ((track: T) => void) | undefined;
+  onLinkFile?: ((track: T) => void) | undefined;
   onDelete: ((track: T) => void) | undefined;
   playlistMenuProps?: PlaylistTrackMenuProps<T> | null;
   queueItems?: LibraryMenuItem[];
@@ -203,6 +209,7 @@ function PlaylistTrackKebabMenu<T extends PlaylistPanelTrack>({
   isDeleting,
   onReSearch,
   onManualReSearch,
+  onLinkFile,
   onDelete,
   playlistMenuProps = null,
   queueItems = [],
@@ -289,6 +296,15 @@ function PlaylistTrackKebabMenu<T extends PlaylistPanelTrack>({
               onSelect: () => onManualReSearch?.(track),
             },
           ],
+        }
+      : null,
+    onLinkFile && canLinkLibraryFile(track)
+      ? {
+          id: "link-file",
+          label: "Use a file you have",
+          icon: LinkIcon,
+          separatorBefore: !canReSearch && !canManualReSearch,
+          onSelect: () => onLinkFile(track),
         }
       : null,
     canDelete
@@ -445,6 +461,8 @@ export interface PlaylistTracksPanelProps<T extends PlaylistPanelTrack> {
   getAlbumLink?: (track: T) => PlaylistTrackLink | null;
   onReSearchTrack?: (track: T, forceReplacementSearch?: boolean) => unknown;
   onManualReSearchTrack?: (track: T) => void;
+  // Opens a picker to link a Library file to a missing track.
+  onLinkFileTrack?: (track: T) => void;
   playbackSource?: PlaylistPlaybackSource | null;
   showPlaybackControls?: boolean;
   showTrackStatus?: boolean;
@@ -493,6 +511,7 @@ export function PlaylistTracksPanel<T extends PlaylistPanelTrack>({
   getAlbumLink,
   onReSearchTrack,
   onManualReSearchTrack,
+  onLinkFileTrack,
   playbackSource = null,
   showPlaybackControls = true,
   showTrackStatus = false,
@@ -745,6 +764,7 @@ export function PlaylistTracksPanel<T extends PlaylistPanelTrack>({
           isDeleting={deletingTrackId === track.id}
           onReSearch={onReSearchTrack}
           onManualReSearch={onManualReSearchTrack}
+          onLinkFile={onLinkFileTrack}
           onDelete={onDeleteTrack}
           playlistMenuProps={playlistMenuProps}
           queueItems={canPlay ? getQueueItems(toQueueTrack(track), { source: playbackSource }) : []}

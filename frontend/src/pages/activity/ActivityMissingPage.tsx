@@ -6,6 +6,7 @@ import {
   ArrowUpCircle,
   CheckCircle2,
   Info,
+  Link,
   ListFilter,
   RotateCcw,
   Search,
@@ -28,6 +29,7 @@ import { buildWantedPath, WANTED_VIEWS } from "../../navigation/activityNavConfi
 import ActivityToolbar from "./ActivityToolbar";
 import ActivityInfoModal from "./ActivityInfoModal";
 import ManualMissingSearchModal from "./ManualMissingSearchModal";
+import LinkLibraryFileModal from "./LinkLibraryFileModal.tsx";
 import {
   getMissingJobKey,
   isCutoffUnmetAurralJob,
@@ -95,6 +97,7 @@ function MissingJobRow({
   onAction,
   onInfo,
   onManualSearch,
+  onLinkFile,
 }: {
   job: MissingPageJob;
   playlist: PlaylistInfo | undefined;
@@ -102,6 +105,7 @@ function MissingJobRow({
   onAction: (job: MissingPageJob) => void;
   onInfo: (job: MissingInfoJob) => void;
   onManualSearch: (job: MissingPageJob) => void;
+  onLinkFile: (job: MissingPageJob) => void;
 }) {
   const isMissing = isMissingAurralJob(job);
   const isWorking = actionState === "working";
@@ -170,6 +174,16 @@ function MissingJobRow({
             <ListFilter aria-hidden="true" />
           </TooltipButton>
         ) : null}
+        {isMissing ? (
+          <TooltipButton
+            className="native-library-icon-button"
+            onClick={() => onLinkFile(job)}
+            disabled={isWorking}
+            label="Use a file you have"
+          >
+            <Link aria-hidden="true" />
+          </TooltipButton>
+        ) : null}
         <TooltipButton
           className="native-library-icon-button"
           onClick={() => onAction(job)}
@@ -209,6 +223,7 @@ export default function ActivityMissingPage() {
   const { showError, showSuccess } = useToast();
   const [infoJob, setInfoJob] = useState<MissingInfoJob | null>(null);
   const [manualSearchJob, setManualSearchJob] = useState<MissingPageJob | null>(null);
+  const [linkFileJob, setLinkFileJob] = useState<MissingPageJob | null>(null);
   const [actionStates, setActionStates] = useState<Record<string, MissingActionState>>({});
   const [filterValue, setFilterValue] = useState("");
   const [searchingAll, setSearchingAll] = useState(false);
@@ -515,6 +530,7 @@ export default function ActivityMissingPage() {
               onAction={handleAction}
               onInfo={setInfoJob}
               onManualSearch={setManualSearchJob}
+              onLinkFile={setLinkFileJob}
             />
           ))}
           {hasMoreJobs ? (
@@ -531,6 +547,21 @@ export default function ActivityMissingPage() {
         </div>
       ) : null}
       <ActivityInfoModal item={infoJob} onClose={() => setInfoJob(null)} />
+      <LinkLibraryFileModal
+        job={linkFileJob}
+        onClose={() => setLinkFileJob(null)}
+        onLinked={(job, how) => {
+          const id = getMissingJobKey(job);
+          queryClient.setQueryData<MissingPageJob[]>(jobsQueryKey, (current) =>
+            (current ?? []).filter((entry) => getMissingJobKey(entry) !== id),
+          );
+          showSuccess(
+            how === "imported"
+              ? `Imported a file for ${job.trackName || "the track"}`
+              : `Linked ${job.trackName || "the track"} to a Library file`,
+          );
+        }}
+      />
       <ManualMissingSearchModal
         job={manualSearchJob}
         onClose={() => setManualSearchJob(null)}
