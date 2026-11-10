@@ -257,6 +257,11 @@ beforeAll(async () => {
   await rm(unavailablePath);
   await scanLidarrRoot();
 
+  // Flow and playlist downloads that aren't Library files: an entry playing a Library file
+  // is that Library song.
+  const flowSongPath = path.join(isolatedState.baseDir, ".flow-files", "Flow Song.flac");
+  await mkdir(path.dirname(flowSongPath), { recursive: true });
+  await writeFile(flowSongPath, "0123456789");
   const flow = flowPlaylistConfig.createFlow({ name: "Canonical Flow", size: 1 });
   flowPlaylistConfig.setEnabled(flow.id, true);
   const jobId = downloadTracker.addJob(
@@ -270,7 +275,7 @@ beforeAll(async () => {
     flow.id,
   );
   assert.ok(jobId != null);
-  downloadTracker.setDone(jobId, fixturePath);
+  downloadTracker.setDone(jobId, flowSongPath);
   const libraryTrack = <T extends { artistName: string; trackName: string; albumName: string }>(
     track: T,
     finalPath: string | null,
@@ -294,7 +299,7 @@ beforeAll(async () => {
           trackName: "Flow Song",
           durationMs: 1000,
         },
-        fixturePath,
+        flowSongPath,
       ),
     ],
   });
