@@ -1031,7 +1031,7 @@ export class DownloadTracker {
   ) {
     const job = this.jobs.get(jobId);
     const normalizedSource = String(source || "").trim();
-    if (!job || job.status !== "failed" || job.upgradeForJobId) return false;
+    if (!this.isWantedMissing(job)) return false;
     if (
       !candidate?.raw ||
       !["slskd", "usenet", "tidarr", "deemix", "ytdlp"].includes(normalizedSource)
@@ -1821,6 +1821,15 @@ export class DownloadTracker {
 
   _isCancelledAlbumJob(job: DownloadJob) {
     return Boolean(job?.requestGroupId) && isDownloadJobCancelled(job.id);
+  }
+
+  // Wanted > Missing: a failed track, or a cancelled one that can be searched
+  // again. Tracks of a cancelled album request stay out until the album is
+  // requested again.
+  isWantedMissing(job: DownloadJob | null | undefined): job is DownloadJob {
+    if (!job || job.upgradeForJobId) return false;
+    if (job.status === "failed") return true;
+    return job.status === "cancelled" && !this._isCancelledAlbumJob(job);
   }
 
   _isInterruptedCancellation(job: DownloadJob) {

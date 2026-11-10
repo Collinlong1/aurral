@@ -115,7 +115,8 @@ function MissingJobRow({
     : isQueued
       ? "Upgrade search is in Queue"
       : isMissing
-        ? job.error || operationLabel
+        ? job.error ||
+          (job.status === "cancelled" ? `Cancelled · ${operationLabel}` : operationLabel)
         : `${job.qualityLabel || "Unknown quality"} · ${
             job.qualityState === "below-floor" ? "Below cutoff" : "Upgrade available"
           }`;

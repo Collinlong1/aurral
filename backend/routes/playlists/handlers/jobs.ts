@@ -112,8 +112,7 @@ function getAccessibleManualSearchJob(
     return replacesLibraryFile || canAccessJobThroughPlaylist(user, job, playlistId) ? job : null;
   }
   if (!canAccessJobThroughPlaylist(user, job, playlistId)) return null;
-  if (job.status !== "failed" || job.upgradeForJobId) return null;
-  return job;
+  return downloadTracker.isWantedMissing(job) ? job : null;
 }
 
 function toPublicJob(job: DownloadJob, profile: ReturnType<typeof getQualityProfile>) {
@@ -279,6 +278,8 @@ export default new Hono<AppEnv>()
         jobs.map((job) => ({
           ...toPublicJob(job, profile),
           monitored: !isUnmonitored(job),
+          ...(job.status === "cancelled" &&
+            !downloadTracker.isWantedMissing(job) && { albumCancelled: true }),
           ...trackArtwork(job, customArtwork, job.playlistType || job.playlistId),
         })),
         200,
