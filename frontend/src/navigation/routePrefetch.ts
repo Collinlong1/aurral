@@ -40,12 +40,13 @@ const libraryView = async (
   const { albumId, artistId } = view;
   if (albumId || artistId) return [prefetchable(libraryViewQueryOptions({ albumId, artistId }))];
   const section = resolveLibrarySection(view.section);
-  const { sort, direction, pageIndex } = libraryListParams(section, search);
+  const { sort, direction, pageIndex, pageSize } = libraryListParams(section, search);
   return [
     prefetchable(
       libraryViewQueryOptions({
         section,
         pageIndex,
+        pageSize,
         sort,
         direction,
         query: (search.get("q") || "").trim().toLocaleLowerCase(),

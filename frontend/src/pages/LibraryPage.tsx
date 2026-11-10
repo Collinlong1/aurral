@@ -70,9 +70,11 @@ import {
   HOME_ALBUM_RAILS,
   LIBRARY_DEFAULT_SORT,
   LIBRARY_PAGE_SIZE,
+  LIBRARY_PAGE_SIZES,
   LIBRARY_SORT_OPTIONS,
   libraryListParams,
   libraryTabForSection,
+  pageSizeParams,
   libraryViewQueryOptions,
   resolveLibrarySection,
   type LibraryViewLibrary,
@@ -315,6 +317,7 @@ function LibraryPage() {
     sort: sortMode,
     direction: sortDirection,
     pageIndex,
+    pageSize: listPageSize,
   } = libraryListParams(section, searchParams);
   const viewMode = searchParams.get("view") === "list" ? "list" : "grid";
   const normalizedQuery = query.trim() ? urlQuery.trim().toLocaleLowerCase() : "";
@@ -371,6 +374,7 @@ function LibraryPage() {
         section,
         artistId: routeArtistId || null,
         pageIndex,
+        pageSize: listPageSize,
         query: normalizedQuery,
         genre: selectedGenre,
         sort: sortMode,
@@ -380,6 +384,7 @@ function LibraryPage() {
       forcePreview,
       normalizedQuery,
       pageIndex,
+      listPageSize,
       routeArtistId,
       section,
       selectedGenre,
@@ -426,9 +431,15 @@ function LibraryPage() {
     const { nextData } = queryData;
     return nextData && "kind" in nextData ? nextData : null;
   }, [isDetail, isPreviewLibrary, queryData, section]);
+  // Pages at the chosen size: the total is the same at any size, so a new size
+  // counts its pages before its first page arrives.
   const totalPages =
     pageData && "pageSize" in pageData && pageData.kind === tab && tab !== "genres"
-      ? Math.ceil(pageData.total / pageData.pageSize)
+      ? Math.ceil(pageData.total / listPageSize)
+      : 0;
+  const listTotal =
+    pageData && "pageSize" in pageData && pageData.kind === tab && tab !== "genres"
+      ? Number(pageData.total) || 0
       : 0;
   const lastPage = Math.max(totalPages, 1);
 
@@ -1698,8 +1709,14 @@ function LibraryPage() {
           {content}
         </div>
       )}
-      {!loading && !error && totalPages > 1 && (
+      {!loading && !error && listTotal > LIBRARY_PAGE_SIZES[0] && (
         <nav className="native-library-pagination" aria-label={sectionLabel + " pages"}>
+          <Select
+            value={listPageSize}
+            options={LIBRARY_PAGE_SIZES.map((size) => ({ value: size, label: String(size) }))}
+            onChange={(size) => updateViewParams(pageSizeParams(pageIndex, listPageSize, size))}
+            aria-label="Items per page"
+          />
           <TooltipButton
             className="native-library-icon-button"
             onClick={() => setPageIndex(pageIndex - 1)}

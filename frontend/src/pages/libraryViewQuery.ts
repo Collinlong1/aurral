@@ -24,6 +24,8 @@ import { libraryPreviewData, libraryPreviewFavorites } from "./libraryPreviewDat
 import { queryKeys } from "../queryClient.ts";
 
 export const LIBRARY_PAGE_SIZE = 100;
+// Page sizes a Library list offers; the server serves at most 100 a page.
+export const LIBRARY_PAGE_SIZES = [25, 50, 100] as const;
 export const LIBRARY_DEFAULT_SORT = "name";
 
 const NAME_SORT = { value: LIBRARY_DEFAULT_SORT, label: "Name" };
@@ -65,12 +67,16 @@ export const HOME_ALBUM_RAILS = [
 export const libraryListParams = (section: LibraryViewId, searchParams: URLSearchParams) => {
   const requestedSort = searchParams.get("sort");
   const requestedPage = Number(searchParams.get("page"));
+  const requestedSize = Number(searchParams.get("size"));
   return {
     sort: (LIBRARY_SORT_OPTIONS[section] || []).some((option) => option.value === requestedSort)
       ? requestedSort!
       : LIBRARY_DEFAULT_SORT,
     direction: searchParams.get("dir") === "desc" ? "desc" : "asc",
     pageIndex: Number.isSafeInteger(requestedPage) && requestedPage > 1 ? requestedPage : 1,
+    pageSize: (LIBRARY_PAGE_SIZES as readonly number[]).includes(requestedSize)
+      ? requestedSize
+      : LIBRARY_PAGE_SIZE,
   };
 };
 
@@ -103,11 +109,22 @@ const favoriteIdsFromPages = (pages: LibraryPage[]) =>
 const favoriteIdsFromFavorites = (favorites: LibraryFavoritesResponse) =>
   new Set([...favorites.artistIds, ...favorites.albumIds, ...favorites.songIds]);
 
+// The address for a new page size: the page that keeps the first item of the
+// current page in view.
+export const pageSizeParams = (pageIndex: number, pageSize: number, nextSize: number) => {
+  const nextPage = Math.floor(((pageIndex - 1) * pageSize) / nextSize) + 1;
+  return {
+    size: nextSize === LIBRARY_PAGE_SIZE ? null : nextSize,
+    page: nextPage > 1 ? nextPage : null,
+  };
+};
+
 type LibraryViewRequest = {
   section?: LibraryViewId;
   albumId?: string | null;
   artistId?: string | null;
   pageIndex?: number;
+  pageSize?: number;
   query?: string;
   genre?: string;
   sort?: string;
@@ -115,7 +132,17 @@ type LibraryViewRequest = {
 };
 
 const fetchLibraryPages = async (
-  { section, albumId, artistId, pageIndex, query, genre, sort, direction }: LibraryViewRequest,
+  {
+    section,
+    albumId,
+    artistId,
+    pageIndex,
+    pageSize: listPageSize = LIBRARY_PAGE_SIZE,
+    query,
+    genre,
+    sort,
+    direction,
+  }: LibraryViewRequest,
   signal: AbortSignal,
 ) => {
   const tab = libraryTabForSection(section);
@@ -178,7 +205,7 @@ const fetchLibraryPages = async (
     {
       kind: tab,
       page: pageIndex,
-      pageSize,
+      pageSize: listPageSize,
       query,
       genre,
       sort,
@@ -228,6 +255,7 @@ export function libraryViewQueryOptions({
   albumId = null,
   artistId = null,
   pageIndex = 1,
+  pageSize = LIBRARY_PAGE_SIZE,
   query = "",
   genre = "",
   sort = "name",
@@ -238,6 +266,7 @@ export function libraryViewQueryOptions({
   albumId?: string | null;
   artistId?: string | null;
   pageIndex?: number;
+  pageSize?: number;
   query?: string;
   genre?: string;
   sort?: string;
@@ -246,7 +275,7 @@ export function libraryViewQueryOptions({
   const view =
     albumId || artistId
       ? { preview, albumId: albumId || null, artistId: albumId ? null : artistId || null }
-      : { preview, section, pageIndex, query, genre, sort, direction };
+      : { preview, section, pageIndex, pageSize, query, genre, sort, direction };
   return queryOptions({
     queryKey: queryKeys.libraryView(view),
     enabled: !preview,
