@@ -1,3 +1,4 @@
+import { useAuth } from "../../contexts/AuthContext.tsx";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { getApiErrorMessage, getApiErrorText } from "../../utils/api/errors.ts";
@@ -6,6 +7,7 @@ import {
   ArrowUpCircle,
   CheckCircle2,
   Info,
+  Link,
   ListFilter,
   RotateCcw,
   Search,
@@ -28,6 +30,7 @@ import { buildWantedPath, WANTED_VIEWS } from "../../navigation/activityNavConfi
 import ActivityToolbar from "./ActivityToolbar";
 import ActivityInfoModal from "./ActivityInfoModal";
 import ManualMissingSearchModal from "./ManualMissingSearchModal";
+import ImportDiskFileModal from "./ImportDiskFileModal.tsx";
 import {
   getMissingJobKey,
   isCutoffUnmetAurralJob,
@@ -95,6 +98,7 @@ function MissingJobRow({
   onAction,
   onInfo,
   onManualSearch,
+  onLinkFile,
 }: {
   job: MissingPageJob;
   playlist: PlaylistInfo | undefined;
@@ -102,6 +106,7 @@ function MissingJobRow({
   onAction: (job: MissingPageJob) => void;
   onInfo: (job: MissingInfoJob) => void;
   onManualSearch: (job: MissingPageJob) => void;
+  onLinkFile?: (job: MissingPageJob) => void;
 }) {
   const isMissing = isMissingAurralJob(job);
   const isWorking = actionState === "working";
@@ -160,7 +165,7 @@ function MissingJobRow({
         {formatJobDate(job.createdAt)}
       </time>
       <div className="activity-row__actions">
-        {isMissing ? (
+        {isMissing && onLinkFile ? (
           <TooltipButton
             className="native-library-icon-button"
             onClick={() => onManualSearch(job)}
@@ -168,6 +173,16 @@ function MissingJobRow({
             label="Choose a download manually"
           >
             <ListFilter aria-hidden="true" />
+          </TooltipButton>
+        ) : null}
+        {isMissing && onLinkFile ? (
+          <TooltipButton
+            className="native-library-icon-button"
+            onClick={() => onLinkFile(job)}
+            disabled={isWorking}
+            label="Import a file from disk"
+          >
+            <Link aria-hidden="true" />
           </TooltipButton>
         ) : null}
         <TooltipButton
@@ -205,10 +220,12 @@ function MissingJobRow({
 }
 
 export default function ActivityMissingPage() {
+  const { user } = useAuth();
   const [searchParams] = useSearchParams();
   const { showError, showSuccess } = useToast();
   const [infoJob, setInfoJob] = useState<MissingInfoJob | null>(null);
   const [manualSearchJob, setManualSearchJob] = useState<MissingPageJob | null>(null);
+  const [linkFileJob, setLinkFileJob] = useState<MissingPageJob | null>(null);
   const [actionStates, setActionStates] = useState<Record<string, MissingActionState>>({});
   const [filterValue, setFilterValue] = useState("");
   const [searchingAll, setSearchingAll] = useState(false);
@@ -515,6 +532,7 @@ export default function ActivityMissingPage() {
               onAction={handleAction}
               onInfo={setInfoJob}
               onManualSearch={setManualSearchJob}
+              onLinkFile={user?.role === "admin" ? setLinkFileJob : undefined}
             />
           ))}
           {hasMoreJobs ? (
@@ -531,6 +549,19 @@ export default function ActivityMissingPage() {
         </div>
       ) : null}
       <ActivityInfoModal item={infoJob} onClose={() => setInfoJob(null)} />
+      <ImportDiskFileModal
+        job={linkFileJob}
+        onClose={() => setLinkFileJob(null)}
+        onImported={(job) => {
+          const id = getMissingJobKey(job);
+          queryClient.setQueryData<MissingPageJob[]>(jobsQueryKey, (current) =>
+            (current ?? []).filter(
+              (entry) => getMissingJobKey(entry) !== id,
+            ),
+          );
+          showSuccess(`Imported a file for ${job.trackName || "the track"}`);
+        }}
+      />
       <ManualMissingSearchModal
         job={manualSearchJob}
         onClose={() => setManualSearchJob(null)}

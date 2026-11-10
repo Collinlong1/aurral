@@ -60,6 +60,10 @@ import {
   buildCustomArtworkUrl,
   getCustomArtworkMap,
 } from "../../../services/customArtworkService.ts";
+import {
+  importDiskFileToJob,
+  listDiskFiles,
+} from "../../../services/downloadJobs/importDiskFile.ts";
 import { releaseGroupCoverImageUrl } from "../../../services/releaseGroupCoverService.ts";
 import { asAppError } from "../../../../lib/errors.ts";
 import { validate } from "../../../middleware/validate.ts";
@@ -394,6 +398,51 @@ export default new Hono<AppEnv>()
             message: safeLogDiagnostic(error) || "The selected result could not be queued",
           },
           409,
+        );
+      }
+    },
+  )
+  .get(
+    "/jobs/:jobId/disk-files",
+    requirePlaylistAccess,
+    requireAdmin,
+    noCache,
+    validate("query", v.object({ path: v.optional(v.string()) })),
+    async (c) => {
+      try {
+        return c.json(await listDiskFiles(c.req.valid("query").path), 200);
+      } catch (error) {
+        return c.json(
+          { error: asAppError(error)?.message || "Could not browse that folder." },
+          400,
+        );
+      }
+    },
+  )
+  .post(
+    "/jobs/:jobId/import-file",
+    requirePlaylistAccess,
+    requireAdmin,
+    validate("json", v.object({ path: v.string(), playlistId: v.optional(v.string()) })),
+    async (c) => {
+      const { path: filePath, playlistId } = c.req.valid("json");
+      const job = downloadTracker.getJob(c.req.param("jobId"));
+      if (!job || !canAccessJobThroughPlaylist(c.var.user, job, playlistId)) {
+        return c.json({ error: "Track not found" }, 404);
+      }
+      try {
+        const result = isDownloadOwnerProcess()
+          ? await importDiskFileToJob(job.id, filePath)
+          : await requestDownloadOwner("importDiskFileToJob", [job.id, filePath], {
+              timeoutMs: 10 * 60 * 1000,
+            });
+        if (!result.ok) return c.json({ error: result.error }, result.status);
+        invalidateRequestsCache();
+        return c.json({ success: true, jobId: job.id }, 200);
+      } catch (error) {
+        return c.json(
+          { error: "Could not import the file", message: safeLogDiagnostic(error) || undefined },
+          500,
         );
       }
     },

@@ -28,6 +28,7 @@ import {
 } from "./components/playlistTrackComponents.tsx";
 import { trackCountLabel } from "./playlistTrackChanges.ts";
 import ManualMissingSearchModal from "../activity/ManualMissingSearchModal.tsx";
+import ImportDiskFileModal from "../activity/ImportDiskFileModal.tsx";
 import LibraryInfoModal from "../LibraryInfoModal.tsx";
 import ArtworkEditorModal from "../../components/ArtworkEditorModal.tsx";
 import { useAuth } from "../../contexts/AuthContext.tsx";
@@ -85,13 +86,14 @@ export function PlaylistTracks({
   const isFlow = kind === "flow";
   const share = useShareAction();
   const bulkActions = usePlaylistBulkActions();
-  const { hasPermission } = useAuth();
+  const { hasPermission, user } = useAuth();
   const { updateQueueArtwork } = useAudioQueue();
   const navigate = useNavigate();
   const toast = useToast();
   const { showSuccess, showError } = toast;
   const [reSearchingTrackIds, setReSearchingTrackIds] = useState<Record<string, boolean>>({});
   const [manualReplacement, setManualReplacement] = useState<PlaylistTrackRow | null>(null);
+  const [linkFileTrack, setLinkFileTrack] = useState<PlaylistTrackRow | null>(null);
   const [trackInfo, setTrackInfo] = useState<{
     kind: "track";
     source: "playlist";
@@ -452,6 +454,9 @@ export function PlaylistTracks({
         reSearchingTrackIds={reSearchingTrackIds}
         onReSearchTrack={handleReSearchTrack}
         onManualReSearchTrack={(track) => track?.id && setManualReplacement(track)}
+        onLinkFileTrack={
+          user?.role === "admin" ? (track) => track?.id && setLinkFileTrack(track) : undefined
+        }
         onDeleteTrack={isFlow ? undefined : handleDeleteTrack}
         onAddTrackToPlaylist={saveTrackToPlaylist}
         onMoveTrackToPlaylist={isFlow ? undefined : (track, target) => moveTracks([track], target)}
@@ -512,6 +517,15 @@ export function PlaylistTracks({
         }
         onRemove={() => parseResponse(trackArtwork.$delete(trackArtworkRequest(artworkEditor!.id)))}
         onSaved={handleArtworkSaved}
+      />
+      <ImportDiskFileModal
+        job={linkFileTrack}
+        playlistId={linkFileTrack ? entry.id : null}
+        onClose={() => setLinkFileTrack(null)}
+        onImported={(track) => {
+          showSuccess(`Imported a file for ${track.trackName || "the track"}`);
+          void refresh();
+        }}
       />
       <ManualMissingSearchModal
         job={manualReplacement}

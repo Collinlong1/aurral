@@ -7,6 +7,7 @@ import {
 import { syncStaticPlaylistImportHere } from "../importLists/importListSync.ts";
 import { queueQualityUpgrade, runQualityUpgradeCheck } from "../qualityProfileService.ts";
 import { approveBlockedJob, denyBlockedJob } from "./blockedJobReview.ts";
+import { importDiskFileToJob } from "./importDiskFile.ts";
 import { downloadTracker } from "./downloadTracker.ts";
 import { DownloadWorker, downloadWorker } from "./downloadWorker.ts";
 
@@ -63,6 +64,8 @@ export const downloadOwnerCommands = {
   cancelTrackDownload,
   cancelTrackDownloads,
   retryTrackDownload,
+  importDiskFileToJob: (jobId: string, requestedPath: string) =>
+    importDiskFileToJob(jobId, requestedPath),
   async syncStaticPlaylistImport(options: Parameters<typeof syncStaticPlaylistImportHere>[0]) {
     try {
       return { ok: true as const, result: await syncStaticPlaylistImportHere(options) };
