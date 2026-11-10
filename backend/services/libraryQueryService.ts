@@ -1142,11 +1142,17 @@ export function getLibraryTrackOwnership({
   trackMbid = null,
   artistName = null,
   trackName = null,
+  trackId = null,
+  albumMbid = null,
   source = null,
 }: LibraryScope & {
   trackMbid?: string | null;
   artistName?: string | null;
   trackName?: string | null;
+  // One Library track, optionally on one album: whether that track has a file
+  // there, rather than whether the recording is anywhere in the Library.
+  trackId?: number | null;
+  albumMbid?: string | null;
 } = {}) {
   const sourceFilter = normalizeSource(source);
   const conditions: string[] = ["media.available = 1"];
@@ -1157,7 +1163,17 @@ export function getLibraryTrackOwnership({
   }
 
   const mbid = String(trackMbid || "").trim();
-  if (mbid) {
+  const album = String(albumMbid || "").trim();
+  if (trackId) {
+    conditions.push("track.id = ?");
+    parameters.push(trackId);
+    if (album) {
+      conditions.push(
+        "(album.release_group_mbid = ? COLLATE NOCASE OR album.mbid = ? COLLATE NOCASE)",
+      );
+      parameters.push(album, album);
+    }
+  } else if (mbid) {
     conditions.push("track.mbid = ?");
     parameters.push(mbid);
   } else {

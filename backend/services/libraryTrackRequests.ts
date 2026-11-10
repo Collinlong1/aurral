@@ -61,11 +61,22 @@ export async function requestLibraryTrack(
       title: track.trackName,
     });
   }
-  const alreadyOwned = getLibraryTrackOwnership({
-    trackMbid: track.trackMbid,
-    artistName: track.artistName,
-    trackName: track.trackName,
-  });
+  // A request for one Library track, as an album page sends, is owned only when
+  // that track has a file on its album. The same recording elsewhere in the
+  // Library, such as on a single or another edition, does not fill this album's
+  // gap; the request goes on and reuses that file where it can.
+  const ownedTrackId = /^\d+$/.test(String(libraryTrackId ?? "").trim())
+    ? Number(libraryTrackId)
+    : null;
+  const alreadyOwned = getLibraryTrackOwnership(
+    ownedTrackId
+      ? { trackId: ownedTrackId, albumMbid: track.albumMbid }
+      : {
+          trackMbid: track.trackMbid,
+          artistName: track.artistName,
+          trackName: track.trackName,
+        },
+  );
   if (alreadyOwned) return { alreadyOwned: true, queued: false };
 
   if (automatic && track.trackMbid && libraryTrackStmt.get(track.trackMbid)) {
