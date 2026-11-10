@@ -60,6 +60,7 @@ import {
   buildCustomArtworkUrl,
   getCustomArtworkMap,
 } from "../../../services/customArtworkService.ts";
+import { getLibraryCoverUrlsForJobs } from "../../../services/playlists/playlistTrackCovers.ts";
 import { releaseGroupCoverImageUrl } from "../../../services/releaseGroupCoverService.ts";
 import { asAppError } from "../../../../lib/errors.ts";
 import { validate } from "../../../middleware/validate.ts";
@@ -132,8 +133,12 @@ function trackArtwork(
   job: DownloadJob,
   customArtwork: ReturnType<typeof getCustomArtworkMap>,
   playlistId: string | null,
+  libraryCoverUrl: string | null = null,
 ) {
-  const defaultArtworkUrl = job.albumMbid ? releaseGroupCoverImageUrl(job.albumMbid) : null;
+  // The album's online cover, else the Library album's own cover, which a track
+  // imported or linked from a file often relies on.
+  const defaultArtworkUrl =
+    (job.albumMbid ? releaseGroupCoverImageUrl(job.albumMbid) : null) || libraryCoverUrl;
   const custom = customArtwork.get(String(job.id));
   if (!custom) return { artworkUrl: defaultArtworkUrl };
   const customArtworkUrl = buildCustomArtworkUrl("playlist-track", job.id, custom, { playlistId });
@@ -239,6 +244,7 @@ export default new Hono<AppEnv>()
       const profile = getQualityProfile();
       const accessibleJobs = filterJobsForUser(user, jobs);
       const libraryOwnership = getLibraryTrackOwnershipBatch(accessibleJobs);
+      const libraryCovers = getLibraryCoverUrlsForJobs(accessibleJobs);
       const favoriteIds = playlistTrackFavoriteIds(playlistId, accessibleJobs);
       const customArtwork = getCustomArtworkMap(
         "playlist-track",
@@ -249,7 +255,12 @@ export default new Hono<AppEnv>()
           ...toPublicJob(job, profile),
           libraryOwned: libraryOwnership[index] === true,
           favoriteId: favoriteIds[index],
-          ...trackArtwork(job, customArtwork, playlistId),
+          ...trackArtwork(
+            job,
+            customArtwork,
+            playlistId,
+            libraryCovers.get(String(job.id)) ?? null,
+          ),
         })),
         200,
       );
