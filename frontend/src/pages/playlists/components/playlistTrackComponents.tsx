@@ -1,6 +1,7 @@
 import { useEffect, useRef, useMemo, useState, useCallback, type MouseEvent } from "react";
 import type { IconComponent } from "../../../components/icons";
 import {
+  ArrowUpDown,
   Download,
   Info,
   ImagePlus,
@@ -30,6 +31,7 @@ import {
 } from "../../ArtistDetails/components/TrackPlaylistMenu";
 import { LibraryItemMenu } from "../../../components/LibraryItemMenu";
 import { TrackList } from "../../../components/TrackList";
+import { PlaylistReorderList } from "./PlaylistReorderList.tsx";
 import { useAlbumTrackListToolbar } from "../../../hooks/useAlbumTrackListToolbar";
 import { useQueueTrackActions } from "../../../hooks/useQueueTrackActions";
 import {
@@ -457,6 +459,8 @@ export interface PlaylistTracksPanelProps<T extends PlaylistPanelTrack> {
   onBulkAddToLibrary?: (tracks: T[]) => unknown;
   onBulkMoveToPlaylist?: (tracks: T[], target: PlaylistTrackTarget) => unknown;
   bulkActionLoading?: boolean;
+  // Saves a new track order. Resolves true once it is saved.
+  onReorder?: (tracks: T[]) => Promise<boolean>;
 }
 
 export function PlaylistTracksPanel<T extends PlaylistPanelTrack>({
@@ -505,11 +509,14 @@ export function PlaylistTracksPanel<T extends PlaylistPanelTrack>({
   onBulkAddToLibrary,
   onBulkMoveToPlaylist,
   bulkActionLoading = false,
+  onReorder,
 }: PlaylistTracksPanelProps<T>) {
   const [sortKey, setSortKey] = useState("index");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
   const [editMode, setEditMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [reorderDraft, setReorderDraft] = useState<T[] | null>(null);
+  const [reorderSaving, setReorderSaving] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
   const trackOrderKey = useMemo(() => tracks.map((track) => track.id).join("\n"), [tracks]);
@@ -519,7 +526,24 @@ export function PlaylistTracksPanel<T extends PlaylistPanelTrack>({
     setSortDirection("asc");
     setEditMode(false);
     setSelectedIds(new Set());
+    setReorderDraft(null);
   }, [trackOrderKey]);
+
+  const reorderChanged =
+    reorderDraft !== null && reorderDraft.some((track, index) => track.id !== tracks[index]?.id);
+  const handleSaveOrder = async () => {
+    if (!reorderDraft || !onReorder) return;
+    if (!reorderChanged) {
+      setReorderDraft(null);
+      return;
+    }
+    setReorderSaving(true);
+    try {
+      if (await onReorder(reorderDraft)) setReorderDraft(null);
+    } finally {
+      setReorderSaving(false);
+    }
+  };
 
   const {
     playTrack,
@@ -757,114 +781,163 @@ export function PlaylistTracksPanel<T extends PlaylistPanelTrack>({
     <div className="collection-tracks">
       {tracks.length > 0 ? (
         <div className="collection-tracks__toolbar">
-          {normalizedQuery ? (
-            <span className="collection-tracks__count" role="status">
-              {visibleTracks.length} of {tracks.length}
-            </span>
-          ) : null}
-          {isSearchVisible ? (
-            <label className="native-library-search">
-              <Search aria-hidden="true" />
-              <input
-                type="search"
-                autoCapitalize="none"
-                autoCorrect="off"
-                spellCheck={false}
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search tracks"
-                aria-label={`Search ${label}`}
-                autoFocus
-              />
-              {query ? (
-                <TooltipButton onClick={() => setQuery("")} label="Clear search" className="btn">
-                  <X aria-hidden="true" />
-                </TooltipButton>
-              ) : null}
-            </label>
-          ) : null}
-          <TooltipButton
-            className={`native-library-icon-button${isSearchVisible ? " is-active" : ""}`}
-            onClick={() => {
-              setSearchOpen(!isSearchVisible);
-              if (isSearchVisible) setQuery("");
-            }}
-            label={isSearchVisible ? "Close search" : "Search"}
-            aria-label={isSearchVisible ? "Close search" : "Search tracks"}
-            aria-pressed={isSearchVisible}
-          >
-            <Search aria-hidden="true" />
-          </TooltipButton>
-          {!allowBulkEdit ? null : editMode ? (
+          {reorderDraft ? (
             <>
               <span className="flow-page__bulk-count" role="status">
-                {selectedCount} selected
+                Drag tracks into a new order
               </span>
-              {onBulkDelete ? (
-                <TooltipButton
-                  onClick={() => onBulkDelete(selectedTracks)}
-                  className="btn btn-ghost-danger btn-icon btn-sm"
-                  disabled={bulkActionLoading || !selectedCount}
-                  label="Remove selected"
-                  aria-label="Remove selected"
-                >
-                  <Trash2 className="artist-icon-sm" />
-                </TooltipButton>
-              ) : null}
-              {onBulkAddToPlaylist ? (
-                <BulkPlaylistAction
-                  {...bulkMenuProps}
-                  icon={Plus}
-                  label={bulkAddLabel}
-                  onSelect={(target) => {
-                    onBulkAddToPlaylist(selectedTracks, target);
-                    handleExitEditMode();
-                  }}
-                />
-              ) : null}
-              {onBulkAddToLibrary ? (
-                <button
-                  type="button"
-                  className="btn btn-secondary btn-sm"
-                  disabled={bulkActionLoading || !selectedCount}
-                  onClick={async () => {
-                    await onBulkAddToLibrary(selectedTracks);
-                    handleExitEditMode();
-                  }}
-                >
-                  <Download className="artist-icon-sm" />
-                  <span>Add to library</span>
-                </button>
-              ) : null}
-              {onBulkMoveToPlaylist ? (
-                <BulkPlaylistAction
-                  {...bulkMenuProps}
-                  icon={ListMusic}
-                  label="Move"
-                  onSelect={(target) => {
-                    onBulkMoveToPlaylist(selectedTracks, target);
-                    handleExitEditMode();
-                  }}
-                />
-              ) : null}
               <button
                 type="button"
-                onClick={handleExitEditMode}
+                onClick={() => setReorderDraft(null)}
                 className="btn btn-secondary btn-sm"
-                disabled={bulkActionLoading}
+                disabled={reorderSaving}
               >
-                Done
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveOrder}
+                className="btn btn-primary btn-sm"
+                disabled={reorderSaving}
+              >
+                {reorderSaving ? <DotLoader size="sm" label={null} /> : null}
+                Save order
               </button>
             </>
           ) : (
-            <TooltipButton
-              onClick={() => setEditMode(true)}
-              className="native-library-icon-button"
-              label="Select tracks"
-              aria-label="Select tracks"
-            >
-              <Pencil aria-hidden="true" />
-            </TooltipButton>
+            <>
+              {normalizedQuery ? (
+                <span className="collection-tracks__count" role="status">
+                  {visibleTracks.length} of {tracks.length}
+                </span>
+              ) : null}
+              {isSearchVisible ? (
+                <label className="native-library-search">
+                  <Search aria-hidden="true" />
+                  <input
+                    type="search"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                    placeholder="Search tracks"
+                    aria-label={`Search ${label}`}
+                    autoFocus
+                  />
+                  {query ? (
+                    <TooltipButton
+                      onClick={() => setQuery("")}
+                      label="Clear search"
+                      className="btn"
+                    >
+                      <X aria-hidden="true" />
+                    </TooltipButton>
+                  ) : null}
+                </label>
+              ) : null}
+              <TooltipButton
+                className={`native-library-icon-button${isSearchVisible ? " is-active" : ""}`}
+                onClick={() => {
+                  setSearchOpen(!isSearchVisible);
+                  if (isSearchVisible) setQuery("");
+                }}
+                label={isSearchVisible ? "Close search" : "Search"}
+                aria-label={isSearchVisible ? "Close search" : "Search tracks"}
+                aria-pressed={isSearchVisible}
+              >
+                <Search aria-hidden="true" />
+              </TooltipButton>
+              {editMode ? (
+                <>
+                  <span className="flow-page__bulk-count" role="status">
+                    {selectedCount} selected
+                  </span>
+                  {onBulkDelete ? (
+                    <TooltipButton
+                      onClick={() => onBulkDelete(selectedTracks)}
+                      className="btn btn-ghost-danger btn-icon btn-sm"
+                      disabled={bulkActionLoading || !selectedCount}
+                      label="Remove selected"
+                      aria-label="Remove selected"
+                    >
+                      <Trash2 className="artist-icon-sm" />
+                    </TooltipButton>
+                  ) : null}
+                  {onBulkAddToPlaylist ? (
+                    <BulkPlaylistAction
+                      {...bulkMenuProps}
+                      icon={Plus}
+                      label={bulkAddLabel}
+                      onSelect={(target) => {
+                        onBulkAddToPlaylist(selectedTracks, target);
+                        handleExitEditMode();
+                      }}
+                    />
+                  ) : null}
+                  {onBulkAddToLibrary ? (
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      disabled={bulkActionLoading || !selectedCount}
+                      onClick={async () => {
+                        await onBulkAddToLibrary(selectedTracks);
+                        handleExitEditMode();
+                      }}
+                    >
+                      <Download className="artist-icon-sm" />
+                      <span>Add to library</span>
+                    </button>
+                  ) : null}
+                  {onBulkMoveToPlaylist ? (
+                    <BulkPlaylistAction
+                      {...bulkMenuProps}
+                      icon={ListMusic}
+                      label="Move"
+                      onSelect={(target) => {
+                        onBulkMoveToPlaylist(selectedTracks, target);
+                        handleExitEditMode();
+                      }}
+                    />
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={handleExitEditMode}
+                    className="btn btn-secondary btn-sm"
+                    disabled={bulkActionLoading}
+                  >
+                    Done
+                  </button>
+                </>
+              ) : (
+                <>
+                  {onReorder && tracks.length > 1 ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSearchOpen(false);
+                        setQuery("");
+                        setReorderDraft(tracks);
+                      }}
+                      className="btn btn-secondary btn-sm"
+                    >
+                      <ArrowUpDown className="artist-icon-sm" aria-hidden="true" />
+                      <span>Reorder</span>
+                    </button>
+                  ) : null}
+                  {allowBulkEdit ? (
+                    <TooltipButton
+                      onClick={() => setEditMode(true)}
+                      className="native-library-icon-button"
+                      label="Select tracks"
+                      aria-label="Select tracks"
+                    >
+                      <Pencil aria-hidden="true" />
+                    </TooltipButton>
+                  ) : null}
+                </>
+              )}
+            </>
           )}
         </div>
       ) : null}
@@ -882,6 +955,13 @@ export function PlaylistTracksPanel<T extends PlaylistPanelTrack>({
           {activityHint ? <DotLoader size="sm" label={null} /> : null}
           <span>{activityHint || emptyMessage}</span>
         </div>
+      ) : reorderDraft ? (
+        <PlaylistReorderList
+          label={label}
+          tracks={reorderDraft}
+          disabled={reorderSaving}
+          onChange={setReorderDraft}
+        />
       ) : visibleTracks.length === 0 ? (
         <div className="native-library-state" role="status">
           <span>No tracks match “{query.trim()}”</span>

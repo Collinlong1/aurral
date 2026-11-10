@@ -238,6 +238,23 @@ export function PlaylistTracks({
 
   const handleDeleteTrack = (track: PlaylistTrackRow) => bulkActions.removeTracks(entry, [track]);
 
+  const handleReorder = async (ordered: PlaylistTrackRow[]) => {
+    try {
+      await parseResponse(
+        playlistRoutes[":playlistId"]["track-order"].$put({
+          param: { playlistId: encodeURIComponent(entry.id) },
+          json: { jobIds: ordered.map((track) => String(track.id)) },
+        }),
+      );
+      await refresh();
+      showSuccess("Track order saved");
+      return true;
+    } catch (err) {
+      showError(`Could not save the track order. ${getApiErrorMessage(err, "Try again.")}`);
+      return false;
+    }
+  };
+
   const handleReSearchTrack = async (track: PlaylistTrackRow, forceReplacementSearch = false) => {
     const jobId = track?.id;
     if (!jobId || reSearchingTrackIds[jobId]) return;
@@ -455,6 +472,7 @@ export function PlaylistTracks({
         onDeleteTrack={isFlow ? undefined : handleDeleteTrack}
         onAddTrackToPlaylist={saveTrackToPlaylist}
         onMoveTrackToPlaylist={isFlow ? undefined : (track, target) => moveTracks([track], target)}
+        onReorder={isFlow ? undefined : handleReorder}
         onAddTrackToLibrary={handleAddTrackToLibrary}
         onShareTrack={(track) =>
           share(

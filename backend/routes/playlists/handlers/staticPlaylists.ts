@@ -21,6 +21,10 @@ import {
   getAccessibleStaticPlaylist,
   requirePlaylistAccess,
 } from "./utils.ts";
+import {
+  PlaylistOrderError,
+  reorderStaticPlaylistTracks,
+} from "../../../services/playlists/playlistTrackOrder.ts";
 import { asAppError } from "../../../../lib/errors.ts";
 import { validate } from "../../../middleware/validate.ts";
 import { errorStatus } from "../../shared/errorStatus.ts";
@@ -305,6 +309,26 @@ const staticPlaylistRoutes = new Hono<AppEnv>()
           { error: "Failed to add playlist tracks", message: asAppError(error)?.message },
           500,
         );
+      }
+    },
+  )
+  .put(
+    "/:playlistId/track-order",
+    requirePlaylistAccess,
+    validate("json", v.object({ jobIds: v.array(v.string()) })),
+    (c) => {
+      const playlistId = c.req.param("playlistId");
+      if (!getAccessibleStaticPlaylist(c.var.user, playlistId)) {
+        return c.json({ error: "Playlist not found" }, 404);
+      }
+      try {
+        reorderStaticPlaylistTracks(playlistId, c.req.valid("json").jobIds);
+        return c.json({ success: true }, 200);
+      } catch (error) {
+        if (error instanceof PlaylistOrderError) {
+          return c.json({ error: error.message }, 409);
+        }
+        throw error;
       }
     },
   )
