@@ -4,8 +4,6 @@ import { parseResponse } from "hono/client";
 import { Link, useNavigate, useNavigationType, useParams, useSearchParams } from "react-router";
 import {
   ArrowDownAZ,
-  ArrowLeft,
-  ArrowRight,
   ArrowUpZA,
   Eye,
   Fingerprint,
@@ -78,6 +76,7 @@ import {
   type LibraryViewLibrary,
 } from "./libraryViewQuery.ts";
 import ArtistMbidModal from "./ArtistMbidModal";
+import { Pagination } from "../components/Pagination.tsx";
 import { DiscoverRail } from "../components/DiscoverRail";
 import { LibraryHomeMixes } from "./library/LibraryHomeMixes";
 import { LibraryHomePlaylists } from "./library/LibraryHomePlaylists";
@@ -430,6 +429,7 @@ function LibraryPage() {
     pageData && "pageSize" in pageData && pageData.kind === tab && tab !== "genres"
       ? Math.ceil(pageData.total / pageData.pageSize)
       : 0;
+  const listTotal = pageData && "total" in pageData ? Number(pageData.total) || 0 : 0;
   const lastPage = Math.max(totalPages, 1);
 
   useEffect(() => {
@@ -1699,29 +1699,14 @@ function LibraryPage() {
         </div>
       )}
       {!loading && !error && totalPages > 1 && (
-        <nav className="native-library-pagination" aria-label={sectionLabel + " pages"}>
-          <TooltipButton
-            className="native-library-icon-button"
-            onClick={() => setPageIndex(pageIndex - 1)}
-            disabled={pageIndex === 1}
-            label="Previous page"
-            aria-label="Previous page"
-          >
-            <ArrowLeft aria-hidden="true" />
-          </TooltipButton>
-          <span>
-            Page {pageIndex} of {totalPages}
-          </span>
-          <TooltipButton
-            className="native-library-icon-button"
-            onClick={() => setPageIndex(Math.min(totalPages, pageIndex + 1))}
-            disabled={pageIndex === totalPages}
-            label="Next page"
-            aria-label="Next page"
-          >
-            <ArrowRight aria-hidden="true" />
-          </TooltipButton>
-        </nav>
+        <Pagination
+          label={sectionLabel + " pages"}
+          page={pageIndex}
+          totalPages={totalPages}
+          total={listTotal}
+          pageSize={LIBRARY_PAGE_SIZE}
+          onPage={(nextPage) => setPageIndex(Math.min(Math.max(nextPage, 1), lastPage))}
+        />
       )}
     </div>
   );
