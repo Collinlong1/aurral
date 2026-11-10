@@ -36,9 +36,7 @@
         "frontend/src/utils/activeDownloads.ts"
       ],
       "focused_tests_passed": 3,
-      "source_commits": [
-        "cd409bad9c0fa14a950c6e1cb0dbab3188a58e26"
-      ],
+      "source_commits": ["cd409bad9c0fa14a950c6e1cb0dbab3188a58e26"],
       "title": "Missing-track download indicator scope"
     },
     {
@@ -99,9 +97,7 @@
         "docs/src/content/docs/using/activity.mdx"
       ],
       "focused_tests_passed": 22,
-      "source_commits": [
-        "e2d4272770fd64b89ff917af6c31e945d03cfb09"
-      ],
+      "source_commits": ["e2d4272770fd64b89ff917af6c31e945d03cfb09"],
       "title": "Ownership check for a requested album placement"
     },
     {
@@ -121,9 +117,7 @@
         "frontend/src/pages/activity/activityMissingUtils.ts"
       ],
       "focused_tests_passed": 8,
-      "source_commits": [
-        "a790aaca2e8f03956be8708f9f1f9ea6d28a083a"
-      ],
+      "source_commits": ["a790aaca2e8f03956be8708f9f1f9ea6d28a083a"],
       "title": "Cancelled individual tracks remain Wanted/Missing"
     },
     {
@@ -144,9 +138,7 @@
         "frontend/src/pages/playlists/components/playlistTrackComponents.tsx"
       ],
       "focused_tests_passed": 4,
-      "source_commits": [
-        "404cf3c10af9ed81b2914a6a48ec85617907cc50"
-      ],
+      "source_commits": ["404cf3c10af9ed81b2914a6a48ec85617907cc50"],
       "title": "Reorder static playlist tracks"
     },
     {
@@ -233,9 +225,7 @@
         "docs/src/content/docs/using/playlists.mdx"
       ],
       "focused_tests_passed": 1,
-      "source_commits": [
-        "eedfb2efd628c5a73ce5afc06e693aa02b80a0bc"
-      ],
+      "source_commits": ["eedfb2efd628c5a73ce5afc06e693aa02b80a0bc"],
       "title": "Playlist rows follow current indexed track names"
     },
     {
@@ -270,9 +260,7 @@
         "docs/src/content/docs/using/playlists.mdx"
       ],
       "focused_tests_passed": 1,
-      "source_commits": [
-        "b2cd79967945512c41cbc7580c9a5f2f59978a45"
-      ],
+      "source_commits": ["b2cd79967945512c41cbc7580c9a5f2f59978a45"],
       "title": "Invalidate Subsonic playlist metadata after file rescan"
     },
     {
@@ -286,9 +274,7 @@
         "backend/services/downloadJobs/downloadWorker.ts"
       ],
       "focused_tests_passed": 30,
-      "source_commits": [
-        "11e8cff64551fa2810fc9484aa99a1d6b5d8009a"
-      ],
+      "source_commits": ["11e8cff64551fa2810fc9484aa99a1d6b5d8009a"],
       "title": "Wake idle worker when start is called again"
     },
     {
@@ -302,9 +288,7 @@
         "backend/services/plugins/pluginInstaller.ts"
       ],
       "focused_tests_passed": 8,
-      "source_commits": [
-        "a544a9b81ddd748bc26b72347703a4934f36ff4b"
-      ],
+      "source_commits": ["a544a9b81ddd748bc26b72347703a4934f36ff4b"],
       "title": "Make cross-device plugin replacement recoverable"
     },
     {
@@ -318,9 +302,7 @@
         "backend/services/trackMatching/nativeMatcher.ts"
       ],
       "focused_tests_passed": 17,
-      "source_commits": [
-        "d4deed1011913bb2f43cd47752db28da08c0be1f"
-      ],
+      "source_commits": ["d4deed1011913bb2f43cd47752db28da08c0be1f"],
       "title": "Exact requested recording ID avoids artist contradiction"
     }
   ],

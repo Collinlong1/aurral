@@ -155,6 +155,86 @@ const dropAllUpstream = (playlistId: string) =>
     mergeImportSource: true,
   });
 
+test("playlist update and append pin explicit local paths despite differing submitted metadata", async () => {
+  const first = { artistName: "Local One", albumName: "First", trackName: "First Take" };
+  const second = { artistName: "Local Two", albumName: "Second", trackName: "Second Take" };
+  const firstPath = await addLibraryFile(first);
+  const secondPath = await addLibraryFile(second);
+  const { playlist } = await createPlaylist([], { downloadMissing: false });
+  await operations.processPlaylistOperation({
+    kind: "static-playlist-update",
+    playlistId: playlist.id,
+    hasTracksUpdate: true,
+    tracks: [{ artistName: "Incorrect credit", trackName: "Incorrect title", path: firstPath }],
+  });
+  await operations.processPlaylistOperation({
+    kind: "static-playlist-append-tracks",
+    playlistId: playlist.id,
+    tracks: [{ artistName: "Different credit", trackName: "Different title", path: secondPath }],
+  });
+  const stored = requireFixture(config.flowPlaylistConfig.getStaticPlaylist(playlist.id));
+  assert.deepEqual(
+    stored.tracks.map((track) => downloadTracker.getJob(track.canonicalJobId)?.finalPath),
+    [firstPath, secondPath],
+  );
+  assert.ok(
+    stored.tracks.every((track) => downloadTracker.getJob(track.canonicalJobId)?.status === "done"),
+  );
+});
+
+test("an explicit unavailable local file fails without creating a downloadable track", async () => {
+  const { playlist } = await createPlaylist([], { downloadMissing: false });
+  const before = downloadTracker.getAll().length;
+  await assert.rejects(
+    operations.processPlaylistOperation({
+      kind: "static-playlist-update",
+      playlistId: playlist.id,
+      hasTracksUpdate: true,
+      tracks: [{ artistName: "Local", trackName: "Missing", path: "/unindexed/missing.flac" }],
+    }),
+    /no longer available/,
+  );
+  assert.equal(downloadTracker.getAll().length, before);
+  assert.equal(
+    requireFixture(config.flowPlaylistConfig.getStaticPlaylist(playlist.id)).tracks.length,
+    0,
+  );
+});
+
+test("different files with identical metadata retain their exact identities on replacement and append", async () => {
+  const metadata = {
+    artistName: "Identical Performer",
+    albumName: "Identical Album",
+    trackName: "Identical Movement",
+  };
+  const firstPath = await writeAudio(metadata);
+  const secondPath = path.join(path.dirname(firstPath), "Other take.flac");
+  await fs.copyFile(firstPath, secondPath);
+  await fs.chmod(secondPath, 0o444);
+  await scan();
+  const { playlist } = await createPlaylist([{ ...metadata, path: firstPath }], {
+    downloadMissing: false,
+  });
+  await operations.processPlaylistOperation({
+    kind: "static-playlist-update",
+    playlistId: playlist.id,
+    hasTracksUpdate: true,
+    tracks: [{ ...metadata, path: secondPath }],
+  });
+  let stored = requireFixture(config.flowPlaylistConfig.getStaticPlaylist(playlist.id));
+  assert.equal(downloadTracker.getJob(stored.tracks[0]?.canonicalJobId)?.finalPath, secondPath);
+  await operations.processPlaylistOperation({
+    kind: "static-playlist-append-tracks",
+    playlistId: playlist.id,
+    tracks: [{ ...metadata, path: firstPath }],
+  });
+  stored = requireFixture(config.flowPlaylistConfig.getStaticPlaylist(playlist.id));
+  assert.deepEqual(
+    stored.tracks.map((track) => downloadTracker.getJob(track.canonicalJobId)?.finalPath),
+    [secondPath, firstPath],
+  );
+});
+
 test("a playlist adds its tracks to the Library and deleting it keeps every file", async () => {
   const reused = { artistName: "Reuse Band", albumName: "Reuse Record", trackName: "Already Here" };
   const fetched = { artistName: "Fresh Band", albumName: "Fresh Record", trackName: "Fetched" };
@@ -258,11 +338,12 @@ test("an imported track does not link an indexed file that is gone from disk", a
   const library = { artistName: "Gone Band", albumName: "Gone Record", trackName: "Vanished" };
   const libraryFile = await addLibraryFile(library);
   await fs.rm(libraryFile);
-  const { jobFor } = await createPlaylist([{ ...library, path: libraryFile }], {
-    downloadMissing: false,
-  });
-
-  assert.equal(jobFor(library).status, "saved");
+  const before = downloadTracker.getAll().length;
+  await assert.rejects(
+    createPlaylist([{ ...library, path: libraryFile }], { downloadMissing: false }),
+    /could not be opened/,
+  );
+  assert.equal(downloadTracker.getAll().length, before);
 });
 
 test("removing a track cancels its download unless something else wants it", async () => {

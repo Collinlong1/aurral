@@ -41,6 +41,7 @@ const actionSchema = v.object({
   target: v.picklist(PLUGIN_ACTION_TARGETS),
   admin: v.optional(v.boolean(), false),
   background: v.optional(v.boolean(), false),
+  localPlaylists: v.optional(v.boolean(), false),
 });
 
 const hostname = v.pipe(
@@ -77,6 +78,7 @@ export const pluginManifestSchema = v.object({
           albums: v.optional(v.boolean(), false),
           files: v.optional(v.boolean(), false),
           upgrades: v.optional(v.boolean(), false),
+          acquisitionIdentity: v.optional(v.boolean(), false),
         }),
         v.check((source) => source.tracks || source.albums, "needs tracks or albums"),
         v.check((source) => !source.files || source.albums, "files needs albums"),
@@ -142,6 +144,9 @@ export function pluginCapabilities(manifest: PluginManifest) {
       : []),
     ...(manifest.importList
       ? [{ key: "importList", label: manifest.importList.label, kind: "Import list" }]
+      : []),
+    ...(manifest.downloadSource?.acquisitionIdentity
+      ? [{ key: "acquisitionIdentity", label: "Acquisition identity", kind: "Download request" }]
       : []),
     ...(manifest.schedule
       ? [{ key: "schedule", label: SCHEDULE_LABELS[manifest.schedule], kind: "Schedule" }]

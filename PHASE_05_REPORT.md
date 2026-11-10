@@ -8,7 +8,6 @@ Preservation branches remain independently tested one-commit branches on the mat
 
 All references below to an unchanged main mean **no main edits by this task**, with source/test baseline SHAs explicitly pinned. They do not claim the live fork main stayed stationary while another upstream merge occurred.
 
-
 **Preservation work complete for review. Phase 1 has not started.**
 
 The user approved the next phase, confirmed the existing classical branches were created for this project, and clarified that upstream must remain read-only. All edits and issue branches are confined to the user’s repositories. No PR was opened or updated.
@@ -23,36 +22,36 @@ The user approved the next phase, confirmed the existing classical branches were
 
 ## Frozen references
 
-| Reference | SHA |
-| --- | --- |
-| Matching upstream base / every issue parent | `7afcb7cb23274a9ec92d0b57feb6a088c5ae64ef` |
+| Reference                                                                 | SHA                                        |
+| ------------------------------------------------------------------------- | ------------------------------------------ |
+| Matching upstream base / every issue parent                               | `7afcb7cb23274a9ec92d0b57feb6a088c5ae64ef` |
 | Fork main at Phase 0.5 entry/test baseline (later external advance above) | `aa643d316e9e00fb8622ab60b2fb2cb8b76661ee` |
-| Plugin main/source, unchanged | `506e5259e1442b8cfe072a75b129abb428c6bcf7` |
-| Existing core classical before adoption | `287ab4b76ca8a9d231b684089d02ddc9d9ea70a2` |
-| Later observed upstream main (read only) | `656475b92be36b6834002da2407e7d9d50c2e0c2` |
+| Plugin main/source, unchanged                                             | `506e5259e1442b8cfe072a75b129abb428c6bcf7` |
+| Existing core classical before adoption                                   | `287ab4b76ca8a9d231b684089d02ddc9d9ea70a2` |
+| Later observed upstream main (read only)                                  | `656475b92be36b6834002da2407e7d9d50c2e0c2` |
 
 Fork main received one upstream-only merge since Phase 0: same 52 changed paths, now 109 historical fork-only commits. Latest upstream advanced another commit during work; matching base remains the commit actually merged into the unchanged fork. No latest-nightly compatibility claim is made beyond the tested frozen base.
 
 ## Published branch review
 
-| Issue | Branch | Commit | Focused tests |
-| --- | --- | --- | --- |
-| F01 | [feature/optional-fork-container-image](https://github.com/Collinlong1/aurral/tree/feature/optional-fork-container-image) | `8991619c5eee` | workflow lint |
-| F02 | [fix/missing-track-download-status](https://github.com/Collinlong1/aurral/tree/fix/missing-track-download-status) | `c31abe13cd60` | 3 |
-| F03 | [feature/numbered-library-pagination](https://github.com/Collinlong1/aurral/tree/feature/numbered-library-pagination) | `f16b4e057f03` | 3 |
-| F04 | [feature/library-page-size](https://github.com/Collinlong1/aurral/tree/feature/library-page-size) | `100864c635cd` | 1 |
-| F05 | [fix/album-scoped-track-ownership](https://github.com/Collinlong1/aurral/tree/fix/album-scoped-track-ownership) | `183b22ca3388` | 22 |
-| F06 | [fix/wanted-cancelled-tracks](https://github.com/Collinlong1/aurral/tree/fix/wanted-cancelled-tracks) | `a9c9a2abd64c` | 8 |
-| F07 | [feature/playlist-track-reorder](https://github.com/Collinlong1/aurral/tree/feature/playlist-track-reorder) | `29b9baf0d36a` | 4 |
-| F08 | [feature/link-missing-track-library-file](https://github.com/Collinlong1/aurral/tree/feature/link-missing-track-library-file) | `8886ca2c8a4b` | 5 |
-| F09 | [feature/import-disk-file-for-missing-track](https://github.com/Collinlong1/aurral/tree/feature/import-disk-file-for-missing-track) | `e2e55bd09e2e` | 5 |
-| F10 | [fix/playlist-local-album-artwork](https://github.com/Collinlong1/aurral/tree/fix/playlist-local-album-artwork) | `1b8358d53363` | 1 |
-| F11 | [fix/playlist-current-library-names](https://github.com/Collinlong1/aurral/tree/fix/playlist-current-library-names) | `ca666ca9c24d` | 1 |
-| F12 | [fix/subsonic-playlist-file-identity](https://github.com/Collinlong1/aurral/tree/fix/subsonic-playlist-file-identity) | `576ef4b266e1` | 40 |
-| F13 | [fix/subsonic-playlist-rescan-timestamp](https://github.com/Collinlong1/aurral/tree/fix/subsonic-playlist-rescan-timestamp) | `d2151224bf94` | 1 |
-| F14 | [fix/wake-running-download-worker](https://github.com/Collinlong1/aurral/tree/fix/wake-running-download-worker) | `2607fd60f558` | 30 |
-| F15 | [fix/plugin-install-cross-device-rollback](https://github.com/Collinlong1/aurral/tree/fix/plugin-install-cross-device-rollback) | `963b3bc97c08` | 8 |
-| F16 | [fix/recording-id-artist-contradiction](https://github.com/Collinlong1/aurral/tree/fix/recording-id-artist-contradiction) | `ab1f64f53f39` | 17 |
+| Issue | Branch                                                                                                                              | Commit         | Focused tests |
+| ----- | ----------------------------------------------------------------------------------------------------------------------------------- | -------------- | ------------- |
+| F01   | [feature/optional-fork-container-image](https://github.com/Collinlong1/aurral/tree/feature/optional-fork-container-image)           | `8991619c5eee` | workflow lint |
+| F02   | [fix/missing-track-download-status](https://github.com/Collinlong1/aurral/tree/fix/missing-track-download-status)                   | `c31abe13cd60` | 3             |
+| F03   | [feature/numbered-library-pagination](https://github.com/Collinlong1/aurral/tree/feature/numbered-library-pagination)               | `f16b4e057f03` | 3             |
+| F04   | [feature/library-page-size](https://github.com/Collinlong1/aurral/tree/feature/library-page-size)                                   | `100864c635cd` | 1             |
+| F05   | [fix/album-scoped-track-ownership](https://github.com/Collinlong1/aurral/tree/fix/album-scoped-track-ownership)                     | `183b22ca3388` | 22            |
+| F06   | [fix/wanted-cancelled-tracks](https://github.com/Collinlong1/aurral/tree/fix/wanted-cancelled-tracks)                               | `a9c9a2abd64c` | 8             |
+| F07   | [feature/playlist-track-reorder](https://github.com/Collinlong1/aurral/tree/feature/playlist-track-reorder)                         | `29b9baf0d36a` | 4             |
+| F08   | [feature/link-missing-track-library-file](https://github.com/Collinlong1/aurral/tree/feature/link-missing-track-library-file)       | `8886ca2c8a4b` | 5             |
+| F09   | [feature/import-disk-file-for-missing-track](https://github.com/Collinlong1/aurral/tree/feature/import-disk-file-for-missing-track) | `e2e55bd09e2e` | 5             |
+| F10   | [fix/playlist-local-album-artwork](https://github.com/Collinlong1/aurral/tree/fix/playlist-local-album-artwork)                     | `1b8358d53363` | 1             |
+| F11   | [fix/playlist-current-library-names](https://github.com/Collinlong1/aurral/tree/fix/playlist-current-library-names)                 | `ca666ca9c24d` | 1             |
+| F12   | [fix/subsonic-playlist-file-identity](https://github.com/Collinlong1/aurral/tree/fix/subsonic-playlist-file-identity)               | `576ef4b266e1` | 40            |
+| F13   | [fix/subsonic-playlist-rescan-timestamp](https://github.com/Collinlong1/aurral/tree/fix/subsonic-playlist-rescan-timestamp)         | `d2151224bf94` | 1             |
+| F14   | [fix/wake-running-download-worker](https://github.com/Collinlong1/aurral/tree/fix/wake-running-download-worker)                     | `2607fd60f558` | 30            |
+| F15   | [fix/plugin-install-cross-device-rollback](https://github.com/Collinlong1/aurral/tree/fix/plugin-install-cross-device-rollback)     | `963b3bc97c08` | 8             |
+| F16   | [fix/recording-id-artist-contradiction](https://github.com/Collinlong1/aurral/tree/fix/recording-id-artist-contradiction)           | `ab1f64f53f39` | 17            |
 
 `FORK_FEATURE_INVENTORY.md` gives actual files, original commits, dependencies/adaptations, test evidence and historical accounting. `PRESERVATION_BRANCHES.json` is the machine-readable exact-SHA manifest.
 

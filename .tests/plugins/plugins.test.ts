@@ -107,6 +107,99 @@ afterAll(async () => {
   await cleanupIsolatedState(state);
 });
 
+test("scoped local playlist grants isolate users, survive queueing and recheck revocation", async () => {
+  const { userOps } = await import("../../backend/db/helpers/index.ts");
+  const grants = await import("../../backend/services/plugins/pluginUserOperations.ts");
+  const operations = await import("../../backend/services/playlists/playlistOperations.ts");
+  const { playlistOperationQueue: queue } = await import("../../backend/services/jobs/queues.ts");
+  const one = userOps.createUser("listener-one", "test-only", "user", {
+    accessPlaylists: true,
+    addAlbum: false,
+  })!;
+  const two = userOps.createUser("listener-two", "test-only", "user", {
+    accessPlaylists: true,
+    addAlbum: false,
+  })!;
+  await install(
+    "scoped",
+    { actions: [{ id: "compare", label: "Compare", target: "track", localPlaylists: true }] },
+    "export default {};",
+  );
+  await turnOn("scoped");
+  const token = grants.issueUserOperationGrant("scoped", "compare", one.id);
+  const tokenTwo = grants.issueUserOperationGrant("scoped", "compare", two.id);
+  assert.throws(() => grants.resolveUserOperationGrant(`${token}x`, "scoped"));
+  assert.throws(() => grants.resolveUserOperationGrant(token, "other"));
+  const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 31 * 60_000);
+  assert.throws(() => grants.resolveUserOperationGrant(token, "scoped"), /Expired/);
+  clock.mockRestore();
+  const first = await grants.enqueueUserPlaylist(token, "scoped", {
+    key: "work:one",
+    name: "One",
+    tracks: [],
+  });
+  const second = await grants.enqueueUserPlaylist(tokenTwo, "scoped", {
+    key: "work:one",
+    name: "Two",
+    tracks: [],
+  });
+  assert.notEqual(first.playlistId, second.playlistId);
+  assert.throws(() => grants.userOperationStatus(tokenTwo, "scoped", first.operationId));
+  const firstJob = queue.getJob(first.operationId)!;
+  const firstPayload: unknown = JSON.parse(firstJob.payload);
+  const secondPayload: unknown = JSON.parse(queue.getJob(second.operationId)!.payload);
+  await operations.processPlaylistOperation(
+    v.parse(operations.playlistOperationSchema, firstPayload),
+  );
+  assert.equal(flowPlaylistConfig.getStaticPlaylist(first.playlistId)?.ownerUserId, one.id);
+  await operations.processPlaylistOperation(
+    v.parse(operations.playlistOperationSchema, firstPayload),
+  );
+  assert.equal(flowPlaylistConfig.getStaticPlaylist(first.playlistId)?.ownerUserId, one.id);
+  userOps.updateUser(two.id, { permissions: { accessPlaylists: false } });
+  await assert.rejects(
+    operations.processPlaylistOperation(v.parse(operations.playlistOperationSchema, secondPayload)),
+    /revoked/,
+  );
+  assert.equal(flowPlaylistConfig.getStaticPlaylist(second.playlistId), null);
+  userOps.updateUser(one.id, { status: "inactive" });
+  assert.throws(() => grants.resolveUserOperationGrant(token, "scoped"), /revoked/);
+});
+
+test("native acquisition identity runs independently of source priority and preserves no-op requests", async () => {
+  const { resolvePluginAcquisitionIdentity, matchesAcquisitionTerms } =
+    await import("../../backend/services/plugins/pluginAcquisitionIdentity.ts");
+  const { buildTrackSearchTiers } =
+    await import("../../backend/services/downloadJobs/trackSearchQueries.ts");
+  await install(
+    "identity",
+    { downloadSource: { tracks: true, acquisitionIdentity: true } },
+    `export default { downloadSource: { acquisitionIdentity: ({track}) => track.trackMbid === "liszt" ? {artist:"Daniil Trifonov",aliases:[]} : null } };`,
+  );
+  await turnOn("identity", { priority: 99 });
+  assert.equal(matchesAcquisitionTerms("Liszt/Horowitz/Etude.flac", ["Trifonov"]), false);
+  assert.equal(matchesAcquisitionTerms("Liszt/Trifonov/Etude.flac", ["Trifonov"]), true);
+  const display = {
+    artistName: "Franz Liszt",
+    trackName: "Etude",
+    albumName: "Transcendental",
+    trackMbid: "liszt",
+  };
+  const identity = await resolvePluginAcquisitionIdentity(display);
+  assert.ok(identity && "artist" in identity);
+  const queries = buildTrackSearchTiers({ ...display, artistName: identity.artist }).flatMap(
+    (tier) => tier.queries,
+  );
+  assert.ok(queries[0]?.includes("Trifonov"));
+  assert.equal(display.artistName, "Franz Liszt");
+  assert.equal(
+    await resolvePluginAcquisitionIdentity({ artistName: "Rock Band", trackMbid: "rock" }),
+    null,
+  );
+  await turnOn("identity", { capabilities: { downloadSource: false } });
+  assert.equal(await resolvePluginAcquisitionIdentity(display), null);
+});
+
 test("a playlist action shows once its plugin is on and set up, and gets the playlist", async () => {
   await install(
     "box",

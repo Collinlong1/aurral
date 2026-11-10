@@ -553,9 +553,9 @@ export default function ActivityMissingPage() {
         onClose={() => setLinkFileJob(null)}
         onLinked={(job, how) => {
           const id = getMissingJobKey(job);
-          queryClient.setQueryData(jobsQueryKey, (current) =>
+          queryClient.setQueryData<MissingPageJob[]>(jobsQueryKey, (current) =>
             (Array.isArray(current) ? current : []).filter(
-              (entry) => getMissingJobKey(entry) !== id,
+              (entry: MissingPageJob) => getMissingJobKey(entry) !== id,
             ),
           );
           showSuccess(

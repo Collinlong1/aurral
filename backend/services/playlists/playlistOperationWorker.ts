@@ -8,7 +8,11 @@ import { getBulkOperation, saveBulkOperation } from "./bulkOperationStore.ts";
 
 type PlaylistOperation = Record<string, unknown>;
 
-const PERMANENT_ERROR_CODES = new Set(["STATIC_PLAYLIST_NAME_CONFLICT", "FLOW_NAME_CONFLICT"]);
+const PERMANENT_ERROR_CODES = new Set([
+  "STATIC_PLAYLIST_NAME_CONFLICT",
+  "FLOW_NAME_CONFLICT",
+  "PLUGIN_PERMISSION_REVOKED",
+]);
 
 let currentLabel: string | null = null;
 let flowRunLabel: string | null = null;
