@@ -60,6 +60,7 @@ import {
   buildCustomArtworkUrl,
   getCustomArtworkMap,
 } from "../../../services/customArtworkService.ts";
+import { getLibraryTrackInfoForJobs } from "../../../services/playlists/playlistTrackCovers.ts";
 import { releaseGroupCoverImageUrl } from "../../../services/releaseGroupCoverService.ts";
 import { asAppError } from "../../../../lib/errors.ts";
 import { validate } from "../../../middleware/validate.ts";
@@ -195,6 +196,18 @@ const manualSearchQuery = v.object({
   playlistId: v.optional(v.string()),
 });
 
+// A Library file's current names, leaving the job's own where the Library has none.
+const withLibraryNames = (
+  info: { trackName: string; artistName: string | null; albumName: string | null } | undefined,
+) =>
+  info
+    ? {
+        trackName: info.trackName,
+        ...(info.artistName && { artistName: info.artistName }),
+        ...(info.albumName && { albumName: info.albumName }),
+      }
+    : {};
+
 const containingQuery = v.object({
   artistName: v.string(),
   trackName: v.string(),
@@ -239,6 +252,7 @@ export default new Hono<AppEnv>()
       const profile = getQualityProfile();
       const accessibleJobs = filterJobsForUser(user, jobs);
       const libraryOwnership = getLibraryTrackOwnershipBatch(accessibleJobs);
+      const libraryInfo = getLibraryTrackInfoForJobs(accessibleJobs);
       const favoriteIds = playlistTrackFavoriteIds(playlistId, accessibleJobs);
       const customArtwork = getCustomArtworkMap(
         "playlist-track",
@@ -247,6 +261,7 @@ export default new Hono<AppEnv>()
       return c.json(
         accessibleJobs.map((job, index) => ({
           ...toPublicJob(job, profile),
+          ...withLibraryNames(libraryInfo.get(String(job.id))),
           libraryOwned: libraryOwnership[index] === true,
           favoriteId: favoriteIds[index],
           ...trackArtwork(job, customArtwork, playlistId),
