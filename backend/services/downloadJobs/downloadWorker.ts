@@ -495,6 +495,7 @@ export class DownloadWorker {
 
   async start() {
     if (this.running) {
+      this.wake();
       return;
     }
 
