@@ -1,6 +1,6 @@
 # Project instructions
 
-Current user explicitly authorized Phase 4 on November 10, 2026 (America/Chicago). Phase 3 is complete for review; read HANDOFF.md and PHASE_3_REPORT.md first. Implement only the generic Phase 4 host hooks needed for grouping, playback and the work page, then stop before later-release scope.
+Current user explicitly authorized Phase 4 on November 10, 2026 (America/Chicago). Generic core hooks for Phase 4 grouping, bounded playback and work-page integration are complete for review; read HANDOFF.md and PHASE_4_REPORT.md first. Stop before later-release scope.
 
 - Work only in Collinlong1/Aurral-Classical-Plugin and Collinlong1/aurral. Upstream lklynet/aurral is read-only; no upstream writes, branches, PRs, reviews or comments.
 - Never modify/merge either main or discard external advances. Implement on the existing local aurral-classical branches; separate phase review snapshots preserve remote reviews. No automatic PR, merge, release or deployment.
