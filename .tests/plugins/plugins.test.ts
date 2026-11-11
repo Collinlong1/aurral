@@ -93,6 +93,94 @@ function ownedPlaylist() {
 }
 
 const sendAction = { actions: [{ id: "send", label: "Send to Box", target: "playlist" }] };
+const pageListSchema = v.object({ pages: v.array(v.object({ id: v.string() })) });
+
+test("admin form pages are opt-in, capability checked and deny regular or synthetic accounts", async () => {
+  const code = `export default {pages:{read:async input=>({version:1,title:'Generic editor',revision:'1',navigation:{items:[],total:0,offset:0},forms:[],notes:[String(input.user.id)]}),mutate:async input=>({ok:true,message:'Saved by '+input.user.id})}}`;
+  await install("forms", { pages: [{ id: "editor", label: "Example editor" }] }, code);
+  await turnOn("forms");
+  const list = v.parse(
+    pageListSchema,
+    await (await routes(admin).request("/plugins/pages")).json(),
+  );
+  assert.equal(list.pages[0]?.id, "editor");
+  const route = "/plugins/forms/pages/editor";
+  const read = await routes(admin).request(route);
+  assert.equal(read.status, 200);
+  assert.equal(v.parse(v.object({ title: v.string() }), await read.json()).title, "Generic editor");
+  const body = { revision: "1", command: "save", values: {} };
+  for (const user of [owner, stranger, { ...admin, id: -1 }]) {
+    assert.equal((await routes(user).request(route)).status, 403);
+    assert.equal((await routes(user).request(route, json("POST", body))).status, 403);
+  }
+  assert.equal((await routes(admin).request(route, json("POST", body))).status, 200);
+  assert.equal((await routes(admin).request("/plugins/forms/pages/undeclared")).status, 404);
+  await turnOn("forms", { capabilities: { "page:editor": false } });
+  assert.equal((await routes(admin).request(route)).status, 404);
+  assert.deepEqual(
+    v.parse(pageListSchema, await (await routes(admin).request("/plugins/pages")).json()).pages,
+    [],
+  );
+  await turnOn("forms", { capabilities: { "page:editor": true } });
+  setSafeMode(true);
+  assert.equal((await routes(admin).request(route)).status, 404);
+});
+
+test("page transport rejects cross-site/oversized/malformed requests and propagates conflict safely", async () => {
+  await install(
+    "forms",
+    { pages: [{ id: "editor", label: "Editor" }] },
+    `export default {pages:{mutate:()=>({ok:false,status:409,message:'Newer revision exists'}),read:()=>({version:1,title:'Read',revision:'1',navigation:{items:[],total:0,offset:0},forms:[]})}}`,
+  );
+  await turnOn("forms");
+  const route = "/plugins/forms/pages/editor",
+    body = { revision: "1", command: "save", values: {} };
+  const csrf = {
+    ...json("POST", body),
+    headers: {
+      "Content-Type": "application/json",
+      Origin: "https://evil.example",
+      "Sec-Fetch-Site": "cross-site",
+    },
+  };
+  assert.equal((await routes(admin).request(route, csrf)).status, 403);
+  assert.equal(
+    (
+      await routes(admin).request(
+        route,
+        json("POST", { ...body, values: { x: "a".repeat(65000) } }),
+      )
+    ).status,
+    413,
+  );
+  assert.equal(
+    (await routes(admin).request(route, json("POST", { ...body, command: "../actions.delete" })))
+      .status,
+    400,
+  );
+  const response = await routes(admin).request(route, json("POST", body));
+  assert.equal(response.status, 409);
+  assert.match(
+    v.parse(v.object({ error: v.string() }), await response.json()).error,
+    /Newer revision/,
+  );
+});
+
+test("old plugins stay page-free and invalid page output fails with a bounded error", async () => {
+  await install("legacy", {}, "export default {}");
+  await turnOn("legacy");
+  assert.deepEqual(
+    v.parse(pageListSchema, await (await routes(admin).request("/plugins/pages")).json()).pages,
+    [],
+  );
+  await install(
+    "invalid",
+    { pages: [{ id: "editor", label: "Editor" }] },
+    `export default {pages:{read:()=>({version:1,title:'Unsafe',html:'<script>bad</script>'})}}`,
+  );
+  await turnOn("invalid");
+  assert.equal((await routes(admin).request("/plugins/invalid/pages/editor")).status, 502);
+});
 
 beforeEach(() => resetDatabase(db));
 
@@ -462,6 +550,76 @@ test("album and track actions get the Library's album and tracks", async (t) => 
     message: "Morning Run @ Lowlands true, Night Drive @ Lowlands true",
   });
   assert.equal((await runOn("album", { albumId: "missing" })).status, 404);
+
+  const firstTrack = String(trackIds[0]);
+  const albumId = String(album.id);
+  const item = `{id:'item-1',trackId:${JSON.stringify(firstTrack)},fileId:'file-1',albumId:${JSON.stringify(albumId)},title:'I. First',artist:'Glass Coast',album:'Lowlands',durationMs:1000,startMs:100,endMs:900}`;
+  const movement = `{id:'movement-1',title:'I. First',position:1}`;
+  const work = `{version:1,work:{id:'work-1',title:'Fixture Work',nickname:'user-'+input.user.id,description:'',credits:[],movements:[${movement}],collections:[]},favourite:false,pickedRealizationId:null,pickScope:null,recordings:[{id:'realization-1',label:'Owned recording',recordingIds:['recording-1'],credits:[],items:[${item}],missing:[],complete:true}]}`;
+  await install(
+    "views",
+    {
+      pages: [{ id: "work", label: "Work", admin: false }],
+      albumPresentation: true,
+    },
+    `export default {
+      albumPresentation:()=>({version:1,albumId:${JSON.stringify(albumId)},supportsToggle:true,groups:[{id:'realization-1',workId:'work-1',title:'Fixture Work',composer:'Composer',items:[${item}],missing:[],movementCount:2}]}),
+      pages:{read:(input)=>(${work}),mutate:()=>({ok:true})}
+    }`,
+  );
+  await turnOn("views");
+  const presentation = await routes(owner).request(`/plugins/album-presentation/${album.id}`);
+  assert.equal(presentation.status, 200);
+  const presentationBody = v.parse(
+    v.object({
+      groups: v.array(
+        v.object({
+          href: v.string(),
+          items: v.array(v.object({ streamPath: v.string() })),
+        }),
+      ),
+    }),
+    await presentation.json(),
+  );
+  const [presentedGroup] = presentationBody.groups;
+  assert.ok(presentedGroup);
+  const [presentedItem] = presentedGroup.items;
+  assert.ok(presentedItem);
+  assert.equal(presentedGroup.href, "/plugins/views/work/work-1");
+  assert.match(presentedItem.streamPath, /\/library\/stream\//);
+  const ownerWork = await routes(owner).request("/plugins/views/resources/work/work-1");
+  assert.equal(ownerWork.status, 200);
+  const workResponse = v.object({ work: v.object({ nickname: v.string() }) });
+  assert.equal(v.parse(workResponse, await ownerWork.json()).work.nickname, `user-${owner.id}`);
+  const strangerWork = await routes(stranger).request("/plugins/views/resources/work/work-1");
+  assert.equal(
+    v.parse(workResponse, await strangerWork.json()).work.nickname,
+    `user-${stranger.id}`,
+  );
+  assert.equal(
+    (
+      await routes(owner).request(
+        "/plugins/views/resources/work/work-1",
+        json("POST", { command: "pick", realizationId: "realization-1" }),
+      )
+    ).status,
+    200,
+  );
+  assert.equal(
+    (
+      await routes(owner).request(
+        "/plugins/views/resources/work/work-1",
+        json("POST", { command: "admin-pick", realizationId: "realization-1" }),
+      )
+    ).status,
+    403,
+  );
+  await turnOn("views", { capabilities: { albumPresentation: false, "page:work": false } });
+  assert.equal(
+    await (await routes(owner).request(`/plugins/album-presentation/${album.id}`)).json(),
+    null,
+  );
+  assert.equal((await routes(owner).request("/plugins/views/resources/work/work-1")).status, 404);
 });
 
 test("a background action answers right away and reports its result to the user who ran it", async () => {

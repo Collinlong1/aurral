@@ -180,3 +180,23 @@ test("other devices get the Aurral tracks around the current one, without previe
   assert.equal(remoteQueueFor(queueReducer(state, { type: "SKIP_TO", index: 1 }), 0), null);
   assert.equal(remoteQueueFor(initialQueueState, 0), null);
 });
+
+test("bounded work segments survive queue persistence", () => {
+  const state = playing([
+    {
+      id: "attacca",
+      title: "Second work",
+      src: "/stream/attacca",
+      segmentStartMs: 42000,
+      segmentEndMs: 81000,
+      durationMs: 39000,
+    },
+  ]);
+  const saved = parseStoredQueue(serializeQueue(state, { owner: "u1", position: 50 }), {
+    owner: "u1",
+  });
+  assert.equal(saved?.queue[0]?.segmentStartMs, 42000);
+  assert.equal(saved?.queue[0]?.segmentEndMs, 81000);
+  assert.equal(saved?.queue[0]?.durationMs, 39000);
+  assert.equal(remoteQueueFor(state, 50), null, "remote playback must not expand a segment");
+});

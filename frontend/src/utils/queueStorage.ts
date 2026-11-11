@@ -99,6 +99,14 @@ export function remoteQueueFor(
   position: number,
 ) {
   if (state.currentIndex < 0) return null;
+  const currentQueueIndex = state.playbackOrder[state.currentIndex];
+  const currentTrack = state.queue[currentQueueIndex ?? -1] as
+    | {
+        segmentStartMs?: unknown;
+        segmentEndMs?: unknown;
+      }
+    | undefined;
+  if (currentTrack?.segmentStartMs != null || currentTrack?.segmentEndMs != null) return null;
   const { start, window } = storedWindow(state);
   const paths = window.map((queueIndex) => apiPathOf(state.queue[queueIndex]?.src ?? ""));
   const current = state.currentIndex - start;

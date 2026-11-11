@@ -1,3 +1,15 @@
+# Phase 4 inventory addendum
+
+The fork now has opt-in generic album-presentation, authenticated resource-page and bounded local queue capabilities. Classical decisions and storage stay in the plugin. Existing main/upstream/preservation refs are unchanged. See `PHASE_4_REPORT.md` and the central plugin `UPSTREAM_DELTA.md`.
+
+# Phase 3 addendum
+
+Existing fork preservation branches/main/upstream remain untouched. New D01 admin-forms v1 is a generic, opt-in core hook for the plugin-owned editor: manifest pages/capability, authenticated read/mutate transport, host forms, route/Settings entry and types/docs/tests. No core SQL schema or classical business logic is added. All classical mutations stay in independent plugin storage. The central plugin UPSTREAM_DELTA.md records exact files and limitations. Phase 3 is complete for review; no upstream PR or automatic merge.
+
+# Phase 2 inventory addendum
+
+The current user authorized Phase 2 after Phase 1 verification. Phase 2 adds no core runtime changes or additional fork features. The 16 preservation branches and main/upstream are untouched. Local classical branches include the Phase 1 review commits as prerequisites, without merging their remote PRs. Model/storage/migration/reconciliation/classification/job changes are plugin-owned. See PHASE_2_REPORT.md and central plugin MODEL_V1.md. Historical inventory follows.
+
 # Fork feature inventory — Phase 0.5 execution record
 
 Current status: Phase 1 is implemented in fork-only core PR36 and plugin PR6, targeting aurral-classical. Read PHASE_1_REPORT.md and the Phase 1 inventory addendum at the end for current source/test state. The Phase 0.5 records below are preserved historical evidence; the 16 preservation branches are unchanged. Live main's matching upstream advanced externally to 021b1f03, with the same 52 net paths and 111 historical fork-only commits.

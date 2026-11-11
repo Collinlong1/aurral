@@ -1,12 +1,78 @@
 export type SettingValue = string | number | boolean;
 
 export interface Base {
+  capabilities?: { adminForms?: 1; resourceView?: 1; albumPresentation?: 1 };
   userOperations?: { version: 1; url: string; token: string };
   settings: Record<string, SettingValue>;
   libraryFolder: string;
   dataFolder: string;
   api?: { url: string; key: string };
 }
+
+export interface PresentationQueueItem {
+  id: string;
+  trackId: string;
+  fileId: string;
+  albumId: string;
+  title: string;
+  artist: string;
+  album: string;
+  durationMs: number | null;
+  startMs: number;
+  endMs: number | null;
+}
+
+export interface AlbumPresentationInput extends Base {
+  user: User;
+  album: Album;
+}
+
+export interface ResourcePageInput extends Base {
+  user: User;
+  pageId: string;
+  resourceId: string;
+  mutation?: {
+    command: "favourite" | "pick" | "admin-pick";
+    value?: boolean;
+    realizationId?: string | null;
+  };
+}
+
+// Optional admin-only, host-rendered forms. No browser scripts/assets are accepted.
+export type AdminPageValue = string | boolean | string[];
+export type AdminPageInput = Base & { user: User; pageId: string } & (
+    | { query: { selection: string; q: string; offset: string } }
+    | { mutation: { revision: string; command: string; values: Record<string, AdminPageValue> } }
+  );
+export interface AdminPageField {
+  key: string;
+  label: string;
+  type: "text" | "textarea" | "select" | "checkbox" | "order";
+  value: AdminPageValue;
+  required?: boolean;
+  help?: string;
+  options?: { value: string; label: string }[];
+}
+export interface AdminPageData {
+  version: 1;
+  title: string;
+  description?: string;
+  revision: string;
+  navigation: { items: { id: string; label: string }[]; total: number; offset: number };
+  notes?: string[];
+  forms: {
+    id: string;
+    title: string;
+    help?: string;
+    command: string;
+    arguments: Record<string, AdminPageValue>;
+    submitLabel: string;
+    fields: AdminPageField[];
+  }[];
+}
+export type AdminPageMutationResult =
+  | { ok: true; message: string; selection?: string }
+  | { ok: false; status: 400 | 409; message: string };
 
 export interface User {
   id: number;
@@ -227,6 +293,22 @@ type ActionHandler = {
 }["handle"];
 
 export interface AurralPlugin {
+  pages?: {
+    read(
+      input: Base & {
+        user: User;
+        pageId: string;
+        query: { selection: string; q: string; offset: string };
+      },
+    ): Answer<AdminPageData>;
+    mutate(
+      input: Base & {
+        user: User;
+        pageId: string;
+        mutation: { revision: string; command: string; values: Record<string, AdminPageValue> };
+      },
+    ): Answer<AdminPageMutationResult>;
+  };
   test?(input: Base): Answer<ActionAnswer>;
   actions?: Record<string, ActionHandler>;
   events?: { [Name in keyof Events]?: (input: EventInput<Name>) => Answer<unknown> };

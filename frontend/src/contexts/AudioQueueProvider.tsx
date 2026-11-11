@@ -19,6 +19,7 @@ import {
   normalizeQueueTrack,
   normalizeStreamQueueTrack,
   queueReducer,
+  queueSegmentBounds,
   shouldRestartTrack,
 } from "../utils/audioQueue";
 import type {
@@ -296,7 +297,11 @@ export function AudioQueueProvider({ children }: { children: ReactNode }) {
         src: track.src,
         format: getHowlerFormat(formatKey),
         autoplay,
-        startAt: resumeAt?.entryId === track.entryId ? resumeAt.position : 0,
+        startAt: (() => {
+          const { start, end } = queueSegmentBounds(track);
+          const resumed = resumeAt?.entryId === track.entryId ? resumeAt.position : start;
+          return Math.max(start, end > start ? Math.min(resumed, end) : resumed);
+        })(),
         onLoadError: () => {
           loadedSignatureRef.current = null;
           if (formatAttemptIndex + 1 >= formatAttempts.length) {
@@ -347,7 +352,9 @@ export function AudioQueueProvider({ children }: { children: ReactNode }) {
     const preloadUpcoming = () => {
       const s = stateRef.current;
       const { duration } = engine.getSnapshot();
-      if (!duration || duration - engine.getPosition() > PRELOAD_LEAD_SECONDS) return;
+      const current = trackAt(s, s.currentIndex);
+      const { end } = queueSegmentBounds(current, duration);
+      if (!end || end - engine.getPosition() > PRELOAD_LEAD_SECONDS) return;
       const next = queueReducer(s, { type: s.repeatMode === "one" ? "REPLAY" : "NEXT" });
       const track = next.autoplay ? trackAt(next, next.currentIndex) : null;
       if (!track?.src) {
@@ -564,9 +571,12 @@ export function AudioQueueProvider({ children }: { children: ReactNode }) {
     (position = engine.getPosition()) => {
       const mediaSession = navigator.mediaSession;
       if (typeof mediaSession?.setPositionState !== "function") return;
+      const s = stateRef.current;
+      const current = trackAt(s, s.currentIndex);
+      const bounds = queueSegmentBounds(current, engine.getSnapshot().duration);
       const positionState =
-        stateRef.current.currentIndex >= 0
-          ? mediaSessionPosition(engine.getSnapshot().duration, position)
+        s.currentIndex >= 0
+          ? mediaSessionPosition(bounds.duration, Math.max(0, position - bounds.start))
           : null;
       try {
         if (positionState) mediaSession.setPositionState(positionState);
@@ -580,7 +590,13 @@ export function AudioQueueProvider({ children }: { children: ReactNode }) {
     (position: number) => {
       const { duration } = engine.getSnapshot();
       if (!Number.isFinite(position)) return;
-      const target = Math.max(0, duration > 0 ? Math.min(position, duration) : position);
+      const s = stateRef.current;
+      const bounds = queueSegmentBounds(trackAt(s, s.currentIndex), duration);
+      const relative = Math.max(
+        0,
+        bounds.duration > 0 ? Math.min(position, bounds.duration) : position,
+      );
+      const target = bounds.start + relative;
       engine.seek(target);
       updatePositionState(target);
     },
@@ -807,6 +823,22 @@ export function AudioQueueProvider({ children }: { children: ReactNode }) {
   }, [engine]);
 
   const currentTrack = state.currentIndex >= 0 ? trackAt(state, state.currentIndex) : null;
+
+  useEffect(() => {
+    if (!playback.isPlaying || !currentTrack?.segmentEndMs) return undefined;
+    const end = currentTrack.segmentEndMs / 1000;
+    const advance = () => {
+      if (engine.getPosition() + 0.02 < end) return;
+      const cur = stateRef.current;
+      const action: QueueAction = { type: cur.repeatMode === "one" ? "REPLAY" : "NEXT" };
+      const next = queueReducer(cur, action);
+      if (next.autoplay) loadTrackRef.current(next, next.currentIndex);
+      dispatch(action);
+    };
+    advance();
+    const interval = window.setInterval(advance, 100);
+    return () => window.clearInterval(interval);
+  }, [currentTrack?.entryId, currentTrack?.segmentEndMs, dispatch, engine, playback.isPlaying]);
   const isActive = state.queue.length > 0 && state.currentIndex >= 0;
   const upcoming = useMemo(() => getUpcomingTracks(state), [state]);
 
@@ -906,7 +938,9 @@ export function AudioQueueProvider({ children }: { children: ReactNode }) {
       const snapshot = engine.getSnapshot();
       return snapshot.isPlaying || snapshot.isStarting;
     };
-    const seekBy = (offset: number) => seek(engine.getPosition() + offset);
+    const current = trackAt(stateRef.current, stateRef.current.currentIndex);
+    const bounds = queueSegmentBounds(current, engine.getSnapshot().duration);
+    const seekBy = (offset: number) => seek(engine.getPosition() - bounds.start + offset);
     const handlers = {
       play: () => {
         if (!isRunning()) togglePlayPause();
@@ -955,8 +989,9 @@ export function AudioQueueProvider({ children }: { children: ReactNode }) {
     [activeSource],
   );
 
-  const value = useMemo(
-    () => ({
+  const value = useMemo(() => {
+    const bounds = queueSegmentBounds(currentTrack, playback.duration);
+    return {
       queue: state.queue,
       upcoming,
       currentTrack,
@@ -967,9 +1002,9 @@ export function AudioQueueProvider({ children }: { children: ReactNode }) {
       isPlaying: playback.isPlaying,
       isLoading: playback.isLoading,
       isStarting: playback.isStarting,
-      duration: playback.duration,
-      getPosition: engine.getPosition,
-      getBufferedEnd: engine.getBufferedEnd,
+      duration: bounds.duration,
+      getPosition: () => Math.max(0, engine.getPosition() - bounds.start),
+      getBufferedEnd: () => Math.max(0, engine.getBufferedEnd() - bounds.start),
       seek,
       volume,
       muted,
@@ -1000,52 +1035,51 @@ export function AudioQueueProvider({ children }: { children: ReactNode }) {
       reorderUpcoming,
       clearUpcoming,
       updateQueueArtwork,
-    }),
-    [
-      addToQueue,
-      autoplayEnabled,
-      clearQueue,
-      clearUpcoming,
-      setAutoplayEnabled,
-      levelingEnabled,
-      setLevelingEnabled,
-      startRadio,
-      updateQueueArtwork,
-      queueNext,
-      removeFromQueue,
-      reorderUpcoming,
-      upcoming,
-      skipTo,
-      currentTrack,
-      isActive,
-      matchesSource,
-      playNext,
-      playPrevious,
-      playQueue,
-      playTrack,
-      engine,
-      playback.duration,
-      playback.isLoading,
-      playback.isPlaying,
-      playback.isStarting,
-      seek,
-      muted,
-      setMuted,
-      setVolume,
-      setShuffleEnabled,
-      toggleMute,
-      volume,
-      state.queue,
-      state.currentIndex,
-      state.error,
-      state.source,
-      state.isShuffleEnabled,
-      state.repeatMode,
-      togglePlayPause,
-      toggleRepeat,
-      toggleShuffle,
-    ],
-  );
+    };
+  }, [
+    addToQueue,
+    autoplayEnabled,
+    clearQueue,
+    clearUpcoming,
+    setAutoplayEnabled,
+    levelingEnabled,
+    setLevelingEnabled,
+    startRadio,
+    updateQueueArtwork,
+    queueNext,
+    removeFromQueue,
+    reorderUpcoming,
+    upcoming,
+    skipTo,
+    currentTrack,
+    isActive,
+    matchesSource,
+    playNext,
+    playPrevious,
+    playQueue,
+    playTrack,
+    engine,
+    playback.duration,
+    playback.isLoading,
+    playback.isPlaying,
+    playback.isStarting,
+    seek,
+    muted,
+    setMuted,
+    setVolume,
+    setShuffleEnabled,
+    toggleMute,
+    volume,
+    state.queue,
+    state.currentIndex,
+    state.error,
+    state.source,
+    state.isShuffleEnabled,
+    state.repeatMode,
+    togglePlayPause,
+    toggleRepeat,
+    toggleShuffle,
+  ]);
 
   return <AudioQueueContext.Provider value={value}>{children}</AudioQueueContext.Provider>;
 }

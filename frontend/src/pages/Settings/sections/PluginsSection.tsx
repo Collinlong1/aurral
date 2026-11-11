@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { parseResponse, type InferResponseType } from "hono/client";
 import { ConfirmModal } from "../../../components/ConfirmModal";
@@ -293,6 +294,25 @@ function PluginDetail({ plugin }: { plugin: Plugin }) {
           </SettingsRow>
         ) : null}
       </SettingsGroup>
+      {plugin.enabled && plugin.ready && manifest.pages.some((page) => page.admin) ? (
+        <SettingsGroup title="Pages">
+          {manifest.pages
+            .filter(
+              (page) =>
+                page.admin &&
+                plugin.capabilities.some(
+                  (capability) => capability.key === `page:${page.id}` && capability.enabled,
+                ),
+            )
+            .map((page) => (
+              <SettingsRow key={page.id} label={page.label}>
+                <Link className="settings-link" to={`/plugins/${plugin.id}/${page.id}`}>
+                  Open {page.label}
+                </Link>
+              </SettingsRow>
+            ))}
+        </SettingsGroup>
+      ) : null}
       {plugin.capabilities.length ? (
         <SettingsGroup title="Adds">
           {plugin.capabilities.map((capability) => {

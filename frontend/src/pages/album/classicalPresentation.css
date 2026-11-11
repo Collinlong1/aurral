@@ -1,0 +1,22 @@
+.classical-presentation {
+  margin-top: 20px;
+}
+.classical-presentation__toggle {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+.classical-presentation__work {
+  border-bottom: 1px solid var(--aurral-border);
+  padding: 16px 0 24px;
+}
+.classical-presentation__work h2 {
+  font-size: var(--aurral-font-lg);
+  margin: 0;
+}
+.classical-presentation__work ol {
+  margin: 16px 0 0;
+}
+.classical-presentation__missing {
+  color: var(--aurral-text-muted);
+}

@@ -237,3 +237,17 @@ People install plugins by pasting a link in **Settings > Plugins**, or by puttin
 A link can be a GitHub repo, like `https://github.com/you/aurral-plugins`. Aurral uses the latest release: its first `.zip` asset when it has one, or else its source. A repo without releases installs from its default branch. Aurral finds every folder with a `manifest.json`, at the root or up to two folders down, and lets people choose which to install. Each plugin folder holds everything it needs. A link can also point straight at a `.zip`.
 
 **Update** downloads the same link again and replaces the plugin's folder. Publish a release for each version, and attach a `.zip` when `index.js` has to be built first.
+
+## Admin forms v1 (classical fork)
+
+This optional interface is available on the classical fork with the Phase 3 page bridge. Stock API-1 hosts without it have no page entry; continue to support the plugin's existing actions without assuming a page bridge.
+
+Declare `pages: [{"id":"editor","label":"Metadata editor"}]` in the manifest. This opts into the `page:editor` capability. Pages default to absent, can be individually disabled, and disappear when the plugin is disabled or safe mode is on. Enabled pages appear on the plugin's Settings detail and at `/plugins/PLUGIN/PAGE`.
+
+Export `pages.read(input)` and `pages.mutate(input)`. The host calls only those handlers, with its normal Base context, the real current admin, `pageId`, and `capabilities.adminForms: 1`. API keys belonging to plugins cannot impersonate a real account here. Page reads and mutations require a positive real user ID and admin role. The browser receives no Base context, settings, API keys or action grants.
+
+A read receives `query: {selection,q,offset}` and returns `AdminPageData` from the TypeScript reference: version 1, title, revision, navigation items/total/offset, optional notes, and forms. Form fields support text, textarea, select, checkbox and ordered choices; supply labels, values and optional help. Forms carry a command, arguments and submit label. The host renders these as ordinary accessible controls; HTML, plugin scripts, arbitrary assets and executable links are not supported. Search and pagination request fresh read data.
+
+A mutation receives `mutation: {revision,command,values}`. Validate commands, every field and target ownership in the plugin; compare the revision and commit changes in a single transaction. Return `{ok:true,message,selection?}`, or `{ok:false,status:400|409,message}`. A conflict should preserve newer data and tell the admin to reload. The renderer preserves a dirty form, avoids background refetch while editing, and requires saving or cancelling it before moving to another form. HTTP success is reported only after the plugin finishes the mutation.
+
+Authenticated transport is `GET /api/plugins/pages`, `GET /api/plugins/PLUGIN/pages/PAGE?selection=&q=&offset=0`, and `POST /api/plugins/PLUGIN/pages/PAGE`. Mutation requests use the host's usual authorization and same-origin protection. The JSON request limit is 64KB, validated response limit 512KB, and each call has a 15-second budget. Schema limits also bound forms, fields, choices and text. Plugin failures return a bounded error and do not interrupt playback. No plugin data is stored in core-owned tables by this bridge.
