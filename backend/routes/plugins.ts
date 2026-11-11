@@ -1,4 +1,12 @@
 import { Hono, type Context, type Input } from "hono";
+import { bodyLimit } from "hono/body-limit";
+import { createMiddleware } from "hono/factory";
+import {
+  invokePluginPage,
+  listPluginPages,
+  pluginPageQuery,
+  pluginPageMutation,
+} from "../services/plugins/pluginPages.ts";
 import {
   enqueueUserPlaylist,
   ownedLibrarySnapshot,
@@ -6,7 +14,7 @@ import {
   userPlaylistInput,
 } from "../services/plugins/pluginUserOperations.ts";
 import * as v from "valibot";
-import { requireAdmin, requireAuth } from "../middleware/guards.ts";
+import { requireAdmin, requireAuth, requireUserAccount } from "../middleware/guards.ts";
 import type { AppEnv } from "../middleware/requestUser.ts";
 import { validate } from "../middleware/validate.ts";
 import { stopAllPlugins } from "../services/plugins/pluginHost.ts";
@@ -45,6 +53,17 @@ import { importSettings, requirePlaylistAccess } from "./playlists/handlers/util
 const pluginParam = v.object({ id: v.string() });
 const reference = v.union([v.pipe(v.string(), v.minLength(1)), v.number()]);
 const httpsUrl = v.pipe(v.string(), v.trim(), v.url(), v.startsWith("https://"));
+const pageOrigin = createMiddleware<AppEnv>(async (c, next) => {
+  const origin = c.req.header("Origin");
+  if (
+    c.req.method === "POST" &&
+    (c.req.header("Sec-Fetch-Site") === "cross-site" ||
+      (origin &&
+        origin !== `${c.var.protocol}://${c.req.header("Host") || new URL(c.req.url).host}`))
+  )
+    return c.json({ error: "Cross-origin mutation denied" }, 403);
+  await next();
+});
 
 async function importAnswer<Env extends AppEnv, Path extends string, In extends Input, Result>(
   c: Context<Env, Path, In>,
@@ -75,6 +94,39 @@ async function answer<Env extends AppEnv, Path extends string, In extends Input,
 
 export default new Hono<AppEnv>()
   .basePath("/plugins")
+  .use("/:id/pages/:pageId", bodyLimit({ maxSize: 64000 }))
+  .use("/:id/pages/:pageId", pageOrigin)
+  .get("/pages", requireAuth, requireAdmin, requireUserAccount, (c) =>
+    c.json(listPluginPages(c.var.user), 200),
+  )
+  .get(
+    "/:id/pages/:pageId",
+    requireAuth,
+    requireAdmin,
+    requireUserAccount,
+    validate("query", pluginPageQuery),
+    (c) =>
+      answer(c, () =>
+        invokePluginPage(c.var.user, c.req.param("id"), c.req.param("pageId"), {
+          operation: "read",
+          query: c.req.valid("query"),
+        }),
+      ),
+  )
+  .post(
+    "/:id/pages/:pageId",
+    requireAuth,
+    requireAdmin,
+    requireUserAccount,
+    validate("json", pluginPageMutation),
+    (c) =>
+      answer(c, () =>
+        invokePluginPage(c.var.user, c.req.param("id"), c.req.param("pageId"), {
+          operation: "mutate",
+          mutation: c.req.valid("json"),
+        }),
+      ),
+  )
   .get("/:id/user-operations/library", (c) => {
     try {
       return c.json(

@@ -67,3 +67,7 @@ When a plugin crashes, hangs, or answers in a shape Aurral can't read three time
 Safe mode runs Aurral with every plugin off and keeps each plugin's own setting. Turn it on in **Settings > Plugins**. If Aurral won't start, or the page won't load, set `AURRAL_SAFE_MODE=true` and restart.
 
 Before you report a bug in Aurral, check whether it still happens in safe mode. If it doesn't, report it to the plugin.
+
+## Admin pages on the classical fork
+
+A plugin that opts into admin forms can add an editor under its Settings detail's **Pages** section. Open the page while signed in as a real admin account. The page capability can be turned off under **Adds**, independently of the plugin's other features. Regular users and plugin API keys cannot use these pages. Plugins without a page declaration keep their existing behavior.

@@ -93,6 +93,94 @@ function ownedPlaylist() {
 }
 
 const sendAction = { actions: [{ id: "send", label: "Send to Box", target: "playlist" }] };
+const pageListSchema = v.object({ pages: v.array(v.object({ id: v.string() })) });
+
+test("admin form pages are opt-in, capability checked and deny regular or synthetic accounts", async () => {
+  const code = `export default {pages:{read:async input=>({version:1,title:'Generic editor',revision:'1',navigation:{items:[],total:0,offset:0},forms:[],notes:[String(input.user.id)]}),mutate:async input=>({ok:true,message:'Saved by '+input.user.id})}}`;
+  await install("forms", { pages: [{ id: "editor", label: "Example editor" }] }, code);
+  await turnOn("forms");
+  const list = v.parse(
+    pageListSchema,
+    await (await routes(admin).request("/plugins/pages")).json(),
+  );
+  assert.equal(list.pages[0]?.id, "editor");
+  const route = "/plugins/forms/pages/editor";
+  const read = await routes(admin).request(route);
+  assert.equal(read.status, 200);
+  assert.equal(v.parse(v.object({ title: v.string() }), await read.json()).title, "Generic editor");
+  const body = { revision: "1", command: "save", values: {} };
+  for (const user of [owner, stranger, { ...admin, id: -1 }]) {
+    assert.equal((await routes(user).request(route)).status, 403);
+    assert.equal((await routes(user).request(route, json("POST", body))).status, 403);
+  }
+  assert.equal((await routes(admin).request(route, json("POST", body))).status, 200);
+  assert.equal((await routes(admin).request("/plugins/forms/pages/undeclared")).status, 404);
+  await turnOn("forms", { capabilities: { "page:editor": false } });
+  assert.equal((await routes(admin).request(route)).status, 404);
+  assert.deepEqual(
+    v.parse(pageListSchema, await (await routes(admin).request("/plugins/pages")).json()).pages,
+    [],
+  );
+  await turnOn("forms", { capabilities: { "page:editor": true } });
+  setSafeMode(true);
+  assert.equal((await routes(admin).request(route)).status, 404);
+});
+
+test("page transport rejects cross-site/oversized/malformed requests and propagates conflict safely", async () => {
+  await install(
+    "forms",
+    { pages: [{ id: "editor", label: "Editor" }] },
+    `export default {pages:{mutate:()=>({ok:false,status:409,message:'Newer revision exists'}),read:()=>({version:1,title:'Read',revision:'1',navigation:{items:[],total:0,offset:0},forms:[]})}}`,
+  );
+  await turnOn("forms");
+  const route = "/plugins/forms/pages/editor",
+    body = { revision: "1", command: "save", values: {} };
+  const csrf = {
+    ...json("POST", body),
+    headers: {
+      "Content-Type": "application/json",
+      Origin: "https://evil.example",
+      "Sec-Fetch-Site": "cross-site",
+    },
+  };
+  assert.equal((await routes(admin).request(route, csrf)).status, 403);
+  assert.equal(
+    (
+      await routes(admin).request(
+        route,
+        json("POST", { ...body, values: { x: "a".repeat(65000) } }),
+      )
+    ).status,
+    413,
+  );
+  assert.equal(
+    (await routes(admin).request(route, json("POST", { ...body, command: "../actions.delete" })))
+      .status,
+    400,
+  );
+  const response = await routes(admin).request(route, json("POST", body));
+  assert.equal(response.status, 409);
+  assert.match(
+    v.parse(v.object({ error: v.string() }), await response.json()).error,
+    /Newer revision/,
+  );
+});
+
+test("old plugins stay page-free and invalid page output fails with a bounded error", async () => {
+  await install("legacy", {}, "export default {}");
+  await turnOn("legacy");
+  assert.deepEqual(
+    v.parse(pageListSchema, await (await routes(admin).request("/plugins/pages")).json()).pages,
+    [],
+  );
+  await install(
+    "invalid",
+    { pages: [{ id: "editor", label: "Editor" }] },
+    `export default {pages:{read:()=>({version:1,title:'Unsafe',html:'<script>bad</script>'})}}`,
+  );
+  await turnOn("invalid");
+  assert.equal((await routes(admin).request("/plugins/invalid/pages/editor")).status, 502);
+});
 
 beforeEach(() => resetDatabase(db));
 
