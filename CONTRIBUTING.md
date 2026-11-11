@@ -64,6 +64,14 @@ Keep UI changes focused and explain any new interaction in the pull request.
 
 Before opening the pull request, run the checks that apply to your change and describe any manual testing in the pull request. Maintainers may ask for a smaller diff, more context, or a separate pull request.
 
+## Use an AI agent
+
+Agents are welcome. [AGENTS.md](AGENTS.md) holds the rules an agent follows in this repo, and most agents read it on their own. `.agents/skills/` holds skills for work specific to Aurral, such as testing in Eden.
+
+- Say what did the work. End the pull request description with the model and harness, and have the agent mark the comments it writes, as AGENTS.md describes. Reviewers want to know what they are reading. It is not held against you.
+- You answer for what you submit. Read the diff, run it, and be ready to explain it.
+- A change gets the same review whether a person or an agent wrote it.
+
 ## Screenshots
 
 Store app screenshots in `web/screenshots/`. The README, docs, and marketing site share these files. Replace the file there to update all three.
@@ -86,6 +94,8 @@ Aurral is written in TypeScript and Node runs the `.ts` files directly, so use o
 Type checking is strict, including `noUncheckedIndexedAccess`, so `record[key]` and `array[i]` can be `undefined`. Handle the missing case, and prefer a `Map` or a union-keyed record over narrowing each read. Any type error fails `pnpm run check`.
 
 An `any` that reaches code without a type error, such as a `JSON.parse` result, goes just as unchecked. `lint-any-baseline.json` counts the `no-unsafe-*` lint findings in each TypeScript file, and `pnpm run check` fails when a file has more. Type the value as `unknown` and narrow it instead. Run `pnpm run lint:any --update` after you clear some. Never raise the baseline.
+
+To try a change against real services, run `pnpm eden dev`. It starts Aurral with a seeded Library and local copies of the services it connects to, and `pnpm eden test` runs the end-to-end journeys against them. See the [Eden test lab](https://docs.aurral.org/development/eden/).
 
 `.tests/perf/baseline.json` records the SQL queries, response size, full table scans, and outbound metadata calls of common page loads and Subsonic calls against a synthetic Library. Tests never reach the real metadata services: brainzmash is a local fake, and other hosts are blocked and counted. `pnpm test` fails when queries, size, or scans drift more than 5% either way, or when any call count changes. If the change is intended, run `pnpm run perf:baseline` and commit the file so the change shows in review. Pull requests also run the Perf workflow, which times the same page loads, server startup, and the initial frontend bundle on main and on the pull request in one job, and posts the results as a comment. It fails when a measurement is clearly slower. To compare locally, build the frontend in both checkouts and run `pnpm run perf compare <path to a main checkout>`. To accept an intended slowdown, a maintainer adds the `perf-accepted` label and re-runs the job.
 
