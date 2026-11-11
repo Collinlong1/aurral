@@ -8,8 +8,8 @@ import {
   getLastfmApiKey,
   getNewsSettings,
   getTicketmasterApiKey,
-  getMetadataProviderHealthSnapshot,
 } from "../services/apiClients/index.ts";
+import { getMetadataProviderHealthSnapshot } from "../services/providers/brainzmashProvider.ts";
 import { API_CONTRACT } from "../config/apiContract.ts";
 import { APP_VERSION } from "../config/constants.ts";
 import { wrappedSeason } from "../../lib/wrapped.ts";
@@ -20,10 +20,10 @@ import {
   issueProxySession,
   issueStreamToken,
   getLocalNetworkBypassStatus,
-} from "../middleware/auth.ts";
+} from "../services/auth.ts";
 import { getOidcBootstrapInfo } from "../services/oidcAuth.ts";
+import { pendingLidarrConversion } from "../services/lidarrConversionReport.ts";
 import { isGoogleLoginEnabled } from "../services/googleAuth.ts";
-import { lidarrClient } from "../services/lidarrClient.ts";
 import { getDiscoveryCache } from "../services/discovery/index.ts";
 import { getDiscoveryStatus } from "../services/discovery/userDiscovery.ts";
 import { getCachedArtistCount } from "../services/libraryManager.ts";
@@ -36,7 +36,7 @@ import { resolveAurralDataDir, resolveAurralDbPath } from "../config/data-dir.ts
 import { websocketService } from "../services/websocketService.ts";
 import { noCache } from "../middleware/cacheHeaders.ts";
 import { requireAuth } from "../middleware/guards.ts";
-import type { CredentialRequest } from "../middleware/auth.ts";
+import type { CredentialRequest } from "../services/auth.ts";
 import type { AppEnv } from "../middleware/requestUser.ts";
 import { requestCredentials } from "./shared/requestCredentials.ts";
 import { getImageProxyCacheSizeBytes } from "../services/imageProxyService.ts";
@@ -143,9 +143,6 @@ async function computeDiskSpacePayload(settings: AppSettings) {
       location,
       role: "Browse root",
     })),
-    ...(settings.rootFolderPath && path.isAbsolute(settings.rootFolderPath)
-      ? [{ location: settings.rootFolderPath, role: "Lidarr root" }]
-      : []),
     ...(Array.isArray(settings.pathMappings)
       ? settings.pathMappings.map((mapping) => ({
           location: mapping.local,
@@ -265,12 +262,11 @@ type BootstrapPayload = {
   authUser?: string;
   proxyLogoutUrl?: string | null;
   rootFolderConfigured?: boolean;
-  lidarr?: { configured: boolean; circuitOpen: boolean };
-  lidarrConfigured?: boolean;
   lastfmConfigured?: boolean;
   ticketmasterConfigured?: boolean;
   inboxEnabled?: boolean;
   wrapped?: { year: number; preview: boolean };
+  lidarrConversion?: NonNullable<ReturnType<typeof pendingLidarrConversion>>;
   newsConfigured?: boolean;
   musicbrainzConfigured?: boolean;
   metadataConfigured?: boolean;
@@ -310,12 +306,10 @@ function serializeBootstrapMatcherStatus(
 }
 
 function buildBootstrapPayload(req: CredentialRequest) {
-  lidarrClient.updateConfig();
   const settings = dbOps.getSettings();
   const onboardingDone = settings.onboardingComplete;
   const authRequired = isAuthRequiredByConfig();
   const currentUser = resolveRequestUser(req);
-  const lidarrConfigured = lidarrClient.isConfigured();
 
   const oidcInfo = getOidcBootstrapInfo();
   const payload: BootstrapPayload = {
@@ -344,12 +338,9 @@ function buildBootstrapPayload(req: CredentialRequest) {
     payload.authUser = currentUser.username;
     const wrapped = currentUser.id > 0 ? wrappedSeason(APP_VERSION) : null;
     if (wrapped) payload.wrapped = { year: wrapped.year, preview: wrapped.preview };
-    payload.rootFolderConfigured = lidarrConfigured || Boolean(resolveDownloadRoot());
-    payload.lidarr = {
-      configured: lidarrConfigured,
-      circuitOpen: lidarrConfigured && lidarrClient.isCircuitOpen(),
-    };
-    payload.lidarrConfigured = lidarrConfigured;
+    const lidarrConversion = currentUser.role === "admin" ? pendingLidarrConversion() : null;
+    if (lidarrConversion) payload.lidarrConversion = lidarrConversion;
+    payload.rootFolderConfigured = Boolean(resolveDownloadRoot());
     payload.lastfmConfigured = !!getLastfmApiKey();
     payload.ticketmasterConfigured = !!getTicketmasterApiKey();
     payload.inboxEnabled = settings.inbox?.enabled !== false;

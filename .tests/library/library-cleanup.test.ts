@@ -23,6 +23,7 @@ import {
   setupIsolatedBackend,
 } from "../helpers/backendTestHarness.ts";
 import { requireFixture } from "../playlists/fixtures.ts";
+import { startWorkerForQueuedWork } from "../download/fixtures.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -35,7 +36,7 @@ const [
   { getLibraryFileOperation },
   { resolveDownloadRoot },
   { downloadTracker },
-  { downloadWorker },
+  { downloadWorker, startWorkerIfPending },
   qualityProfileService,
   { playlistManager },
   { findUniqueLibrarySong },
@@ -43,6 +44,7 @@ const [
   { getMetadataBaseUrl },
   { setMetadataProviderCooldown },
   { scanRegistrySchema },
+  { finalizeQualityUpgradeSuccess },
 ] = await setupIsolatedBackend(
   "library-cleanup",
   () => import("../../backend/config/db-sqlite.ts"),
@@ -60,6 +62,7 @@ const [
   () => import("../../backend/services/providers/brainzmashProvider.ts"),
   () => import("../../backend/services/metadataProviderBudget.ts"),
   () => import("../../backend/services/libraryScanWorker.ts"),
+  () => import("../../backend/services/qualityUpgradeOutcome.ts"),
 );
 // Unit tests are offline, so the default metadata provider refuses lookups up front
 // instead of making each one wait its turn in the provider's rate limit.
@@ -617,21 +620,10 @@ test("Clean up keeps a file's track number from its tags when the Library's albu
   assert.equal(await exists(download), false);
 });
 
-test("Clean up leaves Lidarr's files alone when Lidarr shares the Library folder", async () => {
-  const settings = dbOps.getSettings();
-  dbOps.updateSettings({
-    ...settings,
-    integrations: {
-      ...settings.integrations,
-      lidarr: {
-        enabled: true,
-        url: "http://127.0.0.1:9",
-        apiKey: "test-key",
-        rootFolderPath: root,
-      },
-    },
-  });
-  const lidarrFile = await makeTrack(
+test("Clean up leaves a read-only folder inside the Library folder alone", async (t: import("vite-plus/test").TestContext) => {
+  t.onTestFinished(() => dbOps.setJSONSetting("readOnlyFolders", []));
+  dbOps.setJSONSetting("readOnlyFolders", [path.join(root, "Shared Artist")]);
+  const readOnlyFile = await makeTrack(
     path.join(root, "Shared Artist", "Shared Album (2001)", "Shared Artist - 01 - Song.flac"),
     {
       artist: "Shared Artist",
@@ -641,12 +633,12 @@ test("Clean up leaves Lidarr's files alone when Lidarr shares the Library folder
     },
   );
   await scanMusicRoot({ rootPath: root, source: "aurral" });
-  const bytes = await readFile(lidarrFile);
+  const bytes = await readFile(readOnlyFile);
 
   const { items } = await cleanUp();
 
   assert.deepEqual([...items], []);
-  assert.deepEqual(await readFile(lidarrFile), bytes);
+  assert.deepEqual(await readFile(readOnlyFile), bytes);
   assert.equal(await exists(path.join(root, "Shared Artist", "Shared Album")), false);
 });
 
@@ -694,6 +686,7 @@ test("automatic upgrades reach monitored Library tracks that Aurral did not down
   const queued: string[] = [];
   const originalEnqueue = downloadTracker.enqueueDownloadPipeline;
   downloadTracker.enqueueDownloadPipeline = (id) => queued.push(id) > 0;
+  startWorkerForQueuedWork(downloadTracker, startWorkerIfPending);
   try {
     assert.equal(await qualityProfileService.runQualityUpgradeCheck({ force: true }), 1);
     const upgrade = downloadTracker.getJob(queued[0]);
@@ -729,11 +722,13 @@ test("an upgrade replaces a hardlinked file without touching its other link", as
   downloadTracker.setDone(jobId, libraryPath, "Album");
   const upgradeId = downloadTracker.addUpgradeJob(downloadTracker.getJob(jobId));
 
-  await qualityProfileService.finalizeQualityUpgradeSuccess(
-    requireValue(downloadTracker.getJob(upgradeId)),
-    upgraded,
-    { tier: "flac-hires", format: "flac", bitrateKbps: null, sampleRate: null, bitDepth: null },
-  );
+  await finalizeQualityUpgradeSuccess(requireValue(downloadTracker.getJob(upgradeId)), upgraded, {
+    tier: "flac-hires",
+    format: "flac",
+    bitrateKbps: null,
+    sampleRate: null,
+    bitDepth: null,
+  });
 
   assert.deepEqual(await readFile(seed), seedBytes);
   assert.deepEqual(await readFile(libraryPath), upgradedBytes);
@@ -786,11 +781,13 @@ test("an upgrade with MusicBrainz tags keeps the Library track, its favorites, i
   downloadTracker.setDone(jobId, oldPath, "Album (Old Rip)");
   const upgradeId = downloadTracker.addUpgradeJob(downloadTracker.getJob(jobId));
 
-  await qualityProfileService.finalizeQualityUpgradeSuccess(
-    requireValue(downloadTracker.getJob(upgradeId)),
-    upgraded,
-    { tier: "flac-standard", format: "flac", bitrateKbps: null, sampleRate: null, bitDepth: null },
-  );
+  await finalizeQualityUpgradeSuccess(requireValue(downloadTracker.getJob(upgradeId)), upgraded, {
+    tier: "flac-standard",
+    format: "flac",
+    bitrateKbps: null,
+    sampleRate: null,
+    bitDepth: null,
+  });
 
   assert.equal(await exists(oldPath), false);
   assert.deepEqual(

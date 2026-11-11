@@ -41,7 +41,7 @@ Aurral holds a download for review when the file has the requested title but its
 
 Each review row shows the requested track, artist, and album, the path of the downloaded file, the match scores, and the duration. Preview the track, then approve or deny it.
 
-Approving moves the file into the Library. Denying deletes it and searches again without that file. Removing a playlist, an album, or a track that waits for review deletes its file too. Aurral never deletes a file in the Library folder or a Lidarr root folder this way, for example one that deemix saved there.
+Approving moves the file into the Library. Denying deletes it and searches again without that file. Removing a playlist, an album, or a track that waits for review deletes its file too. Aurral never deletes a file in the Library folder or a read-only folder this way, for example one that deemix saved there.
 
 To stop tracks from waiting indefinitely, set **Settings > Downloads > Review queue > Maximum wait (hours)**. Aurral denies a track that waits longer, and searches again without its file. The default, `0`, keeps every track until you decide.
 
@@ -49,9 +49,9 @@ To stop tracks from waiting indefinitely, set **Settings > Downloads > Review qu
 
 **History** shows finished, denied, and failed work.
 
-When an album request to Lidarr fails, you can retry the search from **History** if the row offers it. For an album that Aurral manages, use **Retry** on the album page.
+When an album download fails, use **Retry** on the album page.
 
-Aurral stores who requested each album. Activity can show the requester, and other tools can filter requests by user. If you use Lidarr, its import webhook can mark a requested album as available as soon as Lidarr imports it. See [Lidarr](/integrations/lidarr/#request-availability-notifications).
+Aurral stores who requested each album. Activity can show the requester, and other tools can filter requests by user.
 
 ## Wanted
 
@@ -93,13 +93,13 @@ When you already have the file for a missing track, use it instead of downloadin
 1. In **Wanted > Missing**, select **Use a file you have** on a track. In a static playlist or flow, right-click a **Missing** or **Not downloaded** track and select **Use a file you have**.
 2. Choose where the file is:
    - **In the Library**: Aurral searches the Library for the track's artist and title. Change the words and select **Search** to look for something else. Files whose title, artist, or album match more of the words come first, so a file under a slightly different name still shows up. Select a file, then select **Link file**.
-   - **File on disk** (admins only): browse to an audio file, or paste its full path and select **Use path**. A path as Lidarr sees it works when a [remote path mapping](/integrations/lidarr/#library-access-check) translates it. Then select **Import file**.
+   - **File on disk** (admins only): browse to an audio file, or paste its full path and select **Use path**. A path as a download client sees it works when a path mapping translates it. Then select **Import file**.
 
 A linked Library file stays where it is. Aurral treats it as a reused file, so removing the track or its playlist does not delete it.
 
 An imported file is copied into the Library like a download, named and tagged for the track. Album art in the same folder, such as `cover.jpg`, is copied into the track's Library folder too, unless that folder already has an image with the same name. A folder with more than 10 images is treated as not being an album folder, and its images are not copied. The originals are not changed or moved. Aurral checks that the file is readable audio with a known quality, but not that its title or artist match, as with a manual download.
 
-The browser shows the storage paths Aurral can browse, such as `/data`. To browse another folder, such as Lidarr's music folder, mount it into Aurral and add it to the `FILE_BROWSE_ROOTS` environment variable, or paste the file's path.
+The browser shows the storage paths Aurral can browse, such as `/data`. To browse another folder, such as another app's music folder, mount it into Aurral and add it to the `FILE_BROWSE_ROOTS` environment variable, or paste the file's path.
 
 The track is available at once and Aurral stops searching for it. In a playlist, a track without its own artwork or an online album cover shows the cover of its Library album, such as the album folder's `cover.jpg` or the art in the file.
 

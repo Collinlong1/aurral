@@ -3,6 +3,7 @@ import { parseResponse } from "hono/client";
 import {
   Download,
   EyeOff,
+  Fingerprint,
   ImagePlus,
   Info,
   ListEnd,
@@ -16,7 +17,7 @@ import {
   Shuffle,
   Trash2,
 } from "../../components/icons";
-import { useAurralTrackMonitoring } from "../../components/AurralTrackMonitoring";
+import { useTrackMonitoring } from "../../components/TrackMonitoring";
 import { DotLoader } from "../../components/DotLoader";
 import TooltipButton from "../../components/TooltipButton";
 import type { TrackListRow } from "../../components/TrackList";
@@ -26,11 +27,10 @@ import { useAudioQueue } from "../../contexts/audioQueueContext";
 import { useToast } from "../../contexts/ToastContext";
 import { useLibraryShareAction } from "../../hooks/useShareAction";
 import { useStaticPlaylists } from "../../hooks/useStaticPlaylists";
-import { useLibraryDestination } from "../../hooks/useLibraryDestination";
 import { useActiveDownloads } from "../../hooks/useActiveDownloads";
 import { useQueueTrackActions, useStartRadio } from "../../hooks/useQueueTrackActions";
 import type { RadioSeed } from "../../utils/audioQueue";
-import { usePlaylistBulkActions } from "../playlists/usePlaylistBulkActions.ts";
+import { usePlaylistBulkActions } from "../../contexts/PlaylistBulkActions.ts";
 import { libraryAlbumsClient } from "../../utils/api/clients/libraryAlbums.ts";
 import { libraryArtistsClient } from "../../utils/api/clients/libraryArtists.ts";
 import { libraryArtworkClient } from "../../utils/api/clients/libraryArtwork.ts";
@@ -44,7 +44,7 @@ import {
   getLibraryTrackReplacementJob,
   reSearchLibraryTrack,
   updateLibraryFavorites,
-  type AurralMonitoringResult,
+  type MonitoringResult,
   type CustomArtworkResult,
 } from "../../utils/api/endpoints/library.ts";
 import { buildAuthenticatedApiUrl } from "../../utils/api/core.ts";
@@ -60,33 +60,27 @@ import {
   yearOf,
 } from "../../utils/libraryPageData.ts";
 import type { LibraryMenuItem } from "../../components/LibraryItemMenu";
-import { canRemoveLibraryAlbum, resolveAlbumManager } from "../../utils/libraryDestination.ts";
-import { isAwaitingRelease } from "../../utils/aurralAlbumStatus.ts";
-import { getAlbumMonitoredState } from "../../utils/aurralMonitoring.ts";
-import { libraryPreviewData, libraryPreviewFavorites } from "../libraryPreviewData";
+import { isAwaitingRelease } from "../../utils/albumStatus.ts";
+import { getAlbumMonitoredState } from "../../utils/monitoring.ts";
+import { libraryPreviewData, libraryPreviewFavorites } from "../../utils/libraryPreviewData";
 import {
   LIBRARY_PAGE_SIZE,
   type libraryViewQueryOptions,
   type LibraryViewLibrary,
-} from "../libraryViewQuery.ts";
+} from "../../utils/libraryViewQuery.ts";
 import {
   TrackPlaylistRemoveSubmenu,
   TrackPlaylistSubmenu,
   type PlaylistSelection as PlaylistTarget,
-} from "../ArtistDetails/components/TrackPlaylistMenu";
+} from "../../components/TrackPlaylistMenu";
 import { DeleteAlbumModal } from "../ArtistDetails/components/DeleteAlbumModal";
 import { DeleteArtistModal } from "../ArtistDetails/components/DeleteArtistModal";
 import { DeleteTrackModal } from "../ArtistDetails/components/DeleteTrackModal";
 import LibraryInfoModal from "../LibraryInfoModal";
+import { AlbumMatchModal } from "./MatchModal";
 import ManualMissingSearchModal, {
   type ManualSearchJob,
 } from "../activity/ManualMissingSearchModal.tsx";
-import {
-  buildStaticPlaylistTrackPayload,
-  getApiErrorMessage,
-  getApiErrorText,
-  reserveUniquePlaylistName,
-} from "../ArtistDetails/utils";
 import { queryClient, queryKeys } from "../../queryClient.ts";
 import { usePluginActions } from "../../hooks/usePluginActions.ts";
 import { showFavoriteRemoved } from "../../utils/favoriteUndo.ts";
@@ -100,10 +94,15 @@ import {
   invalidateLibraryViews,
   isAlbumArtistCredit,
   TRACK_DOWNLOAD_ACTIVE_STATUSES,
-  trackDownloadActionLabel,
   trackDownloadIdentity,
   trackDurationMs,
 } from "./libraryShared.tsx";
+import { getApiErrorMessage, getApiErrorText } from "../../utils/api/errors.ts";
+import {
+  buildStaticPlaylistTrackPayload,
+  reserveUniquePlaylistName,
+} from "../../utils/staticPlaylists.ts";
+import { trackDownloadActionLabel } from "../../utils/trackDownloadLabel.ts";
 
 type LibraryInfoState = LibraryTarget & {
   artist?: LibraryArtist | null;
@@ -219,6 +218,10 @@ export function useLibraryActions({
   const [libraryRemoval, setLibraryRemoval] = useState<LibraryRemoval | null>(null);
   const [libraryInfo, setLibraryInfo] = useState<LibraryInfoState | null>(null);
   const [artworkEditor, setArtworkEditor] = useState<ArtworkEditorState | null>(null);
+  const [matchAlbum, setMatchAlbum] = useState<{
+    album: LibraryAlbum;
+    artist: LibraryArtist | null;
+  } | null>(null);
 
   const [deleteFiles, setDeleteFiles] = useState(false);
   const [deletingLibraryEntity, setDeletingLibraryEntity] = useState(false);
@@ -380,7 +383,7 @@ export function useLibraryActions({
         const nextPlaylists = await loadStaticPlaylists();
         if (nextPlaylists) setStaticPlaylists(nextPlaylists);
       } catch (requestError) {
-        const message = getApiErrorMessage(requestError) || "Failed to save to playlist";
+        const message = getApiErrorMessage(requestError, "Failed to save to playlist");
         setPlaylistsError(message);
         showError(message);
       } finally {
@@ -460,9 +463,9 @@ export function useLibraryActions({
   const canSearchManually = canAddTracks && hasPermission("accessPlaylists");
   const canChangeMonitoring = hasPermission("changeMonitoring");
   const canEditArtwork = !isPreviewLibrary && (canAddTracks || canChangeMonitoring);
-  const libraryDestination = useLibraryDestination();
-  const { isAlbumDownloading, isMissingTrackDownloading } = useActiveDownloads();
+  const { isAlbumDownloading, isTrackDownloading } = useActiveDownloads();
   const canEditArtistMbid = hasPermission("addArtist");
+  const canMatchAlbum = !isPreviewLibrary && canAddTracks;
 
   const openArtworkEditor = useCallback(
     (
@@ -502,9 +505,9 @@ export function useLibraryActions({
     [artworkEditor, showSuccess, updateQueueArtwork],
   );
 
-  const openLibraryRemoval = useCallback((target: LibraryTarget, manager: string | null = null) => {
+  const openLibraryRemoval = useCallback((target: LibraryTarget) => {
     setDeleteFiles(false);
-    setLibraryRemoval({ ...target, manager });
+    setLibraryRemoval(target);
   }, []);
 
   const removeLocalLibraryEntity = useCallback(
@@ -555,39 +558,24 @@ export function useLibraryActions({
     const removal = libraryRemoval;
     const trackHasFile = removal.kind === "track" && Boolean(firstAvailableFile(removal.entity));
     setDeletingLibraryEntity(true);
+    let artistRemains = false;
     try {
       if (!isPreviewLibrary) {
         if (removal.kind === "artist") {
-          await parseResponse(
+          const deleted = await parseResponse(
             libraryArtistsClient.artists[":mbid"].$delete({
               param: { mbid: encodeURIComponent(removal.entity.mbid || removal.entity.id) },
               query: { deleteFiles: String(deleteFiles) },
             }),
           );
+          artistRemains = deleted.remains;
         } else if (removal.kind === "album") {
-          const { entity } = removal;
-          if (resolveAlbumManager(entity) === "aurral") {
-            await parseResponse(
-              libraryAlbumsClient.albums.aurral[":albumId"].$delete({
-                param: { albumId: encodeURIComponent(entity.id) },
-                query: { deleteFiles: String(deleteFiles) },
-              }),
-            );
-          } else if (entity.providerId != null && /^\d+$/.test(String(entity.providerId))) {
-            await parseResponse(
-              libraryAlbumsClient.albums[":id"].$delete({
-                param: { id: encodeURIComponent(entity.providerId) },
-                query: { deleteFiles: String(deleteFiles) },
-              }),
-            );
-          } else {
-            await parseResponse(
-              libraryAlbumsClient.albums.lidarr[":mbid"].$delete({
-                param: { mbid: encodeURIComponent(String(entity.releaseGroupMbid || entity.mbid)) },
-                query: { deleteFiles: String(deleteFiles) },
-              }),
-            );
-          }
+          await parseResponse(
+            libraryAlbumsClient.albums[":albumId"].$delete({
+              param: { albumId: encodeURIComponent(removal.entity.id) },
+              query: { deleteFiles: String(deleteFiles) },
+            }),
+          );
         } else {
           await parseResponse(
             libraryTracksClient.tracks[":id"].$delete({
@@ -596,11 +584,14 @@ export function useLibraryActions({
           );
         }
       }
-      removeLocalLibraryEntity(removal);
+      if (artistRemains) void invalidateLibraryViews();
+      else removeLocalLibraryEntity(removal);
       setLibraryRemoval(null);
       showSuccess(
         removal.kind === "artist"
-          ? "Artist deleted"
+          ? artistRemains
+            ? `${removal.entity.name} stays in the Library. Its music is in a read-only folder.`
+            : "Artist deleted"
           : removal.kind === "album"
             ? "Album deleted"
             : trackHasFile
@@ -609,7 +600,7 @@ export function useLibraryActions({
       );
       onRemoved?.(removal);
     } catch (requestError) {
-      showError(getApiErrorMessage(requestError) || "Failed to update library");
+      showError(getApiErrorMessage(requestError, "Failed to update library"));
     } finally {
       setDeletingLibraryEntity(false);
     }
@@ -675,7 +666,7 @@ export function useLibraryActions({
         return result;
       } catch (requestError) {
         setTrackDownloadStates(({ [key]: _, ...rest }) => rest);
-        showError(getApiErrorMessage(requestError) || "Failed to add track to library");
+        showError(getApiErrorMessage(requestError, "Failed to add track to library"));
         return null;
       }
     },
@@ -698,8 +689,10 @@ export function useLibraryActions({
         }
       } catch (requestError) {
         showError(
-          getApiErrorMessage(requestError) ||
-            (manual ? "Failed to start a manual search" : "Failed to queue a replacement search"),
+          getApiErrorMessage(
+            requestError,
+            manual ? "Failed to start a manual search" : "Failed to queue a replacement search",
+          ),
         );
       } finally {
         setTrackResearchStates((current) => {
@@ -754,11 +747,11 @@ export function useLibraryActions({
     [refreshLibraryActivity, setLibrary],
   );
   const updateTrackMonitoringState = useCallback(
-    (trackId: string | number, result: AurralMonitoringResult) =>
+    (trackId: string | number, result: MonitoringResult) =>
       patchLibraryTrack(trackId, { monitored: result?.monitored !== false }),
     [patchLibraryTrack],
   );
-  const trackMonitoring = useAurralTrackMonitoring({
+  const trackMonitoring = useTrackMonitoring({
     canChange: canChangeMonitoring,
     onChanged: updateTrackMonitoringState,
   });
@@ -1012,10 +1005,7 @@ export function useLibraryActions({
   const albumMenuItems = (
     album: LibraryAlbum,
     artist: LibraryArtist | null | undefined,
-    {
-      lidarrConnected = libraryDestination.primary === "lidarr",
-      extra = [] as LibraryMenuItem[],
-    } = {},
+    { extra = [] as LibraryMenuItem[] } = {},
   ): LibraryMenuItem[] => [
     shareMenuItem({ kind: "album", entity: album }, { artist }),
     {
@@ -1035,9 +1025,19 @@ export function useLibraryActions({
           },
         ]
       : []),
+    ...(canMatchAlbum && album.providerId == null
+      ? [
+          {
+            id: "match",
+            label: "Match album",
+            icon: Fingerprint,
+            onSelect: () => setMatchAlbum({ album, artist: artist ?? null }),
+          },
+        ]
+      : []),
     ...extra,
     ...pluginMenuItems("album", { albumId: album.id }),
-    ...(canDeleteAlbum && canRemoveLibraryAlbum(album, { lidarrConnected })
+    ...(canDeleteAlbum && album.managed
       ? [
           {
             id: "delete",
@@ -1180,7 +1180,7 @@ export function useLibraryActions({
     const awaitingRelease =
       !file &&
       isAwaitingRelease({
-        managedBy: album?.managedBy,
+        managed: album?.managed,
         monitored: getAlbumMonitoredState(album ?? null),
         releaseDate: album?.releaseDate,
       });
@@ -1188,13 +1188,8 @@ export function useLibraryActions({
     const downloadState = trackDownloadStates[downloadKey];
     const backgroundDownload =
       !file &&
-      isMissingTrackDownloading(
-        { ...track, artistName: artist?.name || track.artistName },
-        {
-          albumMbid: album?.releaseGroupMbid || album?.mbid,
-          manager: resolveAlbumManager(album),
-        },
-      );
+      (isTrackDownloading({ ...track, artistName: artist?.name || track.artistName }) ||
+        isAlbumDownloading(album?.releaseGroupMbid || album?.mbid));
     const downloadPending =
       TRACK_DOWNLOAD_ACTIVE_STATUSES.has(downloadState?.status ?? "") || backgroundDownload;
     const downloadLabel = trackDownloadActionLabel(
@@ -1209,7 +1204,7 @@ export function useLibraryActions({
     const isFavorite = favoriteIds.has(favoriteId("song", track));
     const monitoringItem = trackMonitoring.getMenuItem(track, {
       aurral:
-        (album?.managedBy === "aurral" && (!file || hasDeletableTrackFile(track))) ||
+        (album?.managed && (!file || hasDeletableTrackFile(track))) ||
         hasAurralTrackFile(track) ||
         downloadPending,
       hasFile: Boolean(file),
@@ -1412,6 +1407,7 @@ export function useLibraryActions({
       <DeleteArtistModal
         show={libraryRemoval?.kind === "artist"}
         artistName={libraryRemoval?.kind === "artist" ? libraryRemoval.entity.name : undefined}
+        sources={libraryRemoval?.kind === "artist" ? libraryRemoval.entity.sources : undefined}
         deleteFiles={deleteFiles}
         onDeleteFilesChange={setDeleteFiles}
         onCancel={() => setLibraryRemoval(null)}
@@ -1421,7 +1417,6 @@ export function useLibraryActions({
       <DeleteAlbumModal
         show={libraryRemoval?.kind === "album"}
         title={libraryRemoval?.kind === "album" ? libraryRemoval.entity.title : undefined}
-        managedBy={resolveAlbumManager(libraryRemoval?.entity)}
         deleteFiles={deleteFiles}
         onDeleteFilesChange={setDeleteFiles}
         onCancel={() => setLibraryRemoval(null)}
@@ -1473,6 +1468,25 @@ export function useLibraryActions({
         }
         onSaved={handleArtworkSaved}
       />
+      {matchAlbum ? (
+        <AlbumMatchModal
+          key={matchAlbum.album.id}
+          album={matchAlbum.album}
+          artist={matchAlbum.artist}
+          onClose={() => setMatchAlbum(null)}
+          onSaved={(result) => {
+            setMatchAlbum(null);
+            void invalidateLibraryViews();
+            showSuccess(
+              result.merged
+                ? `Merged ${matchAlbum.album.title || "Album"} into ${result.title}`
+                : result.releaseGroupMbid
+                  ? `Matched ${matchAlbum.album.title || "Album"} to ${result.musicbrainzTitle || "MusicBrainz"}`
+                  : `Removed the match from ${matchAlbum.album.title || "Album"}`,
+            );
+          }}
+        />
+      ) : null}
     </>
   );
 
@@ -1496,7 +1510,6 @@ export function useLibraryActions({
     canAddTracks,
     canChangeMonitoring,
     canEditArtistMbid,
-    libraryDestination,
     isAlbumDownloading,
     openLibraryRemoval,
     openLibraryInfo,

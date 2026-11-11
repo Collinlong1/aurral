@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import * as v from "valibot";
 import { dbOps } from "../db/helpers/index.ts";
@@ -6,25 +7,22 @@ import { MAX_REVIEW_TIMEOUT_HOURS } from "../db/helpers/settings.ts";
 import { readIntegrationSettings } from "../db/helpers/integrationSettings.ts";
 import type { AppSettings, StoredIntegrations } from "../db/helpers/settings.ts";
 import { DATE_TIME_FORMATS, defaultData } from "../config/constants.ts";
-import { reconcileLocalNetworkBypassSetting } from "../middleware/auth.ts";
-import { validateExternalUrl } from "../middleware/urlValidator.ts";
+import { reconcileLocalNetworkBypassSetting } from "./auth.ts";
+import { validateExternalUrl } from "./urlValidator.ts";
 import { websocketService } from "./websocketService.ts";
 import { resolveDownloadRoot } from "./downloadPaths.ts";
-import {
-  resolveYtdlpStagingRoot,
-  validateDownloadFolderPath,
-  computeLibraryRootOverlaps,
-  getOverlapCheckedLidarrRoots,
-} from "./downloadFolderConfig.ts";
+import { resolveYtdlpStagingRoot, validateDownloadFolderPath } from "./downloadFolderConfig.ts";
 import { normalizePathMappings } from "./pathMappings.ts";
 import { isUsenetClientKey, type UsenetClientKey } from "./usenetClientCommon.ts";
 import { readOnlyFolderOverlapping } from "./libraryFolders.ts";
 import { logger } from "./logger.ts";
-import { normalizeLidarrApiKey, normalizeLidarrUrl } from "./lidarrClient.ts";
 import { getNewsSettings, normalizeNewsFeeds, normalizeNewsGroups } from "./apiClients/config.ts";
 import { normalizeQualityProfile } from "./qualityProfileModel.ts";
 import { getMusicDataSourceName } from "./musicDataSource/index.ts";
 import { asAppError } from "../../lib/errors.ts";
+import { enqueueDiscoveryRefresh } from "./discovery/refreshScheduler.ts";
+import { downloadClientRegistry } from "./download/downloadClientSettings.ts";
+import { enqueueSystemTask } from "./jobs/systemTasks.ts";
 
 const objectValue = v.record(v.string(), v.unknown());
 const asObject = (value: unknown) => (v.is(objectValue, value) ? value : undefined);
@@ -35,7 +33,6 @@ export const appSettingsPatch = v.object({
   subsonic: v.optional(v.unknown()),
   releaseTypes: v.optional(v.array(v.string())),
   integrations: v.optional(objectValue),
-  rootFolderPath: v.optional(v.nullable(v.string())),
   downloadFolderPath: v.optional(v.nullable(v.string())),
   pathMappings: v.optional(v.unknown()),
   security: v.optional(objectValue),
@@ -46,7 +43,6 @@ export const appSettingsPatch = v.object({
 });
 
 const INTEGRATION_KEYS = [
-  "lidarr",
   "slskd",
   "prowlarr",
   "nzbget",
@@ -71,29 +67,6 @@ function mergeIntegrations(existing: StoredIntegrations, input: StoredIntegratio
     merged[key] = patch ? { ...asObject(existing[key]), ...patch } : existing[key];
   }
   return merged;
-}
-
-function resolveLibraryRootWarnings(settings: AppSettings) {
-  const aurralRoot = settings?.downloadFolderPath || resolveDownloadRoot();
-  const lidarrRoots = getOverlapCheckedLidarrRoots(settings?.integrations?.lidarr);
-  return computeLibraryRootOverlaps({ aurralRoot, lidarrRoots });
-}
-
-function didLidarrRootDiscoveryChange(previousSettings: AppSettings, nextSettings: AppSettings) {
-  const previous = previousSettings?.integrations?.lidarr || {};
-  const next = nextSettings?.integrations?.lidarr || {};
-  return (
-    ["url", "apiKey", "enabled", "insecure", "rootFolderPath", "rootFolderPaths"] as const
-  ).some((key) => JSON.stringify(previous[key]) !== JSON.stringify(next[key]));
-}
-
-function didLidarrConnectionChange(previousSettings: AppSettings, nextSettings: AppSettings) {
-  const previous = previousSettings?.integrations?.lidarr || {};
-  const next = nextSettings?.integrations?.lidarr || {};
-  return (
-    normalizeLidarrUrl(previous.url) !== normalizeLidarrUrl(next.url) ||
-    normalizeLidarrApiKey(previous.apiKey) !== normalizeLidarrApiKey(next.apiKey)
-  );
 }
 
 const clampedInteger = (value: unknown, min: number, max: number, fallback: number) => {
@@ -132,15 +105,8 @@ export function readAppSettings() {
       enabled: settings?.security?.localNetworkBypass?.enabled === true,
     },
   };
-  if (settings.integrations?.lidarr) {
-    settings.integrations.lidarr = {
-      ...settings.integrations.lidarr,
-      enabled: settings.integrations.lidarr.enabled !== false,
-    };
-  }
   return {
     ...settings,
-    rootWarnings: resolveLibraryRootWarnings(settings),
     downloadFolderPath: settings.downloadFolderPath || resolveDownloadRoot(),
     integrations: {
       ...(settings.integrations || {}),
@@ -166,18 +132,6 @@ function normalizeIntegrationPatch(
   integrations: StoredIntegrations,
   currentSettings: AppSettings,
 ): string | null {
-  const lidarr = asObject(integrations.lidarr);
-  if (lidarr?.externalUrl !== undefined) {
-    const trimmedExternalUrl = String(lidarr.externalUrl).trim();
-    if (trimmedExternalUrl) {
-      const urlValidation = validateExternalUrl(trimmedExternalUrl);
-      if (!urlValidation.valid) return urlValidation.error;
-      lidarr.externalUrl = urlValidation.url;
-    } else {
-      lidarr.externalUrl = "";
-    }
-  }
-
   const metadata = asObject(integrations.metadata);
   if (metadata) {
     const nextMetadata = {
@@ -199,13 +153,6 @@ function normalizeIntegrationPatch(
       typeof nextMetadata.userAgentSuffix === "string" ? nextMetadata.userAgentSuffix.trim() : "";
     nextMetadata.enableNarrowFallbacks = nextMetadata.enableNarrowFallbacks !== false;
     integrations.metadata = nextMetadata;
-  }
-  const enabledLidarr = asObject(integrations.lidarr);
-  if (enabledLidarr?.enabled !== undefined) {
-    integrations.lidarr = {
-      ...enabledLidarr,
-      enabled: enabledLidarr.enabled === true,
-    };
   }
   const prowlarr = asObject(integrations.prowlarr);
   if (prowlarr) {
@@ -439,7 +386,6 @@ export async function saveAppSettings(input: v.InferOutput<typeof appSettingsPat
     subsonic,
     releaseTypes,
     integrations,
-    rootFolderPath,
     downloadFolderPath,
     pathMappings,
     security,
@@ -467,9 +413,10 @@ export async function saveAppSettings(input: v.InferOutput<typeof appSettingsPat
     };
   }
 
+  const requestedFolder = typeof downloadFolderPath === "string" ? downloadFolderPath.trim() : "";
   const readOnlyOverlap =
-    typeof downloadFolderPath === "string" && downloadFolderPath.trim()
-      ? readOnlyFolderOverlapping(downloadFolderPath.trim())
+    requestedFolder && path.resolve(requestedFolder) !== path.resolve(resolveDownloadRoot())
+      ? readOnlyFolderOverlapping(requestedFolder)
       : null;
   if (readOnlyOverlap) {
     return {
@@ -525,8 +472,6 @@ export async function saveAppSettings(input: v.InferOutput<typeof appSettingsPat
               : currentSubsonic.favoriteAutoKeep !== false,
         }
       : currentSubsonic,
-    rootFolderPath:
-      rootFolderPath !== undefined ? rootFolderPath : currentSettings.rootFolderPath || null,
     downloadFolderPath:
       downloadFolderPath !== undefined
         ? downloadFolderPath
@@ -580,47 +525,11 @@ export async function saveAppSettings(input: v.InferOutput<typeof appSettingsPat
     delete updatedSettings.integrations.musicbrainz;
   }
 
-  if (didLidarrConnectionChange(currentSettings, updatedSettings)) {
-    updatedSettings.integrations = {
-      ...updatedSettings.integrations,
-      lidarr: {
-        ...(updatedSettings.integrations?.lidarr || {}),
-        rootFolderPath: null,
-        rootFolderPaths: [],
-      },
-    };
-  }
-
   const previousMusicDataSource = getMusicDataSourceName();
-  const { lidarrClient } = await import("./lidarrClient.ts");
-  const lidarrWasActive = lidarrClient.isConfigured();
   dbOps.updateSettings(updatedSettings);
   if (getMusicDataSourceName() !== previousMusicDataSource) {
-    const { enqueueDiscoveryRefresh } = await import("./discovery/refreshScheduler.ts");
     enqueueDiscoveryRefresh({ reason: "music_data_source_changed", force: true });
   }
-  lidarrClient.updateConfig();
-  const lidarrActive = lidarrClient.isConfigured();
-  if (didLidarrRootDiscoveryChange(currentSettings, updatedSettings) && lidarrActive) {
-    try {
-      await lidarrClient.getRootFolders({ forceRefresh: true });
-    } catch (error) {
-      logger.warn("settings", "Failed to refresh Lidarr root folders:", {
-        message: asAppError(error)?.message,
-      });
-    }
-  }
-  if (lidarrActive !== lidarrWasActive) {
-    const { scheduleLibraryScan } = await import("./libraryScanWorker.ts");
-    scheduleLibraryScan({ includeLidarr: lidarrActive });
-    if (!lidarrActive) {
-      const { invalidateLidarrArtistCache } = await import("./libraryManager.ts");
-      const { enqueueSystemTask } = await import("./jobs/queues.ts");
-      invalidateLidarrArtistCache();
-      enqueueSystemTask({ kind: "lidarr-files-release" });
-    }
-  }
-  const { downloadClientRegistry } = await import("./download/downloadClientSettings.ts");
   downloadClientRegistry.updateConfig(updatedSettings.integrations);
   try {
     const { refreshLibraryFileWatcher } = await import("./libraryFileWatcher.ts");
@@ -635,21 +544,14 @@ export async function saveAppSettings(input: v.InferOutput<typeof appSettingsPat
     JSON.stringify(updatedSettings.qualityProfile) !==
       JSON.stringify(currentSettings.qualityProfile)
   ) {
-    const { enqueueSystemTask } = await import("./jobs/queues.ts");
     enqueueSystemTask({ kind: "quality-profile-refresh" }, { priority: -10 });
   }
   if (!isDeepStrictEqual(newsBefore, getNewsSettings())) {
-    const { enqueueSystemTask } = await import("./jobs/queues.ts");
     enqueueSystemTask({ kind: "news-refresh" });
   }
   const reconciled = reconcileLocalNetworkBypassSetting().settings;
   if (localBypassWasEnabled && reconciled?.security?.localNetworkBypass?.enabled !== true) {
     websocketService.reconcileAuthState();
   }
-  return {
-    settings: {
-      ...reconciled,
-      rootWarnings: resolveLibraryRootWarnings(updatedSettings),
-    },
-  };
+  return { settings: reconciled };
 }

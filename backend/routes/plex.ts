@@ -3,21 +3,21 @@ import * as v from "valibot";
 import { asAppError } from "../../lib/errors.ts";
 import { requireAdmin, requireAuth, requireUserAccount } from "../middleware/guards.ts";
 import type { AppEnv } from "../middleware/requestUser.ts";
-import { validateExternalUrl } from "../middleware/urlValidator.ts";
+import { validateExternalUrl } from "../services/urlValidator.ts";
 import { validate } from "../middleware/validate.ts";
 import {
   connectPlexHistory,
   forgetPlexHistoryServer,
   HistoryServerError,
 } from "../services/historyServers.ts";
-import { enqueueSystemTask } from "../services/jobs/queues.ts";
+import { enqueueSystemTask } from "../services/jobs/systemTasks.ts";
 import { logger } from "../services/logger.ts";
 import {
   connectPlexServer,
   finishPlexSignIn,
   getPlexServer,
   plexHistoryAccount,
-  plexPlaylistError,
+  plexPlaylistStatus,
   PlexError,
   removePlexServer,
   savePlexServer,
@@ -49,6 +49,7 @@ export default new Hono<AppEnv>()
   .basePath("/plex")
   .get("/", requireAuth, requireUserAccount, (c) => {
     const server = getPlexServer();
+    const status = plexPlaylistStatus();
     return c.json(
       {
         connected: Boolean(server),
@@ -57,7 +58,8 @@ export default new Hono<AppEnv>()
             ? {
                 url: server.url,
                 sendPlaylists: server.sendPlaylists,
-                playlistError: plexPlaylistError(),
+                playlistError: status.error,
+                playlistNote: status.note,
               }
             : null,
       },

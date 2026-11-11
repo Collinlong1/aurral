@@ -18,21 +18,11 @@ import { libraryFilesClient } from "../../../utils/api/clients/libraryFiles.ts";
 import { settingsClient } from "../../../utils/api/clients/settings.ts";
 import { queryKeys } from "../../../queryClient.ts";
 import LibraryFileOperation from "../components/LibraryFileOperation";
-import { RootOverlapWarning } from "../components/RootOverlapWarning";
 import { Select } from "../../../components/Select";
-import { readApiError } from "../utils/apiError.ts";
 import { useServerSettings } from "../SettingsProviders";
-import {
-  SettingsGroup,
-  SettingsNote,
-  SettingsPage,
-  SettingsRow,
-  SettingsServiceRow,
-  useSettingsItem,
-} from "../SettingsLayout";
-import { configuredStatus, lidarrConnected } from "../utils/serviceStatus";
-import { LidarrSection } from "./LidarrSection";
+import { SettingsGroup, SettingsNote, SettingsPage, SettingsRow } from "../SettingsLayout";
 import "./library.css";
+import { readApiError } from "../../../utils/api/errors.ts";
 
 type FileOperation = ComponentProps<typeof LibraryFileOperation>["operation"];
 type ReadOnlyFolder = InferResponseType<
@@ -64,16 +54,15 @@ const countLabel = (count: number, word: string) =>
 
 function folderStatus(folder: ReadOnlyFolder, scanning: boolean) {
   if (!folder.readable) return { text: "Aurral cannot read this folder.", warning: true };
-  if (folder.lidarrRoot) return { text: "Lidarr manages this folder while Lidarr is on." };
   if (scanning && folder.tracks === 0) return { text: "Scanning…" };
-  return { text: countLabel(folder.tracks, "track") };
+  const tracks = countLabel(folder.tracks, "track");
+  return { text: folder.insideLibraryFolder ? `${tracks}, inside the Library folder` : tracks };
 }
 
 function LibraryFolderGroup() {
   const { settings, updateSettings } = useServerSettings();
   return (
     <SettingsGroup title="Library folder">
-      <RootOverlapWarning rootWarnings={settings.rootWarnings} />
       <SettingsRow
         label="Path"
         htmlFor="library-download-folder"
@@ -167,6 +156,7 @@ function ReadOnlyFoldersGroup({ onChanged }: { onChanged: () => Promise<void> })
   const [removeBusy, setRemoveBusy] = useState(false);
   const folders = query.data?.folders ?? [];
   const scanning = query.data?.scanning === true;
+  const handover = folders.some((folder) => folder.path === removing && folder.insideLibraryFolder);
 
   const add = async () => {
     setAdding(true);
@@ -290,10 +280,15 @@ function ReadOnlyFoldersGroup({ onChanged }: { onChanged: () => Promise<void> })
       </SettingsGroup>
       <ConfirmModal
         open={Boolean(removing)}
-        title="Remove this read-only folder?"
-        body={`The music in ${removing} leaves the Library. The files stay on disk. Playlist and flow tracks that use them download again.`}
-        confirmLabel="Remove folder"
-        busyLabel="Removing…"
+        title={handover ? "Let Aurral manage this folder?" : "Remove this read-only folder?"}
+        body={
+          handover
+            ? `The music in ${removing} becomes part of the Library folder. Aurral can replace and delete these files like any Library file. Nothing leaves the Library or downloads again.`
+            : `The music in ${removing} leaves the Library. The files stay on disk. Playlist and flow tracks that use them download again.`
+        }
+        confirmLabel={handover ? "Manage folder" : "Remove folder"}
+        tone={handover ? "primary" : "danger"}
+        busyLabel={handover ? "Saving…" : "Removing…"}
         busy={removeBusy}
         onCancel={() => setRemoving(null)}
         onConfirm={remove}
@@ -441,12 +436,6 @@ function ImportGroup({
           Hardlink keep its files.
         </SettingsNote>
       ) : null}
-      {result?.lidarrRoot ? (
-        <SettingsNote tone="warning">
-          Lidarr uses {result.lidarrRoot}. Moving files breaks its library. Copy and Hardlink keep
-          its files.
-        </SettingsNote>
-      ) : null}
       <LibraryFileOperation
         operation={operation}
         onChanged={onChanged}
@@ -494,7 +483,7 @@ function CleanUpGroup({
   return (
     <SettingsGroup
       title="Clean up Library"
-      note="Renames Library files to Aurral's naming and fills missing tags. Lidarr's files stay untouched. Duplicates are removed only when you ask."
+      note="Renames Library files to Aurral's naming and fills missing tags. Read-only folders stay untouched. Duplicates are removed only when you ask."
     >
       <LibraryFileOperation
         operation={operation}
@@ -516,25 +505,7 @@ function CleanUpGroup({
   );
 }
 
-function LibraryManagersGroup() {
-  const { settings } = useServerSettings();
-  return (
-    <SettingsGroup title="Library managers" note="Hand artists and albums to another app.">
-      <SettingsServiceRow
-        to="library/lidarr"
-        name="Lidarr"
-        status={configuredStatus(lidarrConnected(settings.integrations))}
-      />
-    </SettingsGroup>
-  );
-}
-
 export function LibrarySection() {
-  if (useSettingsItem() === "lidarr") return <LidarrSection />;
-  return <LibraryOverview />;
-}
-
-function LibraryOverview() {
   const files = useLibraryFiles();
   const operationQuery = useLibraryFileOperation(files.data?.operation?.id ?? null);
   const operation = operationQuery.data || files.data?.operation || null;
@@ -559,7 +530,6 @@ function LibraryOverview() {
         operation={operation?.kind === "cleanup" ? operation : null}
         onChanged={refresh}
       />
-      <LibraryManagersGroup />
       {files.isError ? (
         <SettingsGroup>
           <SettingsNote tone="warning">

@@ -8,7 +8,6 @@ import {
   assignLibraryArtistMbid,
   getAvailableLibraryMediaPaths,
   getLibraryMediaPaths,
-  assignLidarrAlbumOwners,
   chooseLibraryAlbumRelease,
   getLibraryAlbumsToList,
   getUnresolvedLibraryArtists,
@@ -19,7 +18,6 @@ import {
   removeLibraryMediaFiles,
   removeMissingLibraryMediaFiles,
   reconcileLibraryAlbums,
-  removeLidarrLibrary,
   storeLibraryAlbumTrackList,
   upsertLibraryArtist,
   type UntaggedLibraryAlbum,
@@ -40,15 +38,9 @@ import type { LibraryScanRequest } from "./libraryScanRequest.ts";
 import { musicbrainzGetArtistNameByMbid } from "./apiClients/index.ts";
 import { matchLibraryArtist } from "./artistMatch.ts";
 import { logger } from "./logger.ts";
-import {
-  activeLidarrRoots,
-  createLibraryScanExclusion,
-  isLidarrLibraryActive,
-  readOnlyFolderPaths,
-  type LidarrRootsSource,
-} from "./libraryFolders.ts";
+import { createLibraryScanExclusion, readOnlyFolderPaths, isPathWithin } from "./libraryFolders.ts";
 
-interface AurralJobMetadata {
+interface JobMetadata {
   artistName: string;
   albumName: string | null;
   trackName: string;
@@ -72,7 +64,7 @@ type FolderScan = {
   removed?: number;
 };
 
-function getAurralJobMetadataByPath() {
+function getJobMetadataByPath() {
   const rows = db
     .prepare<
       [],
@@ -97,7 +89,7 @@ function getAurralJobMetadataByPath() {
        ORDER BY completed_at DESC, created_at DESC`,
     )
     .all();
-  const byPath = new Map<string, AurralJobMetadata>();
+  const byPath = new Map<string, JobMetadata>();
   for (const row of rows) {
     const filePath = String(row.final_path || "").trim();
     if (!filePath || byPath.has(path.resolve(filePath))) continue;
@@ -136,7 +128,7 @@ function getLibraryFlowPaths() {
 
 async function syncLibraryFlowFiles(
   musicRoot: string,
-  jobMetadataByPath: Map<string, AurralJobMetadata>,
+  jobMetadataByPath: Map<string, JobMetadata>,
   force: boolean,
   changedPaths: string[] | null,
   changedFiles: Set<string>,
@@ -163,8 +155,8 @@ async function syncLibraryFlowFiles(
   return { ...scan, removed, changed: scan.changed || removed > 0 };
 }
 
-async function canonicalizeAurralArtistNames(
-  jobMetadataByPath: Map<string, AurralJobMetadata>,
+async function canonicalizeArtistNames(
+  jobMetadataByPath: Map<string, JobMetadata>,
   paths: string[] | null = null,
 ) {
   const candidates = new Set<string>();
@@ -292,37 +284,36 @@ async function completeLibraryTrackLists() {
   return changed;
 }
 
-function isPathWithin(rootPath: string, candidatePath: string) {
-  const relative = path.relative(path.resolve(rootPath), path.resolve(candidatePath));
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
-}
-
 function pathsWithin(rootPath: string, paths: string[] | null | undefined) {
   return (Array.isArray(paths) ? paths : []).filter((candidatePath) =>
     isPathWithin(rootPath, candidatePath),
   );
 }
 
-// A folder that left the list takes its music out of the Library. Its files
-// stay on disk.
+// A scan kept to the Library folder still covers the read-only folders inside
+// it. A folder that left the list takes its music out of the Library on the
+// next scan of every folder. Its files stay on disk.
 async function scanReadOnlyFolders(
   roots: string[],
   {
+    within,
     changedPaths,
     force,
     isExcluded,
     changedFiles,
   }: {
+    within: string | null;
     changedPaths: string[] | null;
     force: boolean;
     isExcluded: ReturnType<typeof createLibraryScanExclusion>;
     changedFiles: Set<string>;
   },
 ): Promise<FolderScan> {
+  const scanned = within ? roots.filter((root) => isPathWithin(within, root)) : roots;
   const scan =
-    roots.length > 0
+    scanned.length > 0
       ? await scanMusicRoots({
-          rootPaths: roots,
+          rootPaths: scanned,
           changedPaths,
           force,
           source: "readonly",
@@ -331,7 +322,7 @@ async function scanReadOnlyFolders(
           changedFiles,
         })
       : skippedScan();
-  if (Array.isArray(changedPaths)) return scan;
+  if (Array.isArray(changedPaths) || within) return scan;
   const leftPaths = [...getLibraryMediaPaths("readonly")].filter(
     (filePath) => !roots.some((root) => isPathWithin(root, filePath)) || isExcluded(filePath),
   );
@@ -351,34 +342,26 @@ const skippedScan = () => ({
 
 export async function scanConfiguredLibrary({
   musicRoot = resolveDownloadRoot(),
-  lidarrClient,
-  includeLidarr = true,
-  lidarrRoots = null,
+  includeReadOnly = true,
   changedPaths = null,
   force = false,
   changedFiles = new Set(),
 }: LibraryScanRequest & {
   musicRoot?: string;
-  lidarrClient?: LidarrRootsSource;
-  lidarrRoots?: string[] | null;
   changedFiles?: Set<string>;
 } = {}) {
-  const jobMetadataByPath = getAurralJobMetadataByPath();
+  const jobMetadataByPath = getJobMetadataByPath();
   const targeted = Array.isArray(changedPaths);
   const localPaths = pathsWithin(musicRoot, changedPaths);
   let local: FolderScan | undefined;
-  let lidarr: FolderScan = { skipped: true, filesSeen: 0, filesIndexed: 0, filesFailed: 0 };
   let flow: FolderScan = skippedScan();
   let readOnly: FolderScan = skippedScan();
   let scanFailed = false;
   let artistsResolved = false;
   let albumsMatched = false;
   let tracksListed = false;
-  let lidarrRemoved = false;
-  const lidarrActive = isLidarrLibraryActive(lidarrClient);
-  const lidarrFolders = activeLidarrRoots(lidarrClient, lidarrRoots);
   const readOnlyRoots = readOnlyFolderPaths();
-  const folders = { downloadRoot: musicRoot, lidarrRoots: lidarrFolders, readOnlyRoots };
+  const folders = { downloadRoot: musicRoot, readOnlyRoots };
   try {
     local =
       targeted && localPaths.length === 0
@@ -404,63 +387,23 @@ export async function scanConfiguredLibrary({
       );
     }
     if (!targeted || localPaths.length > 0) {
-      await canonicalizeAurralArtistNames(jobMetadataByPath, targeted ? localPaths : null);
+      await canonicalizeArtistNames(jobMetadataByPath, targeted ? localPaths : null);
     }
-    if (includeLidarr && lidarrFolders.length > 0) {
-      try {
-        lidarr = await scanMusicRoots({
-          rootPaths: lidarrFolders,
-          changedPaths: targeted ? changedPaths : null,
-          force,
-          source: "lidarr",
-          syncSearch: targeted,
-          isExcluded: createLibraryScanExclusion("lidarr", folders),
-          changedFiles,
-        });
-        if (!targeted) {
-          const removedRootPaths = [...getLibraryMediaPaths("lidarr")].filter(
-            (filePath) => !lidarrFolders.some((root) => isPathWithin(root, filePath)),
-          );
-          const removedRootFiles = removeMissingLibraryMediaFiles("lidarr", removedRootPaths);
-          for (const filePath of removedRootFiles) changedFiles.add(filePath);
-          if (removedRootFiles.length > 0) lidarr.changed = true;
-        }
-      } catch (error) {
-        scanFailed = true;
-        const failure = asAppError(error);
-        logger.error("library", "Lidarr root scan failed", {
-          message: failure?.message || String(error),
-        });
-        lidarr = {
-          skipped: false,
-          error: failure?.message || String(error),
-          filesSeen: 0,
-          filesIndexed: 0,
-          filesFailed: 0,
-        };
-      }
-    }
-    if (includeLidarr) {
-      try {
-        readOnly = await scanReadOnlyFolders(readOnlyRoots, {
-          changedPaths: targeted ? changedPaths : null,
-          force,
-          isExcluded: createLibraryScanExclusion("readonly", folders),
-          changedFiles,
-        });
-      } catch (error) {
-        scanFailed = true;
-        const failure = asAppError(error);
-        logger.error("library", "Read-only folder scan failed", {
-          message: failure?.message || String(error),
-        });
-        readOnly = { ...skippedScan(), skipped: false, error: failure?.message || String(error) };
-      }
-    }
-    if (lidarrActive) assignLidarrAlbumOwners();
-    else if (!targeted) {
-      lidarrRemoved = removeLidarrLibrary();
-      if (lidarrRemoved) reconcileLibraryAlbums();
+    try {
+      readOnly = await scanReadOnlyFolders(readOnlyRoots, {
+        within: targeted || includeReadOnly ? null : musicRoot,
+        changedPaths: targeted ? changedPaths : null,
+        force,
+        isExcluded: createLibraryScanExclusion("readonly", folders),
+        changedFiles,
+      });
+    } catch (error) {
+      scanFailed = true;
+      const failure = asAppError(error);
+      logger.error("library", "Read-only folder scan failed", {
+        message: failure?.message || String(error),
+      });
+      readOnly = { ...skippedScan(), skipped: false, error: failure?.message || String(error) };
     }
     artistsResolved = await resolveUnmatchedLibraryArtists();
     albumsMatched = await matchUntaggedLibraryAlbums(force);
@@ -482,9 +425,7 @@ export async function scanConfiguredLibrary({
       artistsResolved ||
       albumsMatched ||
       tracksListed ||
-      lidarrRemoved ||
       local?.changed ||
-      lidarr?.changed ||
       readOnly?.changed ||
       flow?.changed
     ) {
@@ -498,5 +439,5 @@ export async function scanConfiguredLibrary({
       if (!targeted) rebuildLibraryGenreStats();
     }
   }
-  return { local, lidarr, readOnly, flow, lidarrRemoved };
+  return { local, readOnly, flow };
 }

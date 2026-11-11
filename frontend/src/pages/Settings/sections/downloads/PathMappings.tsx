@@ -5,7 +5,7 @@ import TooltipButton from "../../../../components/TooltipButton";
 import { SettingsInput } from "../../components/SettingsField";
 import { Select } from "../../../../components/Select";
 import { useServerSettings } from "../../SettingsProviders";
-import { useSettingsRoute } from "../../settingsRoute";
+import { useSettingsRoute } from "../../../../navigation/settingsRoute";
 import { SettingsActions, SettingsGroup, SettingsPage, SettingsRow } from "../../SettingsLayout";
 
 type ServerSettings = ReturnType<typeof useServerSettings>;
@@ -13,7 +13,6 @@ type PathMapping = ReturnType<typeof readPathMappings>[number];
 
 const PATH_MAPPING_SOURCE_OPTIONS = [
   { value: "all", label: "All sources" },
-  { value: "lidarr", label: "Lidarr" },
   { value: "slskd", label: "slskd" },
   { value: "nzbget", label: "NZBGet" },
   { value: "sabnzbd", label: "SABnzbd" },

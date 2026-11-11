@@ -34,7 +34,7 @@ test("page totals stay exact after local writes, worker commits, and rollbacks",
   });
   assert.equal(read().total, 1);
   assert.equal(read().hasMore, false);
-  assert.equal(getLibraryPage({ ...options, source: "lidarr" }).total, 0);
+  assert.equal(getLibraryPage({ ...options, source: "readonly" }).total, 0);
   assert.equal(read().total, 1);
 
   const worker = new Database(state.dbPath);
@@ -70,7 +70,7 @@ test("broad search keeps stable ordering, page boundaries, and playable source f
       const title = `${index % 2 ? "match" : "Match"} ${String(Math.floor(index / 3)).padStart(4, "0")}`;
       const track = store.upsertLibraryTrack({ identityKey: `broad:${index}`, title });
       store.linkLibraryAlbumTrack({ albumId: album.id, trackId: track.id });
-      const source = index % 4 === 0 ? "lidarr" : "aurral";
+      const source = index % 4 === 0 ? "readonly" : "aurral";
       const available = index % 11 !== 0;
       store.upsertLibraryMediaFile({
         trackId: track.id,
@@ -132,7 +132,6 @@ test("an album track page carries the album's provider id and monitored state", 
   assert.equal(summaryAlbum.id, album.id);
   assert.equal(summaryAlbum.providerId, 512);
   assert.equal(summaryAlbum.monitored, true);
-  assert.equal(summaryAlbum.monitorOption, "all");
   const summaryArtist = requireFixture(page.artists[0]);
   assert.equal("providerId" in summaryArtist && summaryArtist.providerId, 41);
   assert.equal("monitored" in summaryArtist && summaryArtist.monitored, true);

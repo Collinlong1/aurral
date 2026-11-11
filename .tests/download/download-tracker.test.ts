@@ -1,4 +1,9 @@
-import { createTrackedJob, trackedJob } from "./fixtures.ts";
+import {
+  createTrackedJob,
+  localDownloadWorker,
+  startWorkerForQueuedWork,
+  trackedJob,
+} from "./fixtures.ts";
 import { insertJob } from "../helpers/jobs.ts";
 import type { PipelinePayload } from "../../backend/services/downloadPipeline.ts";
 import { test, beforeEach, afterAll, vi } from "vite-plus/test";
@@ -24,6 +29,7 @@ const [
   workerModule,
   orchestratorWorker,
   queues,
+  { finalizeQualityUpgradeSuccess },
 ] = await setupIsolatedBackend(
   "download-tracker",
   () => import("../../backend/config/db-sqlite.ts"),
@@ -33,6 +39,7 @@ const [
   () => import("../../backend/services/downloadJobs/downloadWorker.ts"),
   () => import("../../backend/services/downloadPipelineWorker.ts"),
   () => import("../../backend/services/jobs/queues.ts"),
+  () => import("../../backend/services/qualityUpgradeOutcome.ts"),
 );
 
 const { DownloadTracker } = trackerModule;
@@ -251,8 +258,10 @@ test("a queued album grab exposes durable membership without replacing track act
     }),
     true,
   );
-  const { getAurralHistoryRequests, recordTrackJobSearching } =
+  const { recordTrackJobSearching } =
     await import("../../backend/services/aurralHistoryService.ts");
+  const { getAurralHistoryRequests } =
+    await import("../../backend/services/aurralHistoryRequests.ts");
   recordTrackJobSearching(trackedJob(tracker, ids[0]));
   const requests = (await getAurralHistoryRequests()).filter((item) => ids.includes(item.jobId!));
   assert.equal(requests.length, 2);
@@ -269,7 +278,7 @@ test("a queued album grab exposes durable membership without replacing track act
   );
 });
 
-test("failed queue handoff and attempted flags alone do not create album activity", async () => {
+test("failed queue handoff and attempted flags alone leave the album queued, not attempted", async () => {
   const settings = dbOps.getSettings();
   dbOps.updateSettings({
     ...settings,
@@ -302,10 +311,12 @@ test("failed queue handoff and attempted flags alone do not create album activit
   trackerModule.downloadTracker._load();
   trackerModule.downloadTracker.setAlbumGrabAttempted(requireFixture(ids[0]), true);
   const { getAurralHistoryRequests } =
-    await import("../../backend/services/aurralHistoryService.ts");
+    await import("../../backend/services/aurralHistoryRequests.ts");
   const requests = (await getAurralHistoryRequests()).filter((item) => ids.includes(item.jobId!));
-  assert.equal(requests.length, 2);
-  assert.ok(requests.every((item) => !item.albumGrab));
+  assert.deepEqual(
+    requests.map((item) => item.albumGrab?.phase),
+    ["queued", "queued"],
+  );
 });
 
 test("album track outcomes retain source, failures, and timestamps after retry and job cleanup", async () => {
@@ -339,7 +350,7 @@ test("album track outcomes retain source, failures, and timestamps after retry a
   tracker.updateDownloadMetadata(requireFixture(ids[1]), { downloadSource: "ytdlp" });
   tracker.setDone(requireFixture(ids[1]), path.join(isolatedState.baseDir, "second.m4a"));
   const { getAurralHistoryRequests } =
-    await import("../../backend/services/aurralHistoryService.ts");
+    await import("../../backend/services/aurralHistoryRequests.ts");
   const before = (await getAurralHistoryRequests()).filter((item) => ids.includes(item.jobId!));
   assert.equal(before.length, 2);
   assert.ok(before.every((item) => item.status === "completed"));
@@ -347,9 +358,10 @@ test("album track outcomes retain source, failures, and timestamps after retry a
     before.every((item) => item.completedAt && item.requestedAt === item.albumGrab!.requestedAt),
   );
   assert.deepEqual(before.map((item) => item.actualDownloadSource).sort(), ["slskd", "ytdlp"]);
-  assert.ok(
-    before.find((item) => item.jobId === ids[1])!.previousErrors!.includes("Album file missing"),
-  );
+  const retried = before.find((item) => item.jobId === ids[1])!;
+  assert.ok(retried.previousErrors!.includes("Album file missing"));
+  assert.equal(retried.subtitle, "The Band · library");
+  assert.equal(tracker.getJob(ids[1])!.error, null);
   tracker.clearCompleted();
   const after = (await getAurralHistoryRequests()).filter((item) => ids.includes(item.jobId!));
   assert.deepEqual(after, before);
@@ -396,7 +408,7 @@ test("history limits keep an album together and pruning does not recreate remove
   }
   tracker.setDone(requireFixture(ids[0]), path.join(isolatedState.baseDir, "first.flac"));
   const { getAurralHistoryRequests } =
-    await import("../../backend/services/aurralHistoryService.ts");
+    await import("../../backend/services/aurralHistoryRequests.ts");
   const limited = (await getAurralHistoryRequests()).filter((item) => ids.includes(item.jobId!));
   assert.equal(limited.length, 3);
   for (const id of ids.slice(1))
@@ -468,7 +480,7 @@ test("album activity preserves canonical disc order and does not revive expired 
     }),
   });
   const { getAurralHistoryRequests } =
-    await import("../../backend/services/aurralHistoryService.ts");
+    await import("../../backend/services/aurralHistoryRequests.ts");
   const active = (await getAurralHistoryRequests()).filter((item) => ids.includes(item.jobId!));
   assert.deepEqual(
     ids.map((id) => active.find((item) => item.jobId === id)!.discNumber),
@@ -517,14 +529,14 @@ test("album activity excludes hidden member identities from an authorized respon
     metadata: { ...privateEntry.metadata, ownerUserId: 99 },
   });
   const { getAurralHistoryRequests } =
-    await import("../../backend/services/aurralHistoryService.ts");
+    await import("../../backend/services/aurralHistoryRequests.ts");
   const visible = (
-    await getAurralHistoryRequests(null, { id: 42, username: "listener", role: "user" })
+    await getAurralHistoryRequests({ id: 42, username: "listener", role: "user" })
   ).filter((item) => ids.includes(item.jobId!));
   assert.equal(visible.length, 1);
   assert.deepEqual(requireFixture(visible[0]).albumGrab!.memberJobIds, [ids[0]]);
   const admin = (
-    await getAurralHistoryRequests(null, { id: 1, username: "admin", role: "admin" })
+    await getAurralHistoryRequests({ id: 1, username: "admin", role: "admin" })
   ).filter((item) => ids.includes(item.jobId!));
   assert.equal(admin.length, 2);
   assert.deepEqual(requireFixture(admin[0]).albumGrab!.memberJobIds, ids);
@@ -886,6 +898,38 @@ test("a web-side tracker keeps an active flow download on import and loads jobs 
   }
 });
 
+test("a web-side tracker asks the download process to start once for a batch of queued tracks, and not for a saved one", async () => {
+  const { configureDownloadOwnerClient } =
+    await import("../../backend/services/downloadJobs/downloadOwnerClient.ts");
+  const requests: string[] = [];
+  configureDownloadOwnerClient({
+    request: async (method) => {
+      requests.push(method);
+    },
+    getStatus: () => null,
+  });
+  const previousEnv = process.env.NODE_ENV;
+  try {
+    process.env.NODE_ENV = "production";
+    const webTracker = new DownloadTracker();
+    webTracker.addJob({ artistName: "Artist", trackName: "Saved" }, "playlist", { saved: true });
+    await Promise.resolve();
+    assert.deepEqual(requests, []);
+    webTracker.addJobs(
+      [
+        { artistName: "Artist", trackName: "First" },
+        { artistName: "Artist", trackName: "Second" },
+      ],
+      "playlist",
+    );
+    await Promise.resolve();
+    assert.deepEqual(requests, ["startIfPending"]);
+  } finally {
+    process.env.NODE_ENV = previousEnv;
+    configureDownloadOwnerClient({ request: null, getStatus: () => null });
+  }
+});
+
 test("a web-side tracker preserves pending upgrades but excludes them from normal pending work", () => {
   const tracker = new DownloadTracker();
   const sourceId = createTrackedJob(
@@ -970,6 +1014,64 @@ test("a started worker keeps its process busy only while downloads are pending",
     assert.equal(worker.hasWork(), true);
   } finally {
     worker.stop();
+  }
+});
+
+test("stopping the worker returns its downloads to the queue and leaves it stopped", async () => {
+  const tracker = trackerModule.downloadTracker;
+  const worker = localDownloadWorker(workerModule.downloadWorker);
+  vi.mocked(worker.start).mockRestore();
+  startWorkerForQueuedWork(tracker, workerModule.startWorkerIfPending);
+  await worker.start();
+  await worker.reuseRepairInFlight;
+  const jobId = createTrackedJob(tracker, { artistName: "Artist", trackName: "Song" }, "library");
+  const waitingId = createTrackedJob(
+    tracker,
+    { artistName: "Artist", trackName: "Waiting" },
+    "library",
+  );
+  const cancelledId = createTrackedJob(
+    tracker,
+    { artistName: "Artist", trackName: "Cancelled" },
+    "library",
+  );
+  tracker.setDownloading(jobId);
+  await Promise.resolve();
+
+  worker.stop();
+  tracker.setCancelled(cancelledId);
+  await Promise.resolve();
+
+  assert.equal(trackedJob(tracker, jobId).status, "pending");
+  assert.equal(trackedJob(tracker, waitingId).status, "pending");
+  assert.equal(worker.running, false);
+});
+
+test("a track queued while its playlist is being edited starts the worker, waits, and downloads when the edit ends", async () => {
+  const tracker = trackerModule.downloadTracker;
+  const worker = localDownloadWorker(workerModule.downloadWorker);
+  vi.mocked(worker.start).mockRestore();
+  vi.spyOn(worker, "scheduleReuseLinkRepair").mockImplementation(() => {});
+  const dispatched = vi.spyOn(worker, "processJob").mockImplementation(async () => {});
+  startWorkerForQueuedWork(tracker, workerModule.startWorkerIfPending);
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    worker.blockPlaylist("library");
+    const jobId = createTrackedJob(tracker, { artistName: "Artist", trackName: "Song" }, "library");
+    await Promise.resolve();
+    assert.equal(worker.running, true);
+    assert.equal(trackedJob(tracker, jobId).error, "Playlist mutation in progress");
+    assert.equal(dispatched.mock.calls.length, 0);
+
+    worker.unblockPlaylist("library");
+    await vi.advanceTimersByTimeAsync(750);
+    assert.deepEqual(
+      dispatched.mock.calls.map((call) => call[0].id),
+      [jobId],
+    );
+  } finally {
+    worker.stop();
+    vi.useRealTimers();
   }
 });
 
@@ -1171,22 +1273,18 @@ test("finalizes an upgrade when optional quality metadata is absent", async () =
   const upgradeId = tracker.addUpgradeJob(trackedJob(tracker, sourceId));
 
   await assert.doesNotReject(
-    qualityProfileService.finalizeQualityUpgradeSuccess(
-      trackedJob(tracker, upgradeId),
-      finalPath,
-      undefined,
-    ),
+    finalizeQualityUpgradeSuccess(trackedJob(tracker, upgradeId), finalPath, undefined),
   );
   assert.equal(tracker.getJob(upgradeId), null);
   assert.equal(tracker.getJob(sourceId)?.finalPath, finalPath);
 });
 
-test("classifies reused Lidarr files without making them eligible for upgrades", async () => {
+test("classifies a file outside the Library folder without making it eligible for upgrades, also when its read-only folder is the Library folder", async () => {
   const tracker = trackerModule.downloadTracker;
-  const lidarrPath = path.join(isolatedState.baseDir, "lidarr", "Song.mp3");
-  await mkdir(path.dirname(lidarrPath), { recursive: true });
+  const sharedPath = path.join(isolatedState.baseDir, "shared", "Song.mp3");
+  await mkdir(path.dirname(sharedPath), { recursive: true });
   await writeFile(
-    lidarrPath,
+    sharedPath,
     Buffer.from(
       "SUQzBAAAAAAAIlRTU0UAAAAOAAADTGF2ZjYxLjcuMTAzAAAAAAAAAAAAAAD/+5DAAAAAAAAAAAAAAAAAAAAAAABJbmZvAAAADwAAAAIAAATkAKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqr//////////////////////////////////////////////////////////////////wAAAABMYXZjNjEuMTkAAAAAAAAAAAAAAAAkBQcAAAAAAAAE5MAlg1kAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
       "base64",
@@ -1198,18 +1296,28 @@ test("classifies reused Lidarr files without making them eligible for upgrades",
   });
   const jobId = createTrackedJob(tracker, { artistName: "Artist", trackName: "Song" }, "discover");
   assert.ok(jobId != null);
-  tracker.setDone(jobId, lidarrPath, "Album", "/music/Artist/Album/Song.mp3");
+  tracker.setDone(jobId, sharedPath, "Album", "/music/Artist/Album/Song.mp3");
 
   const result = await qualityProfileService.reclassifyQualityJobs();
   const job = tracker.getJob(jobId);
   assert.ok(job != null);
-  const decorated = qualityProfileService.decorateJobQuality(job);
+  const { decorateJobQuality } = await import("../../backend/services/qualityProfile.ts");
+  const decorated = decorateJobQuality(job);
 
   assert.equal(result.classified, 1);
   assert.equal(job.qualityTier, "mp3-128");
   assert.ok("qualityLabel" in decorated && "qualityState" in decorated);
   assert.equal(decorated.qualityLabel, "MP3 128");
   assert.equal(decorated.qualityState, "external");
+  assert.equal(await qualityProfileService.queueQualityUpgrade(job), "ineligible");
+
+  const sharedFolder = path.dirname(sharedPath);
+  dbOps.updateSettings({ ...dbOps.getSettings(), downloadFolderPath: sharedFolder });
+  assert.equal(decorateJobQuality(job).qualityOwned, true);
+  dbOps.setJSONSetting("readOnlyFolders", [sharedFolder]);
+  const shared = decorateJobQuality(job);
+  assert.equal(shared.qualityOwned, false);
+  assert.equal(shared.qualityState, "external");
   assert.equal(await qualityProfileService.queueQualityUpgrade(job), "ineligible");
 });
 

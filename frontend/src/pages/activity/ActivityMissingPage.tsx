@@ -24,7 +24,7 @@ import { playlistJobsClient } from "../../utils/api/clients/playlistJobs.ts";
 import { staticPlaylistsClient } from "../../utils/api/clients/staticPlaylists.ts";
 import { withAuthenticatedTrackArtwork } from "../../utils/api/playlistUrls.ts";
 import { queryClient, queryKeys } from "../../queryClient.ts";
-import { usePlaylistStatusQuery } from "../playlists/usePlaylistStatusQuery.ts";
+import { usePlaylistStatusQuery } from "../../hooks/usePlaylistStatusQuery.ts";
 import { buildWantedPath, WANTED_VIEWS } from "../../navigation/activityNavConfig";
 import ActivityToolbar from "./ActivityToolbar";
 import ActivityInfoModal from "./ActivityInfoModal";
@@ -32,12 +32,12 @@ import ManualMissingSearchModal from "./ManualMissingSearchModal";
 import LinkLibraryFileModal from "./LinkLibraryFileModal.tsx";
 import {
   getMissingJobKey,
-  isCutoffUnmetAurralJob,
-  isMissingAurralJob,
+  isCutoffUnmetJob,
+  isMissingJob,
   sortMissingJobs,
 } from "./activityMissingUtils.ts";
 import Tooltip from "../../components/Tooltip";
-import type { PlaylistStatus } from "../playlists/playlistStats.ts";
+import type { PlaylistStatus } from "../../utils/playlistStats.ts";
 import StatePanel from "../../components/StatePanel";
 
 const WANTED_PAGE_SIZE = 25;
@@ -107,7 +107,7 @@ function MissingJobRow({
   onManualSearch: (job: MissingPageJob) => void;
   onLinkFile: (job: MissingPageJob) => void;
 }) {
-  const isMissing = isMissingAurralJob(job);
+  const isMissing = isMissingJob(job);
   const isWorking = actionState === "working";
   const isQueued = actionState === "queued";
   const operationLabel = playlist?.name || "Aurral operation";
@@ -245,7 +245,7 @@ export default function ActivityMissingPage() {
         .map((job) => String(job.upgradeForJobId)),
     );
     return allJobs
-      .filter((job) => isMissingAurralJob(job) || isCutoffUnmetAurralJob(job))
+      .filter((job) => isMissingJob(job) || isCutoffUnmetJob(job))
       .map((job) => ({ ...job, upgradeQueued: upgradeJobIds.has(String(job.id)) }))
       .sort(sortMissingJobs);
   }, [allJobs]);
@@ -296,7 +296,7 @@ export default function ActivityMissingPage() {
   const visibleJobs = useMemo(() => {
     const query = filterValue.trim().toLocaleLowerCase();
     return jobs.filter((job) => {
-      if (showingCutoff ? !isCutoffUnmetAurralJob(job) : !isMissingAurralJob(job)) return false;
+      if (showingCutoff ? !isCutoffUnmetJob(job) : !isMissingJob(job)) return false;
       if (!query) return true;
       return [job.trackName, job.artistName, job.albumName, job.error]
         .filter(Boolean)
@@ -308,10 +308,10 @@ export default function ActivityMissingPage() {
   const pagedJobs = visibleJobs.slice(0, visibleCount);
   const hasMoreJobs = visibleCount < visibleJobs.length;
   const hasWantedJobs = jobs.some((job) =>
-    showingCutoff ? isCutoffUnmetAurralJob(job) : isMissingAurralJob(job),
+    showingCutoff ? isCutoffUnmetJob(job) : isMissingJob(job),
   );
   const actionableJobs = jobs.filter((job) =>
-    showingCutoff ? isCutoffUnmetAurralJob(job) && !job.upgradeQueued : isMissingAurralJob(job),
+    showingCutoff ? isCutoffUnmetJob(job) && !job.upgradeQueued : isMissingJob(job),
   );
   const hasActionableJobs = actionableJobs.length > 0;
   const allUpgradesQueued = showingCutoff && hasWantedJobs && !hasActionableJobs;
@@ -319,7 +319,7 @@ export default function ActivityMissingPage() {
   const handleAction = async (job: MissingPageJob) => {
     const id = getMissingJobKey(job);
     if (!id || actionStates[id]) return;
-    const isMissing = isMissingAurralJob(job);
+    const isMissing = isMissingJob(job);
     setActionStates((current) => ({ ...current, [id]: "working" }));
     try {
       if (isMissing) {
@@ -553,7 +553,7 @@ export default function ActivityMissingPage() {
         onClose={() => setLinkFileJob(null)}
         onLinked={(job, how) => {
           const id = getMissingJobKey(job);
-          queryClient.setQueryData(jobsQueryKey, (current) =>
+          queryClient.setQueryData<MissingPageJob[]>(jobsQueryKey, (current) =>
             (Array.isArray(current) ? current : []).filter(
               (entry) => getMissingJobKey(entry) !== id,
             ),

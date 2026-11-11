@@ -6,7 +6,6 @@ import {
   finishedActiveDownloads,
   indexActiveDownloads,
   isAlbumDownloading,
-  isMissingTrackDownloading,
   isTrackDownloading,
 } from "../../frontend/src/utils/activeDownloads.ts";
 
@@ -40,35 +39,4 @@ test("a started download shows immediately and finishing it is detected", () => 
   assert.equal(finishedActiveDownloads(withTrack, { albums: ["album-1"], tracks: [] }), true);
   assert.equal(finishedActiveDownloads(withTrack, { tracks: [{ mbid: recording }] }), true);
   assert.equal(finishedActiveDownloads(withTrack, withTrack), false);
-});
-
-test("one track of an Aurral album downloading leaves the album's other missing tracks free", () => {
-  const index = indexActiveDownloads({
-    albums: ["album-1"],
-    tracks: [{ mbid: recording, artistName: "Artist", trackName: "Song" }],
-  });
-  const aurral = { albumMbid: "album-1", manager: "aurral" };
-  assert.equal(isMissingTrackDownloading(index, { mbid: recording }, aurral), true);
-  assert.equal(
-    isMissingTrackDownloading(index, { artistName: "Artist", title: "Other Song" }, aurral),
-    false,
-  );
-
-  const lidarr = { albumMbid: "album-1", manager: "lidarr" };
-  assert.equal(
-    isMissingTrackDownloading(index, { artistName: "Artist", title: "Other Song" }, lidarr),
-    true,
-  );
-  assert.equal(
-    isMissingTrackDownloading(
-      index,
-      { artistName: "Artist", title: "Other Song" },
-      { albumMbid: "album-1" },
-    ),
-    true,
-  );
-  assert.equal(
-    isMissingTrackDownloading(index, { title: "Other Song" }, { albumMbid: "album-2" }),
-    false,
-  );
 });

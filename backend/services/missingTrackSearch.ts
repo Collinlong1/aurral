@@ -1,0 +1,163 @@
+import { db } from "../config/db-sqlite.ts";
+import type { LibraryAlbumsRow, LibraryTracksRow } from "../db/rows.ts";
+import type { DownloadJob } from "./downloadJobs/downloadTracker.ts";
+import { dbOps } from "../db/helpers/index.ts";
+import { ACTIVE_JOB_STATUSES, indexAlbumJobs, jobMatchesTrack } from "./albumJobs.ts";
+import { recordMissingTrackSearch } from "./aurralHistoryService.ts";
+import { AURRAL_ALBUM_CONDITION, monitoredTrackCondition } from "./monitoring.ts";
+import { isAnyDownloadSourceConfigured } from "./downloadSourceService.ts";
+import { libraryManager } from "./libraryManager.ts";
+import { ALBUM_IS_OWNED } from "./libraryMediaStore.ts";
+import { albumMediaCondition } from "./libraryQueryService.ts";
+import { logger } from "./logger.ts";
+import { asAppError } from "../../lib/errors.ts";
+import { releasedSince, utcDay } from "../../lib/releaseDate.ts";
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+type CandidateAlbum = Pick<LibraryAlbumsRow, "id" | "title"> & {
+  mbid: string;
+  releaseGroupMbid: string | null;
+  artistName: string;
+  artistMbid: string | null;
+  releaseDate: string | null;
+  addedAt: number;
+  lastSearchedAt: number | null;
+};
+
+const MISSING_TRACK_CONDITION = `
+  ${monitoredTrackCondition("track")}
+  AND NOT EXISTS (
+    SELECT 1 FROM library_media_files AS media
+    WHERE media.track_id = link.track_id
+      AND media.available = 1
+      AND ${albumMediaCondition("media", "link")}
+  )
+`;
+
+const candidateAlbumsStmt = db.prepare<
+  [{ dueBefore: number | null; today: string }],
+  CandidateAlbum
+>(`
+  SELECT
+    album.id,
+    album.title,
+    COALESCE(album.mbid, album.release_group_mbid) AS mbid,
+    album.release_group_mbid AS releaseGroupMbid,
+    artist.name AS artistName,
+    artist.mbid AS artistMbid,
+    album.release_date AS releaseDate,
+    management.created_at AS addedAt,
+    management.last_missing_search_at AS lastSearchedAt
+  FROM library_management AS management
+  JOIN library_albums AS album ON album.id = management.entity_id
+  JOIN library_artists AS artist ON artist.id = album.artist_id
+  WHERE ${AURRAL_ALBUM_CONDITION}
+    AND ${ALBUM_IS_OWNED}
+    AND COALESCE(album.mbid, album.release_group_mbid) IS NOT NULL
+    AND (album.release_date IS NULL OR substr(album.release_date, 1, 10) <= :today)
+    AND (
+      (:dueBefore IS NOT NULL AND COALESCE(management.last_missing_search_at, 0) <= :dueBefore)
+      OR substr(album.release_date, 1, 10) > date(
+        MAX(COALESCE(management.last_missing_search_at, 0), management.created_at) / 1000,
+        'unixepoch'
+      )
+    )
+    AND EXISTS (
+      SELECT 1 FROM library_album_tracks AS link
+      JOIN library_tracks AS track ON track.id = link.track_id
+      WHERE link.album_id = album.id AND ${MISSING_TRACK_CONDITION}
+    )
+`);
+
+const missingTracksStmt = db.prepare<[number], Pick<LibraryTracksRow, "mbid" | "title">>(`
+  SELECT track.mbid, track.title
+  FROM library_album_tracks AS link
+  JOIN library_tracks AS track ON track.id = link.track_id
+  WHERE link.album_id = ? AND ${MISSING_TRACK_CONDITION}
+`);
+
+const markSearchedStmt = db.prepare(`
+  UPDATE library_management
+  SET last_missing_search_at = ?
+  WHERE entity_kind = 'album' AND entity_id = ?
+`);
+
+const jobActivityAt = (job: DownloadJob) =>
+  Math.max(Number(job.createdAt) || 0, Number(job.startedAt) || 0, Number(job.completedAt) || 0);
+
+const isActiveOrCancelled = (job: DownloadJob) =>
+  ACTIVE_JOB_STATUSES.has(job.status) || job.status === "cancelled";
+
+function hasSearchableMissingTrack(album: CandidateAlbum, jobs: DownloadJob[]) {
+  return missingTracksStmt.all(album.id).some((track) => {
+    const latestJob = jobs.filter((job) => jobMatchesTrack(job, track)).at(-1);
+    return latestJob?.status !== "blocked";
+  });
+}
+
+// An album added before its release date is searched once it comes out,
+// even when the scheduled missing-track search is off.
+function selectDueAlbums(intervalDays: number | null) {
+  const now = Date.now();
+  const dueBefore = intervalDays === null ? null : now - intervalDays * DAY_MS;
+  const albums = candidateAlbumsStmt.all({ dueBefore, today: utcDay(now) });
+  const jobsForAlbum = indexAlbumJobs(
+    albums.flatMap((album) => [album.releaseGroupMbid, album.mbid]),
+  );
+  const candidates = albums
+    .map((album) => {
+      const jobs = jobsForAlbum([album.releaseGroupMbid, album.mbid]);
+      const lastActivityAt = Math.max(
+        Number(album.lastSearchedAt) || 0,
+        ...jobs.map(jobActivityAt),
+      );
+      return { album, jobs, lastActivityAt };
+    })
+    .filter(
+      ({ album, jobs, lastActivityAt }) =>
+        ((dueBefore !== null && lastActivityAt <= dueBefore) ||
+          releasedSince(album.releaseDate, Math.max(lastActivityAt, album.addedAt), now)) &&
+        !jobs.some(isActiveOrCancelled),
+    )
+    .sort(
+      (left, right) => left.lastActivityAt - right.lastActivityAt || left.album.id - right.album.id,
+    );
+  return candidates
+    .filter(({ album, jobs }) => hasSearchableMissingTrack(album, jobs))
+    .map(({ album }) => album);
+}
+
+async function searchAlbumMissingTracks(album: CandidateAlbum) {
+  try {
+    const result = await libraryManager.searchAlbumMissingTracks(album.id);
+    if (result?.error) {
+      logger.warn("library", "Missing-track search could not search an album", {
+        albumId: album.id,
+        message: result.error,
+      });
+    } else {
+      recordMissingTrackSearch({
+        albumId: album.id,
+        albumName: album.title,
+        artistName: album.artistName,
+        artistMbid: album.artistMbid,
+        queuedTrackCount: result?.queuedTrackCount,
+      });
+    }
+  } catch (error) {
+    logger.warn("library", "Missing-track search could not search an album", {
+      albumId: album.id,
+      message: asAppError(error)?.message || String(error),
+    });
+  }
+  markSearchedStmt.run(Date.now(), album.id);
+}
+
+export async function runMissingTrackSearch() {
+  const settings = dbOps.getSettings().missingTrackSearch;
+  if (!isAnyDownloadSourceConfigured()) return 0;
+  const dueAlbums = selectDueAlbums(settings.enabled ? settings.intervalDays : null);
+  for (const album of dueAlbums) await searchAlbumMissingTracks(album);
+  return dueAlbums.length;
+}

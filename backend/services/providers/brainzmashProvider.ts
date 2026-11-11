@@ -7,6 +7,7 @@ import { dbOps } from "../../db/helpers/index.ts";
 import { APP_NAME, APP_VERSION, DEFAULT_METADATA_BASE_URL } from "../../config/constants.ts";
 import {
   getNormalizedText,
+  listsEveryTrack,
   rankAlbumCandidates,
   runningOrder,
   scoreTextMatch,
@@ -24,7 +25,7 @@ import {
   type NormalizedArtist,
   type NormalizedRelease,
 } from "./brainzmashMappers.ts";
-import { selectBestAlbumImage } from "../imageService.ts";
+import { selectBestAlbumImage } from "../imageRanking.ts";
 import {
   coreAlbumTitle,
   isSilenceTrack,
@@ -642,10 +643,12 @@ export function selectAlbumRelease(
   const withTracks = releases.filter(
     (release) => Array.isArray(release?.tracks) && release.tracks.length > 0,
   );
-  const official = withTracks.filter(
+  const whole = withTracks.filter(listsEveryTrack);
+  const candidates = whole.length > 0 ? whole : withTracks;
+  const official = candidates.filter(
     (release) => String(release?.status || "").toLowerCase() === "official",
   );
-  const pool = official.length > 0 ? official : withTracks;
+  const pool = official.length > 0 ? official : candidates;
   const [mostCommon] = [...tally(pool, (release) => release.tracks.length)].sort(
     ([leftCount, left], [rightCount, right]) => right - left || leftCount - rightCount,
   );
@@ -1055,11 +1058,6 @@ export async function listArtistAlbums(
     artistName: artist.name,
     artistId: artist.id,
   }));
-}
-
-export async function getArtistGenres(artistMbid: string) {
-  const artist = await getArtistByMbid(artistMbid);
-  return artist.genres || [];
 }
 
 export async function getArtistNameByMbid(

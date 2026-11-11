@@ -6,11 +6,7 @@ import { downloadTracker } from "./downloadTracker.ts";
 import { restoreDownloadJobCancellations, withPipelineCommitLock } from "./downloadCancellation.ts";
 import { canLinkLibraryFile } from "./linkLibraryFile.ts";
 import { flowPlaylistConfig } from "../playlists/flowPlaylistConfig.ts";
-import {
-  buildAurralTrackDestination,
-  isPathInsideRoot,
-  resolveDownloadRoot,
-} from "../downloadPaths.ts";
+import { buildTrackDestination, isPathInsideRoot, resolveDownloadRoot } from "../downloadPaths.ts";
 import {
   buildTrackFileName,
   commitDownloadedFile,
@@ -19,7 +15,8 @@ import {
   writeImportedFileMetadata,
 } from "../downloadUtils.ts";
 import { recordPipelineJobSuccess, refreshCompletedPipelinePlaylist } from "../pipelineHelpers.ts";
-import { classifyQualityJob, validateParsedQuality } from "../qualityProfileService.ts";
+import { classifyQualityJob } from "../qualityProfileService.ts";
+import { validateParsedQuality } from "../qualityProfile.ts";
 import {
   formatBrowseDisplayPath,
   getFilesystemBrowseRoots,
@@ -31,7 +28,7 @@ import { resolveLocalPath } from "../pathMappings.ts";
 import { logger, safeLogDiagnostic } from "../logger.ts";
 
 // A missing track can be filled with an audio file from anywhere Aurral can
-// read, such as a folder Lidarr also uses. Aurral copies the file into the
+// read, such as a folder another app also uses. Aurral copies the file into the
 // Library like a download, tags it, and leaves the original where it is. The
 // album art beside it, such as cover.jpg, comes along the same way.
 
@@ -118,7 +115,7 @@ export async function importDiskFileToJob(
   if (!raw || !path.isAbsolute(raw)) {
     return { ok: false, status: 400, error: "Enter the full path of the file." };
   }
-  // A path as Lidarr sees it is mapped to Aurral's through the path mappings.
+  // A path as another app sees it is mapped to Aurral's through the path mappings.
   const sourcePath = path.resolve(resolveLocalPath(raw));
   const stat = await fs.stat(sourcePath).catch(() => null);
   if (!stat?.isFile()) {
@@ -155,7 +152,7 @@ export async function importDiskFileToJob(
 
   if (job.status === "cancelled") restoreDownloadJobCancellations([job.id]);
   const playlistId = job.playlistId || job.playlistType;
-  const destination = buildAurralTrackDestination(
+  const destination = buildTrackDestination(
     playlistId,
     sanitizePathPart(job.artistName, "Unknown Artist"),
     sanitizePathPart(job.albumName, "Unknown Album"),

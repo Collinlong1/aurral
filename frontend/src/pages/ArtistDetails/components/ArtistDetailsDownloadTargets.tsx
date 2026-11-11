@@ -18,13 +18,13 @@ import { useShareAction } from "../../../hooks/useShareAction";
 import { getReleaseGroupTracks } from "../../../utils/api/endpoints/artists.ts";
 import { getReleaseGroupLink } from "../../../utils/searchNavigation";
 import {
-  buildAurralPick,
+  buildPick,
   buildAlbumHeaderMeta,
   sumTrackDurationMs,
   getReleaseGroupCoverUrl,
   mergeReleaseDetails,
 } from "../utils";
-import { TrackPlaylistMenu } from "./TrackPlaylistMenu";
+import { TrackPlaylistMenu } from "../../../components/TrackPlaylistMenu";
 import { TrackPlayButton } from "./TrackPlayButton";
 import { useReleasePreviewQueue } from "../../album/releaseTracks.tsx";
 import { useAudioQueue } from "../../../contexts/audioQueueContext";
@@ -34,9 +34,12 @@ import { releaseGroupDetailsQueryOptions } from "../../../queryOptions.ts";
 import type { ReleaseGroupTrack } from "../../../utils/api/endpoints/artists.ts";
 import type { ArtistDetailsLibrary } from "../hooks/useArtistDetailsLibrary.ts";
 import type { ArtistDetails } from "../hooks/useArtistDetailsStream.ts";
-import type { useLibraryDestination } from "../../../hooks/useLibraryDestination.ts";
 import type { PlaybackSource } from "../../../hooks/useAlbumTrackListToolbar.ts";
-import type { PlaylistSelection, PlaylistTrackIdentity, SharedPlaylist } from "./TrackPlaylistMenu";
+import type {
+  PlaylistSelection,
+  PlaylistTrackIdentity,
+  SharedPlaylist,
+} from "../../../components/TrackPlaylistMenu";
 import type { ReleaseGroup } from "../utils";
 
 type ArtistDetailsDownloadTargetsProps = {
@@ -49,7 +52,6 @@ type ArtistDetailsDownloadTargetsProps = {
   canAddAlbum: boolean;
   requestingAlbum: string | null;
   handleRequestAlbum: ArtistDetailsLibrary["handleRequestAlbum"];
-  libraryDestination: ReturnType<typeof useLibraryDestination>;
   artistName?: string;
   playbackSource?: PlaybackSource | null;
   onAddTrackToPlaylist?: (
@@ -97,7 +99,6 @@ export function ArtistDetailsDownloadTargets({
   canAddAlbum,
   requestingAlbum,
   handleRequestAlbum,
-  libraryDestination,
   artistName = "",
   playbackSource = null,
   onAddTrackToPlaylist,
@@ -118,7 +119,7 @@ export function ArtistDetailsDownloadTargets({
   const requestedReleaseGroupId =
     requestedPick?.artistId === artist?.id ? requestedPick!.releaseGroupId : null;
   const missingReleasePick = useMemo(
-    () => buildAurralPick({ releaseGroups, getAlbumStatus, requestedReleaseGroupId }),
+    () => buildPick({ releaseGroups, getAlbumStatus, requestedReleaseGroupId }),
     [releaseGroups, getAlbumStatus, requestedReleaseGroupId],
   );
   const [showAllTracks, setShowAllTracks] = useState(false);
@@ -250,7 +251,7 @@ export function ArtistDetailsDownloadTargets({
             embedded
             cover={
               coverUrl ? (
-                <ArtworkImage src={coverUrl} alt="" loading="lazy" decoding="async" />
+                <ArtworkImage src={coverUrl} alt="" sizes="17rem" loading="lazy" decoding="async" />
               ) : (
                 <span className="native-library-cover-fallback" aria-hidden="true">
                   {title.trim().charAt(0).toUpperCase() || "—"}
@@ -273,11 +274,10 @@ export function ArtistDetailsDownloadTargets({
                   <ReleaseWaitBadge releaseDate={release!["first-release-date"]} />
                 ) : canAddAlbum && releaseGroupId ? (
                   <AddActionButton
-                    {...getAlbumAddAction({ ...albumStatus }, libraryDestination)}
-                    ownerConflict={albumStatus?.ownerConflict}
-                    onAdd={(managedBy) => {
+                    {...getAlbumAddAction({ releaseDate: release?.["first-release-date"] })}
+                    onAdd={() => {
                       setRequestedPick({ artistId: artist?.id, releaseGroupId });
-                      handleRequestAlbum(releaseGroupId, title, managedBy);
+                      handleRequestAlbum(releaseGroupId, title);
                     }}
                     isLoading={albumBusy}
                     loadingLabel="Downloading"

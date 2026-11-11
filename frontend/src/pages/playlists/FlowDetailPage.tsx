@@ -26,15 +26,13 @@ import TooltipButton from "../../components/TooltipButton";
 import { useAuth } from "../../contexts/AuthContext";
 import { useToast } from "../../contexts/ToastContext";
 import { useDocumentTitle } from "../../hooks/useDocumentTitle";
-import { useLibraryDestination } from "../../hooks/useLibraryDestination";
 import { parseResponse } from "hono/client";
 import { flowsClient } from "../../utils/api/clients/flows.ts";
 import { getApiErrorMessage } from "../../utils/api/errors.ts";
 import { ConfirmModal } from "../../components/ConfirmModal.tsx";
-import { PlaylistArtworkThumb } from "./components/PlaylistArtworkThumb.tsx";
+import { PlaylistArtworkThumb } from "../../components/PlaylistArtworkThumb.tsx";
 import { FlowEnabledSwitch } from "./FlowEnabledSwitch.tsx";
-import { formatFlowLastRun, getFlowDisplayTrackCount } from "./playlistStats";
-import { normalizeNameKey, reserveUniqueName } from "./flowPageUtils";
+import { formatFlowLastRun, getFlowDisplayTrackCount } from "../../utils/playlistStats";
 import { PlaylistTracks } from "./PlaylistTracks.tsx";
 import { usePlaylistTrackPlayback } from "./components/playlistTrackComponents.tsx";
 import {
@@ -46,10 +44,11 @@ import {
   usePlaylistTracks,
 } from "./playlistPageUtils";
 import { usePlaylistStatus } from "./usePlaylistStatus";
-import type { Flow } from "./playlistStats.ts";
+import type { Flow } from "../../utils/playlistStats.ts";
 import { asApiError } from "../../utils/api/core.ts";
 import { copyText } from "../../utils/shareLink.ts";
 import { routeStateOf } from "../../navigation/routeState.ts";
+import { normalizeNameKey, reserveUniqueName } from "../../utils/staticPlaylists.ts";
 
 const FlowEditor = lazy(() => import("./FlowEditor.tsx"));
 
@@ -94,7 +93,6 @@ export default function FlowDetailPage() {
 }
 
 function FlowDetail({ flow }: { flow: Flow }) {
-  const lidarrConnected = useLibraryDestination().primary === "lidarr";
   const navigate = useNavigate();
   const location = useLocation();
   const { user } = useAuth();
@@ -262,7 +260,11 @@ function FlowDetail({ flow }: { flow: Flow }) {
             onClick={() => setEditOpen(true)}
             aria-label={`Edit ${flow.name}`}
           >
-            <PlaylistArtworkThumb artworkUrl={artworkUrlFor(flow.id)} name={flow.name} />
+            <PlaylistArtworkThumb
+              sizes="18rem"
+              artworkUrl={artworkUrlFor(flow.id)}
+              name={flow.name}
+            />
           </button>
         }
         corner={
@@ -374,17 +376,13 @@ function FlowDetail({ flow }: { flow: Flow }) {
                       flow.showInLibrary === true ? "Hidden from library" : "Shown in library",
                     ),
                 }),
-                ...(lidarrConnected
-                  ? [
-                      {
-                        id: "lidarr-url",
-                        label: "Copy Lidarr import URL",
-                        icon: ClipboardCopy,
-                        separatorBefore: true,
-                        onSelect: handleCopyLidarrUrl,
-                      },
-                    ]
-                  : []),
+                {
+                  id: "lidarr-url",
+                  label: "Copy Lidarr import URL",
+                  icon: ClipboardCopy,
+                  separatorBefore: true,
+                  onSelect: handleCopyLidarrUrl,
+                },
                 ...pluginActions,
                 {
                   id: "delete",

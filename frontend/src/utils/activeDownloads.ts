@@ -92,18 +92,6 @@ export const isTrackDownloading = (
   );
 };
 
-// Whether a library album's missing track is downloading. Aurral queues each
-// track of its albums as its own download, even one track asked for alone, so
-// only an album search by another manager, such as Lidarr, covers every
-// missing track of the album at once.
-export const isMissingTrackDownloading = (
-  index: ActiveDownloadIndex,
-  track: ActiveDownloadTrack | null | undefined,
-  album: { albumMbid?: string | null; manager?: string | null },
-) =>
-  isTrackDownloading(index, track) ||
-  (album.manager !== "aurral" && isAlbumDownloading(index, album.albumMbid));
-
 export const hasActiveDownloads = (data: Partial<ActiveDownloads> | null | undefined) => {
   const active = normalizeActiveDownloads(data);
   return active.albums.length > 0 || active.artists.length > 0 || active.tracks.length > 0;

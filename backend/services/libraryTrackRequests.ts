@@ -1,11 +1,14 @@
 import { db } from "../config/db-sqlite.ts";
 import { recordTrackJobQueued } from "./aurralHistoryService.ts";
-import { clearTrackMonitoringExclusion } from "./aurralMonitoringStore.ts";
+import { clearTrackMonitoringExclusion } from "./monitoringStore.ts";
 import { downloadTracker, type DownloadTrackInput } from "./downloadJobs/downloadTracker.ts";
 import { asAppError } from "../../lib/errors.ts";
 import { getLibraryTrackOwnership } from "./libraryQueryService.ts";
 import { logger } from "./logger.ts";
 import { keepInLibrary } from "./playlists/playlistLibrary.ts";
+import { downloadWorker } from "./downloadJobs/downloadWorker.ts";
+import { reuseTrackForPlaylist } from "./downloadJobs/fileReuse.ts";
+import { libraryManager } from "./libraryManager.ts";
 
 const libraryTrackStmt = db.prepare("SELECT 1 FROM library_tracks WHERE mbid = ? LIMIT 1");
 
@@ -84,9 +87,7 @@ export async function requestLibraryTrack(
   }
   const monitoredTrack = automatic
     ? null
-    : await (
-        await import("./libraryManager.ts")
-      ).libraryManager.monitorAurralTrack({
+    : await libraryManager.monitorTrack({
         libraryTrackId,
         trackMbid: track.trackMbid,
         albumMbid: track.albumMbid,
@@ -106,8 +107,6 @@ export async function requestLibraryTrack(
   if (existingJob?.status === "saved") {
     downloadTracker.setPending(existingJob.id);
     recordTrackJobQueued(downloadTracker.getJob(existingJob.id), user);
-    const { downloadWorker } = await import("./downloadJobs/downloadWorker.ts");
-    await downloadWorker.start();
     return { queued: true, jobId: existingJob.id };
   }
   if (existingJob) {
@@ -115,12 +114,10 @@ export async function requestLibraryTrack(
     return { queued: true, jobId: existingJob.id, alreadyQueued: true };
   }
 
-  const jobId = downloadTracker.addJob(track, "library");
+  const jobId = downloadTracker.addJob(track, "library", { saved: true });
   if (!jobId) return { error: "Track details are incomplete", statusCode: 400 };
 
-  const { downloadWorker } = await import("./downloadJobs/downloadWorker.ts");
   try {
-    const { reuseTrackForPlaylist } = await import("./downloadJobs/fileReuse.ts");
     const reuse = await reuseTrackForPlaylist(track, "library", {
       downloadRoot: downloadWorker.downloadRoot,
       existingJobId: jobId,
@@ -134,7 +131,7 @@ export async function requestLibraryTrack(
     });
   }
 
+  downloadTracker.setPending(jobId);
   recordTrackJobQueued(downloadTracker.getJob(jobId), user);
-  await downloadWorker.start();
   return { queued: true, jobId };
 }
