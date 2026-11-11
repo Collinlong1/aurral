@@ -1,3 +1,7 @@
+# Post-Phase-4 long plugin-action menu correction
+
+Album/track/artist/playlist menus now group multiple actions from the same plugin under one plugin-named submenu. This prevents Aurral Classical's growing album action list from extending below the viewport while retaining every independently capability-controlled action. Single-action plugins retain their existing direct menu item. The generic submenu already scrolls within the viewport and uses its existing desktop/mobile and keyboard behavior. Node 26.12/pnpm 12.15 checks and the frontend production build pass.
+
 # Current checkpoint — Phase 4 complete for review
 
 The user explicitly authorized Phase 4 on November 10, 2026 (America/Chicago). Generic album contributions, regular-user resource pages and bounded local queue segments are complete locally. Validation passed 2,757 core unit tests across 406 files, 52 focused Phase 4 tests, required checks, the production frontend build, real Chromium and disposable Compose restart/playback checks. See `PHASE_4_REPORT.md` and the central plugin report. Stop before later search/Discover scope.

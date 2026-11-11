@@ -1,5 +1,7 @@
 # Phase 4 generic host integration
 
+Post-Phase-4 correction: menus now group multiple actions from one plugin under a plugin-named submenu, preventing long capability lists from rendering actions below the viewport. This is a generic core presentation change; single-action plugins remain direct menu items.
+
 Phase 4 was explicitly authorized on November 10, 2026 (America/Chicago). The fork adds three generic, independently capability-checked pieces for the plugin-owned classical experience:
 
 1. `albumPresentation` lets an enabled plugin contribute bounded groups to a native library album. Core validates every response and verifies each album/track reference before adding a native stream URL. Missing, disabled, invalid, timed-out or crashing contributions leave the stock album page intact.

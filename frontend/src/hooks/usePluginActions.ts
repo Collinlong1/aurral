@@ -24,26 +24,46 @@ export function usePluginActions() {
     enabled: Boolean(user),
     staleTime: ACTIONS_STALE_MS,
   });
-  return (target: ActionTarget, json: ActionTargetInput): LibraryMenuItem[] =>
-    (actions.data?.actions ?? [])
-      .filter((action) => action.target === target)
-      .map((action, index) => ({
-        id: `plugin-${action.pluginId}-${action.id}`,
-        label: action.label,
+  return (target: ActionTarget, json: ActionTargetInput): LibraryMenuItem[] => {
+    const matching = (actions.data?.actions ?? []).filter((action) => action.target === target);
+    const menuItem = (action: (typeof matching)[number]): LibraryMenuItem => ({
+      id: `plugin-${action.pluginId}-${action.id}`,
+      label: action.label,
+      onSelect: async () => {
+        try {
+          const result = await parseResponse(
+            runAction({ param: { id: action.pluginId, action: action.id }, json }),
+          );
+          showSuccess(result.message);
+        } catch (error) {
+          const failure = readApiError(error);
+          showError(failure.error || failure.text || `${action.pluginName} failed`);
+        }
+      },
+    });
+    const grouped = new Map<string, typeof matching>();
+    for (const action of matching) {
+      const group = grouped.get(action.pluginId) ?? [];
+      group.push(action);
+      grouped.set(action.pluginId, group);
+    }
+    return [...grouped.values()].map((group, index) => {
+      if (group.length === 1) {
+        return {
+          ...menuItem(group[0]!),
+          icon: Puzzle,
+          separatorBefore: index === 0,
+        };
+      }
+      return {
+        id: `plugin-${group[0]!.pluginId}-actions`,
+        label: group[0]!.pluginName,
         icon: Puzzle,
         separatorBefore: index === 0,
-        onSelect: async () => {
-          try {
-            const result = await parseResponse(
-              runAction({ param: { id: action.pluginId, action: action.id }, json }),
-            );
-            showSuccess(result.message);
-          } catch (error) {
-            const failure = readApiError(error);
-            showError(failure.error || failure.text || `${action.pluginName} failed`);
-          }
-        },
-      }));
+        submenuItems: group.map(menuItem),
+      };
+    });
+  };
 }
 
 export function usePlaylistPluginActions(playlistId: string) {
