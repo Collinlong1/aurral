@@ -1,12 +1,41 @@
 export type SettingValue = string | number | boolean;
 
 export interface Base {
-  capabilities?: { adminForms?: 1 };
+  capabilities?: { adminForms?: 1; resourceView?: 1; albumPresentation?: 1 };
   userOperations?: { version: 1; url: string; token: string };
   settings: Record<string, SettingValue>;
   libraryFolder: string;
   dataFolder: string;
   api?: { url: string; key: string };
+}
+
+export interface PresentationQueueItem {
+  id: string;
+  trackId: string;
+  fileId: string;
+  albumId: string;
+  title: string;
+  artist: string;
+  album: string;
+  durationMs: number | null;
+  startMs: number;
+  endMs: number | null;
+}
+
+export interface AlbumPresentationInput extends Base {
+  user: User;
+  album: Album;
+}
+
+export interface ResourcePageInput extends Base {
+  user: User;
+  pageId: string;
+  resourceId: string;
+  mutation?: {
+    command: "favourite" | "pick" | "admin-pick";
+    value?: boolean;
+    realizationId?: string | null;
+  };
 }
 
 // Optional admin-only, host-rendered forms. No browser scripts/assets are accepted.

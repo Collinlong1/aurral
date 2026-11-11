@@ -8,6 +8,12 @@ import {
   pluginPageMutation,
 } from "../services/plugins/pluginPages.ts";
 import {
+  pluginAlbumPresentation,
+  pluginResourceMutation,
+  readPluginResource,
+  mutatePluginResource,
+} from "../services/plugins/pluginPresentation.ts";
+import {
   enqueueUserPlaylist,
   ownedLibrarySnapshot,
   userOperationStatus,
@@ -96,6 +102,8 @@ export default new Hono<AppEnv>()
   .basePath("/plugins")
   .use("/:id/pages/:pageId", bodyLimit({ maxSize: 64000 }))
   .use("/:id/pages/:pageId", pageOrigin)
+  .use("/:id/resources/:pageId/:resourceId", bodyLimit({ maxSize: 64000 }))
+  .use("/:id/resources/:pageId/:resourceId", pageOrigin)
   .get("/pages", requireAuth, requireAdmin, requireUserAccount, (c) =>
     c.json(listPluginPages(c.var.user), 200),
   )
@@ -125,6 +133,35 @@ export default new Hono<AppEnv>()
           operation: "mutate",
           mutation: c.req.valid("json"),
         }),
+      ),
+  )
+  .get("/album-presentation/:albumId", requireAuth, requireUserAccount, (c) =>
+    answer(c, () => pluginAlbumPresentation(c.var.user, c.req.param("albumId"))),
+  )
+  .get("/:id/resources/:pageId/:resourceId", requireAuth, requireUserAccount, (c) =>
+    answer(c, () =>
+      readPluginResource(
+        c.var.user,
+        c.req.param("id"),
+        c.req.param("pageId"),
+        c.req.param("resourceId"),
+      ),
+    ),
+  )
+  .post(
+    "/:id/resources/:pageId/:resourceId",
+    requireAuth,
+    requireUserAccount,
+    validate("json", pluginResourceMutation),
+    (c) =>
+      answer(c, () =>
+        mutatePluginResource(
+          c.var.user,
+          c.req.param("id"),
+          c.req.param("pageId"),
+          c.req.param("resourceId"),
+          c.req.valid("json"),
+        ),
       ),
   )
   .get("/:id/user-operations/library", (c) => {

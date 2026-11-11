@@ -550,6 +550,76 @@ test("album and track actions get the Library's album and tracks", async (t) => 
     message: "Morning Run @ Lowlands true, Night Drive @ Lowlands true",
   });
   assert.equal((await runOn("album", { albumId: "missing" })).status, 404);
+
+  const firstTrack = String(trackIds[0]);
+  const albumId = String(album.id);
+  const item = `{id:'item-1',trackId:${JSON.stringify(firstTrack)},fileId:'file-1',albumId:${JSON.stringify(albumId)},title:'I. First',artist:'Glass Coast',album:'Lowlands',durationMs:1000,startMs:100,endMs:900}`;
+  const movement = `{id:'movement-1',title:'I. First',position:1}`;
+  const work = `{version:1,work:{id:'work-1',title:'Fixture Work',nickname:'user-'+input.user.id,description:'',credits:[],movements:[${movement}],collections:[]},favourite:false,pickedRealizationId:null,pickScope:null,recordings:[{id:'realization-1',label:'Owned recording',recordingIds:['recording-1'],credits:[],items:[${item}],missing:[],complete:true}]}`;
+  await install(
+    "views",
+    {
+      pages: [{ id: "work", label: "Work", admin: false }],
+      albumPresentation: true,
+    },
+    `export default {
+      albumPresentation:()=>({version:1,albumId:${JSON.stringify(albumId)},supportsToggle:true,groups:[{id:'realization-1',workId:'work-1',title:'Fixture Work',composer:'Composer',items:[${item}],missing:[],movementCount:2}]}),
+      pages:{read:(input)=>(${work}),mutate:()=>({ok:true})}
+    }`,
+  );
+  await turnOn("views");
+  const presentation = await routes(owner).request(`/plugins/album-presentation/${album.id}`);
+  assert.equal(presentation.status, 200);
+  const presentationBody = v.parse(
+    v.object({
+      groups: v.array(
+        v.object({
+          href: v.string(),
+          items: v.array(v.object({ streamPath: v.string() })),
+        }),
+      ),
+    }),
+    await presentation.json(),
+  );
+  const [presentedGroup] = presentationBody.groups;
+  assert.ok(presentedGroup);
+  const [presentedItem] = presentedGroup.items;
+  assert.ok(presentedItem);
+  assert.equal(presentedGroup.href, "/plugins/views/work/work-1");
+  assert.match(presentedItem.streamPath, /\/library\/stream\//);
+  const ownerWork = await routes(owner).request("/plugins/views/resources/work/work-1");
+  assert.equal(ownerWork.status, 200);
+  const workResponse = v.object({ work: v.object({ nickname: v.string() }) });
+  assert.equal(v.parse(workResponse, await ownerWork.json()).work.nickname, `user-${owner.id}`);
+  const strangerWork = await routes(stranger).request("/plugins/views/resources/work/work-1");
+  assert.equal(
+    v.parse(workResponse, await strangerWork.json()).work.nickname,
+    `user-${stranger.id}`,
+  );
+  assert.equal(
+    (
+      await routes(owner).request(
+        "/plugins/views/resources/work/work-1",
+        json("POST", { command: "pick", realizationId: "realization-1" }),
+      )
+    ).status,
+    200,
+  );
+  assert.equal(
+    (
+      await routes(owner).request(
+        "/plugins/views/resources/work/work-1",
+        json("POST", { command: "admin-pick", realizationId: "realization-1" }),
+      )
+    ).status,
+    403,
+  );
+  await turnOn("views", { capabilities: { albumPresentation: false, "page:work": false } });
+  assert.equal(
+    await (await routes(owner).request(`/plugins/album-presentation/${album.id}`)).json(),
+    null,
+  );
+  assert.equal((await routes(owner).request("/plugins/views/resources/work/work-1")).status, 404);
 });
 
 test("a background action answers right away and reports its result to the user who ran it", async () => {

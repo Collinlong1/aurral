@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 import { AlertCircle, EyeOff, Search, Share } from "../../components/icons";
@@ -74,6 +74,13 @@ import { useAlbumDownload } from "./useAlbumDownload.ts";
 import { useLibraryAlbumState } from "./useLibraryAlbumState.ts";
 import { useReleaseCover } from "./useReleaseCover.ts";
 import StatePanel from "../../components/StatePanel";
+import { pluginsClient } from "../../utils/api/clients/plugins.ts";
+import { parseResponse } from "hono/client";
+import { normalizeStreamQueueTrack } from "../../utils/audioQueue.ts";
+import type { pluginAlbumPresentation } from "../../../../backend/services/plugins/pluginPresentation.ts";
+import "./classicalPresentation.css";
+
+type AlbumPresentation = Awaited<ReturnType<typeof pluginAlbumPresentation>>;
 
 function AlbumPage() {
   const { ref: routeRef } = useParams();
@@ -81,10 +88,10 @@ function AlbumPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const locationState = useMemo(() => readAlbumRouteState(location.state), [location.state]);
-  const { bootstrap, hasPermission } = useAuth();
+  const { bootstrap, hasPermission, user } = useAuth();
   const { showError } = useToast();
   const share = useShareAction();
-  const { isShuffleEnabled } = useAudioQueue();
+  const { isShuffleEnabled, playQueue } = useAudioQueue();
   const getQueueItems = useQueueTrackActions();
   const { isDiscoverSectionActive } = useDiscoverRecent();
   const canAddAlbum = hasPermission("addAlbum");
@@ -113,6 +120,44 @@ function AlbumPage() {
         ? String(album.id) === albumRef.libraryAlbumId
         : album.releaseGroupMbid === routeReleaseGroupMbid || album.mbid === routeReleaseGroupMbid,
     ) || null;
+  const presentationPreferenceKey = `aurral.album-presentation.${user?.id || "guest"}`;
+  const [presentationMode, setPresentationMode] = useState<"work" | "track">(() =>
+    localStorage.getItem(presentationPreferenceKey) === "track" ? "track" : "work",
+  );
+  const presentationQuery = useQuery({
+    queryKey: ["plugin-album-presentation", libraryAlbum?.id, user?.id],
+    enabled: Boolean(libraryAlbum?.id && user?.id),
+    retry: false,
+    queryFn: () =>
+      parseResponse(
+        pluginsClient["album-presentation"][":albumId"].$get({
+          param: { albumId: String(libraryAlbum!.id) },
+        }),
+      ) as Promise<AlbumPresentation>,
+  });
+  const presentation = presentationQuery.data;
+  const setMode = (mode: "work" | "track") => {
+    setPresentationMode(mode);
+    localStorage.setItem(presentationPreferenceKey, mode);
+  };
+  const playClassicalGroup = (group: NonNullable<AlbumPresentation>["groups"][number]) =>
+    playQueue(
+      group.items.map((item) =>
+        normalizeStreamQueueTrack({
+          id: item.id,
+          trackId: item.trackId,
+          title: item.title,
+          artist: item.artist,
+          album: item.album,
+          durationMs: item.endMs != null ? item.endMs - item.startMs : item.durationMs,
+          segmentStartMs: item.startMs,
+          segmentEndMs: item.endMs,
+          streamPath: item.streamPath,
+          recordHistory: true,
+        }),
+      ),
+      { source: { type: "plugin-work", id: group.id, label: group.title } },
+    );
 
   const albumLookupQuery = useQuery({
     ...libraryAlbumLookupQueryOptions(routeReleaseGroupMbid),
@@ -749,22 +794,73 @@ function AlbumPage() {
           </>
         }
       />
-      {rows.length ? (
-        <TrackList
-          label={`${title || "Album"} tracks`}
-          rows={rows}
-          variant="release"
-          highlightKey={highlightKey}
-        />
-      ) : libraryLoading || tracksLoading ? (
-        <SkeletonStatus label="Loading tracks">
-          <SkeletonTrackList count={12} variant="release" />
-        </SkeletonStatus>
-      ) : (
-        <div className="native-library-state">
-          <span>No tracks available</span>
-        </div>
+      {presentation && (
+        <section className="classical-presentation" aria-label="Classical album view">
+          <div className="classical-presentation__toggle" role="group" aria-label="Album view">
+            <button
+              type="button"
+              className={presentationMode === "work" ? "btn btn-primary" : "btn btn-secondary"}
+              aria-pressed={presentationMode === "work"}
+              onClick={() => setMode("work")}
+            >
+              By Work
+            </button>
+            <button
+              type="button"
+              className={presentationMode === "track" ? "btn btn-primary" : "btn btn-secondary"}
+              aria-pressed={presentationMode === "track"}
+              onClick={() => setMode("track")}
+            >
+              By Track
+            </button>
+          </div>
+          {presentationMode === "work" &&
+            presentation.groups.map((group) => (
+              <article className="classical-presentation__work" key={group.id}>
+                <div>
+                  <RouteLink to={group.href}>
+                    <h2>{group.title}</h2>
+                  </RouteLink>
+                  {group.composer && <p>{group.composer}</p>}
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => playClassicalGroup(group)}
+                >
+                  Play whole work
+                </button>
+                <ol>
+                  {group.items.map((item) => (
+                    <li key={item.id}>{item.title}</li>
+                  ))}
+                </ol>
+                {group.missing.length > 0 && (
+                  <p className="classical-presentation__missing">
+                    Missing: {group.missing.map((item) => item.title).join(", ")}
+                  </p>
+                )}
+              </article>
+            ))}
+        </section>
       )}
+      {(!presentation || presentationMode === "track") &&
+        (rows.length ? (
+          <TrackList
+            label={`${title || "Album"} tracks`}
+            rows={rows}
+            variant="release"
+            highlightKey={highlightKey}
+          />
+        ) : libraryLoading || tracksLoading ? (
+          <SkeletonStatus label="Loading tracks">
+            <SkeletonTrackList count={12} variant="release" />
+          </SkeletonStatus>
+        ) : (
+          <div className="native-library-state">
+            <span>No tracks available</span>
+          </div>
+        ))}
     </CollectionPage>
   );
 }

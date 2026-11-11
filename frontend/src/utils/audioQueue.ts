@@ -63,6 +63,8 @@ export type QueueTrackInput = {
   finalPath?: string | null;
   durationMs?: number | null;
   duration_ms?: number | null;
+  segmentStartMs?: number | null;
+  segmentEndMs?: number | null;
   recordHistory?: boolean;
   isPreview?: boolean;
   download?: ReturnType<typeof buildStaticPlaylistTrackPayload> | null;
@@ -140,6 +142,16 @@ export function normalizeQueueTrack(track: QueueTrackInput, overrides: QueueTrac
     quality: track?.quality ?? overrides.quality ?? null,
     finalPath: track?.finalPath ?? overrides.finalPath ?? null,
     durationMs: track?.durationMs ?? overrides.durationMs ?? null,
+    segmentStartMs:
+      Number.isFinite(Number(track?.segmentStartMs ?? overrides.segmentStartMs)) &&
+      Number(track?.segmentStartMs ?? overrides.segmentStartMs) >= 0
+        ? Number(track?.segmentStartMs ?? overrides.segmentStartMs)
+        : null,
+    segmentEndMs:
+      Number.isFinite(Number(track?.segmentEndMs ?? overrides.segmentEndMs)) &&
+      Number(track?.segmentEndMs ?? overrides.segmentEndMs) > 0
+        ? Number(track?.segmentEndMs ?? overrides.segmentEndMs)
+        : null,
     recordHistory: track?.recordHistory === true || overrides.recordHistory === true,
     isPreview: track?.isPreview === true || overrides.isPreview === true,
     download: track?.download,
@@ -246,6 +258,18 @@ export function isDownloadedLibraryAlbum(
 }
 
 export type QueueEntry = QueueTrack & { entryId: string; queueSource?: QueueSource | null };
+
+export const queueSegmentBounds = (
+  track: QueueEntry | QueueTrackInput | null | undefined,
+  mediaDuration = 0,
+) => {
+  const requestedStart = Math.max(0, Number(track?.segmentStartMs || 0) / 1000);
+  const start = mediaDuration > 0 ? Math.min(requestedStart, mediaDuration) : requestedStart;
+  const requestedEnd = Number(track?.segmentEndMs || 0) / 1000;
+  const boundedEnd = mediaDuration > 0 ? Math.min(requestedEnd, mediaDuration) : requestedEnd;
+  const end = boundedEnd > start ? boundedEnd : mediaDuration > start ? mediaDuration : start;
+  return { start, end, duration: Math.max(0, end - start) };
+};
 
 export function radioSeedFor(
   tracks: Pick<QueueTrack, "libraryTrackId" | "artist" | "artistMbid">[],

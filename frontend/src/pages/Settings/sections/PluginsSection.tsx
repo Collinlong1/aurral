@@ -294,13 +294,15 @@ function PluginDetail({ plugin }: { plugin: Plugin }) {
           </SettingsRow>
         ) : null}
       </SettingsGroup>
-      {plugin.enabled && plugin.ready && manifest.pages.length ? (
+      {plugin.enabled && plugin.ready && manifest.pages.some((page) => page.admin) ? (
         <SettingsGroup title="Pages">
           {manifest.pages
-            .filter((page) =>
-              plugin.capabilities.some(
-                (capability) => capability.key === `page:${page.id}` && capability.enabled,
-              ),
+            .filter(
+              (page) =>
+                page.admin &&
+                plugin.capabilities.some(
+                  (capability) => capability.key === `page:${page.id}` && capability.enabled,
+                ),
             )
             .map((page) => (
               <SettingsRow key={page.id} label={page.label}>

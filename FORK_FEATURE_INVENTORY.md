@@ -1,3 +1,7 @@
+# Phase 4 inventory addendum
+
+The fork now has opt-in generic album-presentation, authenticated resource-page and bounded local queue capabilities. Classical decisions and storage stay in the plugin. Existing main/upstream/preservation refs are unchanged. See `PHASE_4_REPORT.md` and the central plugin `UPSTREAM_DELTA.md`.
+
 # Phase 3 addendum
 
 Existing fork preservation branches/main/upstream remain untouched. New D01 admin-forms v1 is a generic, opt-in core hook for the plugin-owned editor: manifest pages/capability, authenticated read/mutate transport, host forms, route/Settings entry and types/docs/tests. No core SQL schema or classical business logic is added. All classical mutations stay in independent plugin storage. The central plugin UPSTREAM_DELTA.md records exact files and limitations. Phase 3 is complete for review; no upstream PR or automatic merge.

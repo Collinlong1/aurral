@@ -64,9 +64,20 @@ export const pluginManifestSchema = v.object({
   uses: v.optional(v.pipe(v.array(text(80)), v.maxLength(10)), []),
   actions: v.optional(v.pipe(v.array(actionSchema), v.maxLength(20), unique("id")), []),
   pages: v.optional(
-    v.pipe(v.array(v.object({ id: key, label: text(60) })), v.maxLength(10), unique("id")),
+    v.pipe(
+      v.array(
+        v.object({
+          id: key,
+          label: text(60),
+          admin: v.optional(v.boolean(), true),
+        }),
+      ),
+      v.maxLength(10),
+      unique("id"),
+    ),
     [],
   ),
+  albumPresentation: v.optional(v.boolean(), false),
   events: v.optional(
     v.pipe(
       v.array(v.picklist(PLUGIN_EVENTS)),
@@ -130,8 +141,11 @@ export function pluginCapabilities(manifest: PluginManifest) {
     ...manifest.pages.map((page) => ({
       key: `page:${page.id}`,
       label: page.label,
-      kind: "Admin page",
+      kind: page.admin ? "Admin page" : "Library page",
     })),
+    ...(manifest.albumPresentation
+      ? [{ key: "albumPresentation", label: "Album presentation", kind: "Album page" }]
+      : []),
     ...manifest.actions.map((action) => ({
       key: `action:${action.id}`,
       label: action.label,

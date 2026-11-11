@@ -99,6 +99,16 @@
   flex: 1;
   min-width: 160px;
 }
+.plugin-resource section {
+  margin-top: 28px;
+}
+.plugin-resource__recording {
+  border-bottom: 1px solid var(--aurral-border);
+  padding: 16px 0 24px;
+}
+.plugin-resource__recording .btn {
+  margin: 8px 8px 0 0;
+}
 @media (max-width: 640px) {
   .plugin-page {
     padding: 16px;

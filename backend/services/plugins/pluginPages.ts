@@ -73,7 +73,7 @@ export function listPluginPages(user: RequestUser) {
   return {
     pages: activePlugins().flatMap((plugin) =>
       plugin.manifest.pages
-        .filter((page) => isCapabilityOn(plugin, `page:${page.id}`))
+        .filter((page) => page.admin && isCapabilityOn(plugin, `page:${page.id}`))
         .map((page) => ({ pluginId: plugin.id, pluginName: plugin.manifest.name, ...page })),
     ),
   };

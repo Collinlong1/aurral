@@ -11,6 +11,7 @@ import {
   normalizeQueueTrack,
   normalizePreviewTrack,
   queueReducer,
+  queueSegmentBounds,
   shouldRestartTrack,
 } from "../../frontend/src/utils/audioQueue.ts";
 import { requireFixture } from "../playlists/fixtures.ts";
@@ -25,6 +26,24 @@ const track = {
 test("flow playback can opt out of listening history", () => {
   assert.equal(normalizePlaylistQueueTrack(track).recordHistory, true);
   assert.equal(normalizePlaylistQueueTrack(track, { recordHistory: false }).recordHistory, false);
+});
+
+test("bounded work items expose range-relative duration and clamp coordinates", () => {
+  assert.deepEqual(queueSegmentBounds({ segmentStartMs: 42000, segmentEndMs: 81000 }, 120), {
+    start: 42,
+    end: 81,
+    duration: 39,
+  });
+  assert.deepEqual(queueSegmentBounds({ segmentStartMs: 5000 }, 12), {
+    start: 5,
+    end: 12,
+    duration: 7,
+  });
+  assert.deepEqual(queueSegmentBounds({ segmentStartMs: 42000, segmentEndMs: 180000 }, 120), {
+    start: 42,
+    end: 120,
+    duration: 78,
+  });
 });
 
 test("previews and playlist tracks keep their cover so the player and album-art theme can show it", () => {

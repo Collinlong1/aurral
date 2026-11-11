@@ -52,6 +52,7 @@ const DiscoverPage = lazy(routeModules.discover);
 const ShowsPage = lazy(routeModules.shows);
 const LibraryPage = lazy(routeModules.library);
 const PluginPage = lazy(() => import("./pages/PluginPage.tsx"));
+const PluginResourcePage = lazy(() => import("./pages/PluginResourcePage.tsx"));
 const WrappedPage = lazy(routeModules.wrapped);
 const WrappedAnnouncement = lazy(() => import("./components/WrappedAnnouncement.tsx"));
 const ArtistDetailsPage = lazy(routeModules.artist);
@@ -315,6 +316,7 @@ const appRoutes = createRoutesFromElements(
         <Route path="/shows/:filter" element={<ShowsPage />} />
         <Route path="/search" element={<SearchResultsPage />} />
         <Route path="/plugins/:id/:pageId" element={<PluginPage />} />
+        <Route path="/plugins/:id/:pageId/:resourceId" element={<PluginResourcePage />} />
         <Route
           path="/discover/playlists/:provider/:playlistId"
           element={<BrowsePlaylistDetailPage />}
