@@ -209,7 +209,16 @@ async function send(plugin: InstalledPlugin, request: PluginRequest, timeoutMs: 
     return await new Promise<unknown>((resolve, reject) => {
       const timer = setTimeout(() => {
         state.pending.delete(id);
-        reject(new BrokenPlugin(`didn't answer within ${Math.round(timeoutMs / 1000)} seconds`));
+        const seconds = Math.round(timeoutMs / 1000);
+        // While another call (such as a long background action) is still
+        // running, a slow answer means the plugin is busy, not hung: fail only
+        // this call. Restarting would also kill the work in progress, and
+        // counting it would turn the plugin off after a few page views.
+        if (state.pending.size > 0) {
+          reject(new PluginError(`was busy and didn't answer within ${seconds} seconds`));
+          return;
+        }
+        reject(new BrokenPlugin(`didn't answer within ${seconds} seconds`));
         stopPlugin(plugin.id);
       }, timeoutMs);
       state.pending.set(id, { resolve, reject, timer });
