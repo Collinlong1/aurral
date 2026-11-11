@@ -1,6 +1,6 @@
 import path from "node:path";
 import { getLibraryForAlbumIds, getLibraryForTrackIds } from "./libraryQueryService.ts";
-import { isAurralOwnedPath } from "./qualityProfileService.ts";
+import { isAurralOwnedPath } from "./qualityProfile.ts";
 import { downloadTracker } from "./downloadJobs/downloadTracker.ts";
 
 function positiveInteger(value: unknown) {
@@ -37,7 +37,6 @@ export function resolveAurralOwnedTrackJob({
     .filter(
       (job) =>
         job.status === "done" &&
-        job.managedBy === "aurral" &&
         !job.upgradeForJobId &&
         job.finalPath &&
         ownedFiles.some((file) => file.resolvedPath === path.resolve(job.finalPath!)) &&
@@ -94,7 +93,6 @@ export function resolveAurralOwnedTrackJob({
       albumTrackCount: albumTracks.length || null,
       albumTrackTitles: albumTracks.map((entry) => entry.title),
       artistAliases: Array.isArray(artist?.metadata?.aliases) ? artist.metadata.aliases : [],
-      managedBy: "aurral",
     },
     sourceFile.resolvedPath,
   );

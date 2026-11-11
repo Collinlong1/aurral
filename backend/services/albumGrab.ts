@@ -1,3 +1,4 @@
+import { isRecord } from "../../lib/isRecord.ts";
 import path from "node:path";
 import { isNzbSource } from "./usenetClientCommon.ts";
 import {
@@ -106,9 +107,6 @@ export function deniedAlbumSources(jobs: JobFields<"deniedRemoteSources">[], sou
 
 // Blocks the attempted release for every track it did not fill, so neither
 // the next album attempt nor a per-track search takes it again.
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null;
-
 export function blockAlbumGrabSource(payload: AlbumGrabPayload, jobs: DownloadJob[]) {
   const candidate = getPayloadCandidate(payload);
   const raw = isRecord(candidate?.raw) ? candidate.raw : null;
@@ -174,8 +172,6 @@ export async function nextAlbumSource<Payload extends AlbumGrabPayload>(
   return next ? regroupAlbumGrab(next, remaining) : null;
 }
 
-// The worker stops when it runs out of work while an album holds its
-// tracks, so the tracks an album gives back need it started again.
 function giveBack(
   payload: AlbumGrabPayload,
   jobs: DownloadJob[],
@@ -191,9 +187,6 @@ function giveBack(
   }
   if (!released) return;
   recordAlbumGrabPhase(payload, reason || "Album attempt ended; searching for missing tracks");
-  void import("./downloadJobs/mutationGuards.ts")
-    .then(({ wakeDownloadWorker }) => wakeDownloadWorker())
-    .catch(() => {});
 }
 
 // The attempt tried its release for these tracks, so each searches for
@@ -262,11 +255,13 @@ export async function finishAlbumGrab(
   payload: AlbumGrabPayload,
   {
     filePaths,
+    inPlace = false,
     source,
     album = null,
     resetFields = {},
   }: {
     filePaths?: string[];
+    inPlace?: boolean;
     source: string;
     album?: string | null;
     resetFields?: Record<string, unknown>;
@@ -320,15 +315,19 @@ export async function finishAlbumGrab(
         : job;
       const finalPath = path.join(destination, buildTrackFileName(placed, ext));
       const committed = await withPipelineCommitLock(peerPayload, async () => {
-        const committedFinalPath = await commitDownloadedFile(match.filePath, finalPath);
-        await writeImportedFileMetadata(committedFinalPath, buildResolvedJobTrack(placed), {
-          source,
-          jobId: job.id,
-        });
+        const committedFinalPath = inPlace
+          ? match.filePath
+          : await commitDownloadedFile(match.filePath, finalPath);
+        if (!inPlace)
+          await writeImportedFileMetadata(committedFinalPath, buildResolvedJobTrack(placed), {
+            source,
+            jobId: job.id,
+          });
         return finalizePipelineJobSuccess({
           downloadTracker,
           job,
           committedFinalPath,
+          inPlace,
           album,
           quality: match.validation.quality,
         });

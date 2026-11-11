@@ -5,7 +5,6 @@ import type { DownloadJob, JobFields } from "./downloadJobs/downloadTracker.ts";
 import { logger, safeLogDiagnostic } from "./logger.ts";
 
 type AlbumGrabJob = Pick<DownloadJob, "id" | "createdAt"> & { status: string } & JobFields<
-    | "managedBy"
     | "playlistType"
     | "requestGroupId"
     | "albumMbid"
@@ -72,20 +71,13 @@ export function recordAlbumGrabQueued(
 ) {
   if (payload?.albumGrab !== true || !Array.isArray(payload.albumGroupJobIds)) return;
   const leader = jobs.find((job) => job.id === payload.jobId);
-  if (
-    !leader ||
-    leader.managedBy !== "aurral" ||
-    leader.playlistType !== "library" ||
-    !leader.requestGroupId ||
-    !leader.albumMbid
-  )
+  if (!leader || leader.playlistType !== "library" || !leader.requestGroupId || !leader.albumMbid)
     return;
   const members = payload.albumGroupJobIds
     .map((id) => jobs.find((job) => job.id === id))
     .filter(
       (job) =>
         job &&
-        job.managedBy === "aurral" &&
         job.playlistType === "library" &&
         job.requestGroupId === leader.requestGroupId &&
         job.albumMbid === leader.albumMbid,
@@ -278,6 +270,34 @@ export function recordAlbumGrabPhase(
       reason: safeLogDiagnostic(error),
     });
   }
+}
+
+// An album request's tracks show as that album while they wait for the
+// worker, before their first track starts the album attempt.
+export function queuedAlbumGrabs(jobs: AlbumGrabJob[]) {
+  const waiting = jobs.flatMap(({ requestGroupId, albumMbid, ...job }) =>
+    job.status === "pending" && job.playlistType === "library" && requestGroupId && albumMbid
+      ? [{ ...job, requestGroupId, albumMbid }]
+      : [],
+  );
+  const grabs = new Map<string, AlbumGrabManifest>();
+  const albums = Map.groupBy(waiting, (job) => `${job.requestGroupId}:${job.albumMbid}`);
+  for (const [key, members] of albums) {
+    const [first, ...rest] = members;
+    if (!first || rest.length === 0) continue;
+    const grab: AlbumGrabManifest = {
+      id: `aurral-album_queued-${key}`,
+      requestGroupId: first.requestGroupId,
+      albumMbid: first.albumMbid,
+      memberJobIds: members.map((job) => job.id),
+      requestedAt: new Date(Math.min(...members.map((job) => job.createdAt))).toISOString(),
+      phase: "queued",
+      source: null,
+      fallbackReason: null,
+    };
+    for (const job of members) grabs.set(job.id, grab);
+  }
+  return grabs;
 }
 
 export function expandAlbumGrabHistory(

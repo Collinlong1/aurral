@@ -88,10 +88,7 @@ async function addLibraryFile(artistName: string, albumTitle: string, title: str
 }
 
 function addFailedJob(trackName: string) {
-  const jobId = downloadTracker.addJob(
-    { artistName: "Link Artist", trackName, managedBy: "aurral" },
-    "library",
-  );
+  const jobId = downloadTracker.addJob({ artistName: "Link Artist", trackName }, "library");
   assert.ok(jobId != null);
   downloadTracker.setFailed(jobId, "No matching source result");
   return jobId;
@@ -222,7 +219,7 @@ test("imports a file for a cancelled track", async () => {
   await fs.mkdir(externalRoot, { recursive: true });
   await writeFlacFixture(source, {}, { seconds: 2 });
   const jobId = downloadTracker.addJob(
-    { artistName: "Link Artist", trackName: "Cancelled", managedBy: "aurral" },
+    { artistName: "Link Artist", trackName: "Cancelled" },
     "library",
   );
   assert.ok(jobId != null);
@@ -309,7 +306,7 @@ test("a playlist track linked to a Library file gets that album's cover", async 
     { artistName: "Link Artist", trackName: "Covered Song" },
     { artistName: "Link Artist", trackName: "Still Missing" },
   ].map((track) => {
-    const jobId = downloadTracker.addJob({ ...track, managedBy: "aurral" }, "library");
+    const jobId = downloadTracker.addJob({ ...track }, "library");
     assert.ok(jobId != null);
     downloadTracker.setFailed(jobId, "No matching source result");
     return jobId;

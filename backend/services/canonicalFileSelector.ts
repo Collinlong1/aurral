@@ -4,16 +4,13 @@ type CanonicalFileCandidate = Partial<Omit<LibraryTrackFile, "available">> & {
   available?: unknown;
 };
 
-const sourceRank = (source: string | null | undefined, managedBy: string | null) => {
-  if (managedBy && source === managedBy) return 0;
-  if (source === "lidarr") return 1;
-  return 2;
-};
+const sourceRank = (source: string | null | undefined, managed: boolean) =>
+  managed && source === "aurral" ? 0 : 1;
 
 export function selectCanonicalFile<T extends CanonicalFileCandidate>(
   files: T[] | null | undefined,
   albumId: number | null = null,
-  managedBy: string | null = null,
+  managed = false,
 ) {
   const candidates = (Array.isArray(files) ? files : [])
     .filter((file) => file?.albumId == null || albumId == null || file.albumId == albumId)
@@ -24,8 +21,7 @@ export function selectCanonicalFile<T extends CanonicalFileCandidate>(
       if (available) return available;
       const scoped = Number(left.file.albumId != null) - Number(right.file.albumId != null);
       if (scoped) return -scoped;
-      const source =
-        sourceRank(left.file.source, managedBy) - sourceRank(right.file.source, managedBy);
+      const source = sourceRank(left.file.source, managed) - sourceRank(right.file.source, managed);
       if (source) return source;
       return String(left.file.path || "").localeCompare(String(right.file.path || ""));
     });

@@ -34,7 +34,7 @@ const [
   "subsonic-canonical",
   () => import("../../backend/config/db-sqlite.ts"),
   () => import("../../backend/db/helpers/index.ts"),
-  () => import("../../backend/middleware/passwordHash.ts"),
+  () => import("../../backend/services/passwordHash.ts"),
   () => import("../../backend/services/libraryFileScanner.ts"),
   () => import("../../backend/services/playlists/flowPlaylistConfig.ts"),
   () => import("../../backend/services/downloadJobs/downloadTracker.ts"),
@@ -215,7 +215,6 @@ function canonicalTags(title: string, trackNumber: number, recordingMbid: string
 beforeAll(async () => {
   resetDatabase(db);
   dbOps.updateSettings({
-    integrations: { general: { authUser: "alice", authPassword: "password123" } },
     security: { localNetworkBypass: { enabled: false } },
     onboardingComplete: true,
   });
@@ -243,19 +242,20 @@ beforeAll(async () => {
       canonicalTags("Unavailable Canonical Song", 2, "66666666-6666-4666-8666-666666666666"),
     ],
   ]);
-  const scanLidarrRoot = () =>
+  const scanFixtureRoot = () =>
     scanMusicRoot({
       rootPath: fixtureRoot,
-      source: "lidarr",
+      source: "readonly",
       metadataReader: async (filePath) => {
         const tags = tagsByPath.get(filePath);
         assert.ok(tags);
         return tags;
       },
     });
-  await scanLidarrRoot();
+  dbOps.setJSONSetting("readOnlyFolders", [fixtureRoot]);
+  await scanFixtureRoot();
   await rm(unavailablePath);
-  await scanLidarrRoot();
+  await scanFixtureRoot();
 
   // Flow and playlist downloads that aren't Library files: an entry playing a Library file
   // is that Library song.
@@ -1205,7 +1205,7 @@ test("serves custom library artwork through the advertised versioned cover ID", 
     )
     .get("Canonical Album");
   const image = await sharp({
-    create: { width: 24, height: 24, channels: 3, background: { r: 10, g: 120, b: 240 } },
+    create: { width: 600, height: 600, channels: 3, background: { r: 10, g: 120, b: 240 } },
   })
     .png()
     .toBuffer();
@@ -1223,7 +1223,12 @@ test("serves custom library artwork through the advertised versioned cover ID", 
     const artwork = await fetch(subsonicUrl("getCoverArt", { id: album.coverArt }));
     assert.equal(artwork.status, 200);
     assert.equal(artwork.headers.get("content-type"), "image/webp");
-    assert.ok((await artwork.arrayBuffer()).byteLength > 0);
+    const full = await sharp(Buffer.from(await artwork.arrayBuffer())).metadata();
+    assert.equal(full.width, 512);
+    const thumbnail = await fetch(subsonicUrl("getCoverArt", { id: album.coverArt, size: "100" }));
+    assert.equal(thumbnail.headers.get("content-type"), "image/webp");
+    const small = await sharp(Buffer.from(await thumbnail.arrayBuffer())).metadata();
+    assert.equal(small.width, 128);
 
     changedAfterSave = responseJson(await request("getIndexes")).indexes.lastModified;
     assert.ok(changedAfterSave > before);
@@ -2023,13 +2028,13 @@ test("streams library files through the authenticated native route", async () =>
   const { token } = await login.json();
   const headers = { Authorization: `Bearer ${token}` };
   const canonical = await fetch(
-    `http://127.0.0.1:${aurral.port}/api/library?source=lidarr&availableOnly=true&kind=tracks&page=1&pageSize=100`,
+    `http://127.0.0.1:${aurral.port}/api/library?source=readonly&availableOnly=true&kind=tracks&page=1&pageSize=100`,
     { headers },
   );
   const library = await canonical.json();
   const albumId = library.tracks[0].albums[0].albumId;
   const tracks = await fetch(
-    `http://127.0.0.1:${aurral.port}/api/library/tracks?readPath=library&source=lidarr&albumId=${albumId}`,
+    `http://127.0.0.1:${aurral.port}/api/library/tracks?readPath=library&source=readonly&albumId=${albumId}`,
     { headers },
   );
   const track = (await tracks.json())[0];

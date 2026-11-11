@@ -43,14 +43,14 @@ import {
   readStoredDiscoverLayout,
   writeStoredDiscoverLayout,
   type DiscoverSection,
-} from "./discoverUtils";
+} from "../utils/discoverUtils";
 import { useDiscoverData } from "./useDiscoverData";
 import type { DiscoverFeedStyle, DiscoverSectionId } from "../../../lib/discoverLayout.ts";
 import { useLibraryNews } from "../hooks/useLibraryNews";
 import { formatDate, formatRelativeTime } from "../utils/dateTime.ts";
 import TooltipButton from "../components/TooltipButton";
 import RouteLink from "../components/RouteLink";
-import { SettingsLink } from "./Settings/settingsRoute";
+import { SettingsLink } from "../navigation/settingsRoute";
 import { useArtistTint } from "../components/CollectionHeader";
 import { lastRecommendedPath, recommendedListPath } from "../navigation/recommendedPath";
 import { recommendationReason, seedNameSet } from "./recommendedRails";
@@ -117,7 +117,6 @@ function DiscoverPage() {
     setAppliedNearbyZip,
     canAddAlbum,
     getRecentReleaseKey,
-    libraryDestination,
     handleRecentReleaseAlbumAction,
     handleDiscoveryFeedback,
     discoveryStatus,
@@ -394,7 +393,6 @@ function DiscoverPage() {
                   canAddAlbum={canAddAlbum}
                   isPending={!!pendingRecentReleaseIds[getRecentReleaseKey(album)]}
                   onAlbumAction={handleRecentReleaseAlbumAction}
-                  libraryDestination={libraryDestination}
                 />
               </div>
             ))}

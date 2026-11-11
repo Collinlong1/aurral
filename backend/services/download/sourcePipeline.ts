@@ -10,6 +10,8 @@ import {
 import { downloadTracker, type DownloadJob } from "../downloadJobs/downloadTracker.ts";
 import { deferForInactiveOwner } from "../downloadJobs/playlistOwnerStatus.ts";
 import { resolveDownloadRoot } from "../downloadPaths.ts";
+import { readOnlyFolderPaths } from "../libraryFolders.ts";
+import { isLibraryScanActive, scheduleLibraryScan } from "../libraryScanWorker.ts";
 import {
   buildResolvedJobTrack as buildResolvedTrack,
   buildTrackFileName,
@@ -20,7 +22,7 @@ import {
 import { logger } from "../logger.ts";
 import { albumGrabJobs, deniedAlbumSources, finishAlbumGrab } from "../albumGrab.ts";
 import { selectSoulseekAlbumFolder } from "../albumReleaseSearch.ts";
-import { getQualityProfile } from "../qualityProfileService.ts";
+import { getQualityProfile } from "../qualityProfile.ts";
 import { isSameCoreAlbum } from "../downloadJobs/deemixSearch.ts";
 import { isAudioFile } from "../downloadJobs/usenetReleaseSearch.ts";
 import { attemptRelease } from "../releaseResolver.ts";
@@ -47,10 +49,18 @@ import {
   type TrackResult,
   type Upgrade,
 } from "./downloadSource.ts";
+import { filedAlbumFiles } from "./filedAlbum.ts";
+import {
+  recordTrackJobSearching,
+  recordTrackJobDownloading,
+  recordTrackJobMoving,
+} from "../aurralHistoryService.ts";
 
 const POLL_SECONDS = 15;
 const MAX_POLLS = (24 * 60 * 60) / POLL_SECONDS;
 const MAX_ALBUM_CANDIDATES = 5;
+const FILED_FALLBACK_SCAN = 8;
+const FILED_GIVE_UP = 16;
 
 type SourceCandidate = Omit<ReturnType<typeof toPipelineCandidate>, "raw"> & {
   raw: TrackResult | AlbumResult;
@@ -71,6 +81,10 @@ export type SourcePayload = {
   downloadedPath?: string | null;
   heldForReview?: ReturnType<typeof holdForReview> | null;
   pendingId?: string | null;
+  importedFiles?: string[] | null;
+  filedCount?: number | null;
+  filedPolls?: number;
+  fallbackScanned?: boolean;
   pollAttempts?: number;
   albumGrab?: boolean;
   releaseMbid?: string | null;
@@ -106,15 +120,6 @@ const resolveTrack = (payload: SourcePayload, job: DownloadJob) => ({
   ...buildResolvedTrack(job, payload.track),
   upgradeForJobId: payload.upgradeForJobId || null,
 });
-
-function recordHistory(
-  job: DownloadJob,
-  step: "recordTrackJobSearching" | "recordTrackJobDownloading" | "recordTrackJobMoving",
-) {
-  import("../aurralHistoryService.ts")
-    .then((history) => history[step](job))
-    .catch((error) => console.warn(error));
-}
 
 export function trackQuery(track: ReturnType<typeof buildResolvedTrack>) {
   return {
@@ -180,7 +185,7 @@ function startSearch(job: DownloadJob, source: DownloadSource) {
     downloadSource: source.id,
     downloadClient: source.id,
   });
-  recordHistory(job, "recordTrackJobSearching");
+  recordTrackJobSearching(job);
 }
 
 async function handleAlbumSearch(
@@ -288,6 +293,9 @@ async function stagedAudioFiles(directory: string) {
   return resolved.filter((file) => file !== null);
 }
 
+const downloadedFiles = (payload: SourcePayload, source: DownloadSource) =>
+  payload.importedFiles ?? stagedAudioFiles(stagingDir(source, payload.jobId));
+
 // Aurral judges the files themselves, as it does for a Usenet release, so a
 // track still imports when the file names didn't show which one it is.
 async function albumTrackDownloaded(
@@ -297,7 +305,7 @@ async function albumTrackDownloaded(
 ) {
   const found = await selectVerifiedDownloadedFile({
     request: resolveTrack(payload, job),
-    filePaths: await stagedAudioFiles(stagingDir(source, job.id)),
+    filePaths: await downloadedFiles(payload, source),
     source: source.id,
     options: { release: await attemptRelease(payload, job) },
   });
@@ -395,17 +403,24 @@ async function startDownload(
 }
 
 async function handleDownload(
-  payload: SourcePayload,
+  attempt: SourcePayload,
   source: DownloadSource,
   helpers: SourceHelpers,
 ) {
+  const payload = {
+    ...attempt,
+    importedFiles: null,
+    filedCount: null,
+    filedPolls: 0,
+    fallbackScanned: false,
+  };
   const job = downloadTracker.getJob(payload.jobId);
   if (!job || job.status === "failed" || job.status === "done") return null;
   const candidate = payload.candidates?.[Number(payload.candidateIndex || 0)];
   const result = candidate?.raw;
   if (!v.is(trackResult, result))
     return helpers.failOrTryNextSource(payload, job, "No search result to download");
-  recordHistory(job, "recordTrackJobDownloading");
+  recordTrackJobDownloading(job);
   try {
     const started = await startDownload(payload, source, job, result);
     if (!isPipelinePayloadActive(payload)) {
@@ -442,12 +457,55 @@ async function handleDownload(
   }
 }
 
+const FILED_NOT_FOUND =
+  "finished, but Aurral didn't find the album in a read-only folder. Check that the folder it saves to is in Settings > Library and its files are tagged";
+
+// A client that files its own downloads names no files, so Aurral waits until
+// its Library index holds the album. A fallback scan covers shares that send
+// no file events, and polls during a scan don't count toward giving up.
+async function waitForFiledAlbum(payload: SourcePayload, source: DownloadSource, job: DownloadJob) {
+  if (!isPipelinePayloadActive(payload)) {
+    await discardSourceWork(payload, source);
+    return null;
+  }
+  const roots = readOnlyFolderPaths();
+  if (roots.length === 0) throw new DownloadSourceError(FILED_NOT_FOUND);
+  const scanning = isLibraryScanActive();
+  const filedPolls = Number(payload.filedPolls || 0);
+  const files = scanning ? [] : filedAlbumFiles(job);
+  if (!scanning && (files.length >= Number(payload.filedCount) || filedPolls >= FILED_GIVE_UP)) {
+    if (files.length === 0) throw new DownloadSourceError(FILED_NOT_FOUND);
+    const finished = { ...payload, importedFiles: files };
+    if (finished.albumGrab === true)
+      return {
+        ...finished,
+        phase: "finalize",
+        candidate: getPayloadCandidate(finished),
+        pendingId: null,
+      };
+    return await albumTrackDownloaded(finished, source, job);
+  }
+  if (Number(payload.pollAttempts) >= MAX_POLLS) throw new DownloadSourceError(FILED_NOT_FOUND);
+  const counted = scanning ? filedPolls : filedPolls + 1;
+  const scan = !payload.fallbackScanned && counted >= FILED_FALLBACK_SCAN;
+  if (scan) scheduleLibraryScan({ changedPaths: roots });
+  return {
+    ...payload,
+    phase: "poll",
+    filedPolls: counted,
+    fallbackScanned: payload.fallbackScanned === true || scan,
+    delaySeconds: POLL_SECONDS,
+  };
+}
+
 async function handlePoll(payload: SourcePayload, source: DownloadSource, helpers: SourceHelpers) {
   const job = downloadTracker.getJob(payload.jobId);
   if (!job || job.status === "failed" || job.status === "done") return null;
   const directory = stagingDir(source, job.id);
   const pollAttempts = Number(payload.pollAttempts || 0) + 1;
   try {
+    if (payload.filedCount)
+      return await waitForFiledAlbum({ ...payload, pollAttempts }, source, job);
     const current = await keepFiles(payload, source, job);
     const status = await source.status({ id: String(current.pendingId), directory });
     if (!isPipelinePayloadActive(current)) {
@@ -458,6 +516,23 @@ async function handlePoll(payload: SourcePayload, source: DownloadSource, helper
       if (pollAttempts >= MAX_POLLS)
         throw new DownloadSourceError("didn't finish the download within a day");
       return { ...current, phase: "poll", pollAttempts, delaySeconds: POLL_SECONDS };
+    }
+    if (status.filed) {
+      if (job.upgradeForJobId)
+        throw new DownloadSourceError("filed an upgrade itself, and Aurral files its own upgrades");
+      if (current.albumGrab !== true && !fromAlbum(current, source))
+        throw new DownloadSourceError("finished a download without its path");
+      return await waitForFiledAlbum(
+        {
+          ...current,
+          pollAttempts,
+          filedCount: status.filed,
+          filedPolls: 0,
+          fallbackScanned: false,
+        },
+        source,
+        job,
+      );
     }
     const candidate = current.candidates?.[Number(current.candidateIndex || 0)];
     if (current.albumGrab === true)
@@ -475,10 +550,18 @@ async function handlePoll(payload: SourcePayload, source: DownloadSource, helper
 async function handleAlbumFinalize(payload: SourcePayload, source: DownloadSource) {
   const directory = stagingDir(source, payload.jobId);
   const next = await finishAlbumGrab(payload, {
-    filePaths: await stagedAudioFiles(directory),
+    filePaths: await downloadedFiles(payload, source),
+    inPlace: Boolean(payload.importedFiles),
     source: source.id,
     album: getPayloadCandidate(payload)?.resolvedAlbumName ?? null,
-    resetFields: { pendingId: null, pollAttempts: 0, downloadedPath: null },
+    resetFields: {
+      pendingId: null,
+      pollAttempts: 0,
+      downloadedPath: null,
+      filedCount: null,
+      filedPolls: 0,
+      fallbackScanned: false,
+    },
   });
   await cleanup(directory);
   return next;
@@ -514,8 +597,9 @@ async function handleFinalize(
     await cleanup(directory);
     return null;
   }
+  const inPlace = Boolean(payload.importedFiles);
   if (!validation.valid) {
-    if (validation.blocked && !payload.heldForReview) {
+    if (validation.blocked && !payload.heldForReview && !inPlace) {
       const heldPath = path.join(
         path.dirname(directory),
         `${job.id}-held${path.extname(filePath)}`,
@@ -554,14 +638,17 @@ async function handleFinalize(
     buildTrackFileName(job, path.extname(filePath).toLowerCase() || ".flac"),
   );
   const committed = await withPipelineCommitLock(payload, async () => {
-    await writeAudioMetadata(filePath, resolvedTrack);
-    recordHistory(job, "recordTrackJobMoving");
-    const committedFinalPath = await commitDownloadedFile(filePath, finalPath);
+    if (!inPlace) {
+      await writeAudioMetadata(filePath, resolvedTrack);
+      recordTrackJobMoving(job);
+    }
+    const committedFinalPath = inPlace ? filePath : await commitDownloadedFile(filePath, finalPath);
     await cleanup(directory);
     return finalizePipelineJobSuccess({
       downloadTracker,
       job,
       committedFinalPath,
+      inPlace,
       album: candidate?.resolvedAlbumName,
       quality: validation.quality,
     });

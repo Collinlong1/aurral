@@ -27,16 +27,12 @@ import {
 } from "../downloadJobs/fileReuse.ts";
 import { downloadTracker } from "../downloadJobs/downloadTracker.ts";
 import { resolveAurralOwnedTrackJob } from "../libraryTrackResearchService.ts";
-import { isAurralOwnedPath } from "../qualityProfileService.ts";
+import { isAurralOwnedPath } from "../qualityProfile.ts";
 import { playlistManager } from "./playlistManager.ts";
 import { isAnyDownloadSourceConfigured } from "../downloadSourceService.ts";
 import { downloadWorker } from "../downloadJobs/downloadWorker.ts";
-import {
-  restartWorkerIfPending,
-  wakeDownloadWorker,
-  withPlaylistMutation,
-  withPlaylistMutationLock,
-} from "../downloadJobs/mutationGuards.ts";
+import { withPlaylistMutationLock } from "../downloadJobs/downloadLocks.ts";
+import { withPlaylistMutation } from "../downloadJobs/mutationGuards.ts";
 import { withLock } from "../jobs/queue.ts";
 import { flowRunSpec } from "../flows/flowTrackSource.ts";
 import type { DownloadJob } from "../downloadJobs/downloadTracker.ts";
@@ -50,7 +46,6 @@ import {
   restoreDownloadJobCancellations,
 } from "../downloadJobs/downloadCancellation.ts";
 import { cancelPlaylistDownloadWork } from "../downloadJobs/downloadCancellationService.ts";
-import { getPathMappings, resolveLocalPath } from "../pathMappings.ts";
 import type {
   LibraryAlbumTracksRow,
   LibraryMediaFilesRow,
@@ -59,6 +54,7 @@ import type {
 import { discardLibraryJobs, linkTracksToLibrary, releaseLibraryJobs } from "./playlistLibrary.ts";
 import { unknownList } from "../../../lib/unknownList.ts";
 import { isRecord } from "../../../lib/isRecord.ts";
+import { finalizeQualityUpgradeFailure } from "../qualityUpgradeOutcome.ts";
 
 const operationTokenKey = (scope: string) => `playlistOperationTokens:${encodeURIComponent(scope)}`;
 
@@ -229,8 +225,7 @@ const linkIndexedFiles = async (tracks: unknown, ownerUserId: unknown) => {
       linked.push(track);
       continue;
     }
-    const finalPath =
-      file.source === "lidarr" ? resolveLocalPath(file.path, getPathMappings("lidarr")) : file.path;
+    const finalPath = file.path;
     const existing = libraryJobsByPath.get(finalPath);
     if (existing) {
       linked.push({ ...input, canonicalJobId: existing.id });
@@ -241,7 +236,7 @@ const linkIndexedFiles = async (tracks: unknown, ownerUserId: unknown) => {
       linked.push(track);
       continue;
     }
-    const external = file.source === "lidarr" || file.source === "readonly";
+    const external = file.source === "readonly";
     downloadTracker.setDone(jobId, finalPath, input.albumName, external ? file.path : null, {
       reusedLibraryFile: true,
     });
@@ -359,13 +354,11 @@ async function runFlowSeed({
 
   if (Array.isArray(result?.jobIds)) rescanLibraryForFlows([safeFlowId]);
   if (result?.tracksQueued && result.tracksQueued > 0) {
-    await wakeDownloadWorker();
     recordFlowTracksGenerated({
       flowId: safeFlowId,
       tracksQueued: result.tracksQueued,
     });
   } else {
-    await restartWorkerIfPending();
     recordFlowTracksGenerated({ flowId: safeFlowId, tracksFound: result?.jobIds?.length });
   }
   return result;
@@ -380,7 +373,6 @@ async function downloadSavedFlowTracks({ flowId }: OperationPayload = {}) {
     recordTrackJobQueued(downloadTracker.getJob(job.id));
     queued += 1;
   }
-  if (queued > 0) await wakeDownloadWorker();
   playlistManager.requestPlaylistSync([safeFlowId]);
   return { queued };
 }
@@ -407,7 +399,6 @@ async function runFlowCleanup({ flowId, tokenScope = null, token = null }: Opera
     downloadTracker.clearByPlaylistId(safeFlowId);
   });
   rescanLibraryForFlows([safeFlowId]);
-  await restartWorkerIfPending();
   return { success: true, flowId: safeFlowId };
 }
 
@@ -434,7 +425,6 @@ async function deleteFlow({ flowId, tokenScope = null, token = null }: Operation
     playlistManager.requestPlaylistSync([safeFlowId]);
     playlistManager.scheduleScanLibrary();
   }
-  await restartWorkerIfPending();
   return didDelete;
 }
 
@@ -451,7 +441,6 @@ async function resetPlaylists({ playlistTypes = [] }: OperationPayload = {}) {
     await playlistManager.weeklyReset(types);
   });
   rescanLibraryForFlows(types);
-  await restartWorkerIfPending();
   return { success: true, playlistTypes: types };
 }
 
@@ -706,14 +695,13 @@ async function researchPlaylistTrack({ playlistId, jobId }: OperationPayload = {
     return { alreadyProcessing: true };
   }
   const previousFinalPath = job.finalPath;
-  if (job.status === "done" && job.managedBy === "aurral" && isAurralOwnedPath(job.finalPath)) {
+  if (job.status === "done" && isAurralOwnedPath(job.finalPath)) {
     const replacementJobId = downloadTracker.addReplacementSearchJob(job);
     if (!replacementJobId) {
       return { alreadyProcessing: true };
     }
     if (!downloadTracker.enqueueDownloadPipeline(replacementJobId)) {
       const replacementJob = downloadTracker.getJob(replacementJobId);
-      const { finalizeQualityUpgradeFailure } = await import("../qualityProfileService.ts");
       await finalizeQualityUpgradeFailure(replacementJob!, "Could not queue a replacement search");
       return { success: false, queueFailed: true };
     }
@@ -736,7 +724,6 @@ async function researchPlaylistTrack({ playlistId, jobId }: OperationPayload = {
   };
   if (isLibraryJob) {
     requeue();
-    await wakeDownloadWorker();
     return { success: true, reused: false, jobId: safeJobId, playlistId: safePlaylistId };
   }
   let reused = false;
@@ -769,12 +756,6 @@ async function researchPlaylistTrack({ playlistId, jobId }: OperationPayload = {
   );
   playlistManager.requestPlaylistSync([safePlaylistId]);
   playlistManager.scheduleScanLibrary();
-  if (!reused) {
-    await restartWorkerIfPending();
-    if (downloadWorker.running) {
-      downloadWorker.wake();
-    }
-  }
   return {
     success: true,
     reused,
@@ -794,7 +775,6 @@ async function researchLibraryTrack({ trackId, albumId }: OperationPayload = {})
   if (!replacementJobId) return { alreadyProcessing: true };
   if (!downloadTracker.enqueueDownloadPipeline(replacementJobId)) {
     const replacementJob = downloadTracker.getJob(replacementJobId);
-    const { finalizeQualityUpgradeFailure } = await import("../qualityProfileService.ts");
     await finalizeQualityUpgradeFailure(replacementJob!, "Could not queue a replacement search");
     return { success: false, queueFailed: true };
   }

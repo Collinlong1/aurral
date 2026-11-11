@@ -1,4 +1,6 @@
-import type { MonitoringRules } from "../components/MonitoringRulesFields.tsx";
+import type { MonitorRules } from "../../../backend/services/monitoring.ts";
+
+export type MonitoringRules = MonitorRules;
 
 export const MAX_LATEST_RELEASES = 10;
 export const MAX_TOP_TRACKS = 50;
@@ -36,7 +38,6 @@ export const RELEASE_SKIP_REASONS = {
   covered: "Another release has its songs",
   excluded: "You removed it",
   unmonitored: "You stopped monitoring it",
-  managed_by_lidarr: "Managed by Lidarr",
   metadata_unavailable: "Its tracklist could not be loaded",
 };
 
@@ -101,10 +102,3 @@ export function describeDownloadCount({
   ].filter(Boolean) as string[];
   return parts.length ? joinWords(parts) : "";
 }
-
-export const rulesForEditing = (
-  state:
-    | { rules?: MonitoringRules | null; defaultRules?: MonitoringRules | null }
-    | null
-    | undefined,
-) => state?.rules || state?.defaultRules || null;

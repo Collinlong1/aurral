@@ -220,6 +220,12 @@ Set `"upgrades": true` to supply quality upgrades. `upgrade` is `null` for a tra
 
 Export `discard` too. Aurral calls `discard({ id })` when it no longer wants a pending download: the user cancelled it, it failed, or its files didn't match. Remove what the client still downloads, and leave a finished download alone when the client keeps it, for example to seed.
 
+### Clients that file their own downloads
+
+A client that files finished album downloads in its own folder, like Lidarr, can leave them there. When the album is done, return `{ done: true, filed: <count> }` from `status`, with the number of audio files the client has for it, and put nothing in `directory`. No paths: the folder has to be one of the user's read-only folders, which they add in **Settings > Library**, and Aurral finds the album there through its Library index.
+
+Aurral waits until it has indexed that many files for the album, scans the read-only folders once if file events don't arrive, and fails the download if the album never shows up. It checks the files like any download, uses the ones that match where they are, and never moves, changes, or deletes them. A file that doesn't match is skipped instead of going to the review queue. Only album downloads can be filed, and an upgrade can't, because Aurral replaces the file it upgrades.
+
 ## Import lists
 
 ```json

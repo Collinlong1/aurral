@@ -7,7 +7,7 @@ import {
 import type { libraryRadioClient } from "./api/clients/libraryRadio.ts";
 import type { LibraryTrack } from "./libraryPageData.ts";
 import { shuffle } from "../../../lib/shuffle.ts";
-import type { buildStaticPlaylistTrackPayload } from "../pages/ArtistDetails/utils.ts";
+import type { buildStaticPlaylistTrackPayload } from "./staticPlaylists.ts";
 
 const FORMAT_BY_EXTENSION: Partial<Record<string, string[]>> = {
   mp3: ["mp3"],
@@ -225,23 +225,6 @@ export function normalizePreviewTrack(
       durationMs: track?.durationMs ?? track?.duration_ms,
     },
     overrides,
-  );
-}
-
-export function isDownloadedLibraryAlbum(
-  album: {
-    id?: string | number | null;
-    monitored?: boolean;
-    statistics?: { percentOfTracks?: number; sizeOnDisk?: number };
-  } | null,
-  downloadStatuses: Record<string, unknown> = {},
-) {
-  if (String(album?.id ?? "").startsWith("pending-")) return false;
-  return (
-    album?.monitored ||
-    (album?.statistics?.percentOfTracks ?? 0) > 0 ||
-    (album?.statistics?.sizeOnDisk ?? 0) > 0 ||
-    !!downloadStatuses[String(album?.id)]
   );
 }
 

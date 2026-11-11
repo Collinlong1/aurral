@@ -1,14 +1,15 @@
 import assert from "node:assert/strict";
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterAll, afterEach, beforeEach, test } from "vite-plus/test";
+import { afterAll, afterEach, beforeEach, test, vi } from "vite-plus/test";
 import {
   cleanupIsolatedState,
   resetDatabase,
   setupIsolatedBackend,
 } from "../helpers/backendTestHarness.ts";
 import { writeFlacFixture } from "../helpers/flacFixture.ts";
+import { brainzmashGroup, serveGroups } from "../helpers/releaseFixture.ts";
 import { createTrackedJob, trackedJob } from "../download/fixtures.ts";
 import { insertJob } from "../helpers/jobs.ts";
 
@@ -17,6 +18,7 @@ type Payload = Parameters<typeof processPluginPipelinePayload>[0];
 const [
   state,
   { db },
+  { dbOps },
   { downloadTracker },
   { processPluginPipelinePayload },
   { pluginsDir },
@@ -24,9 +26,13 @@ const [
   { refreshInstalledPlugins, updatePlugin },
   { getEnabledDownloadSources, getSourceLabel, upgradeSourceIds },
   { cancelDownloadWorkForJobs },
+  { logger },
+  libraryStore,
+  { clearScheduledLibraryScan, isLibraryScanActive, scheduleLibraryScan },
 ] = await setupIsolatedBackend(
   "plugin-download-source",
   () => import("../../backend/config/db-sqlite.ts"),
+  () => import("../../backend/db/helpers/index.ts"),
   () => import("../../backend/services/downloadJobs/downloadTracker.ts"),
   () => import("../../backend/services/plugins/pluginDownloadSource.ts"),
   () => import("../../backend/services/plugins/pluginManifest.ts"),
@@ -34,6 +40,9 @@ const [
   () => import("../../backend/services/plugins/pluginService.ts"),
   () => import("../../backend/services/downloadSourceService.ts"),
   () => import("../../backend/services/downloadJobs/downloadCancellationService.ts"),
+  () => import("../../backend/services/logger.ts"),
+  () => import("../../backend/services/libraryMediaStore.ts"),
+  () => import("../../backend/services/libraryScanWorker.ts"),
 );
 
 const SOURCE = `let polls = 0;
@@ -80,6 +89,15 @@ export default { downloadSource: {
   discard: () => {},
 } };`;
 
+const IN_PLACE_SOURCE = `export default { downloadSource: {
+  search: ({ track }) => [{ id: "t1", title: track.title, artist: track.artist, album: track.album, durationMs: 1000, format: "flac" }],
+  download: () => ({ pending: "t1" }),
+  searchAlbum: ({ album }) => [{ id: "a1", title: album.title, artist: album.artist }],
+  downloadAlbum: () => ({ pending: "a1" }),
+  status: ({ settings }) => ({ done: true, filed: Number(settings.filed) }),
+  discard: () => {},
+} };`;
+
 let fixtureDir = "";
 
 async function installSource(
@@ -102,6 +120,7 @@ async function installSource(
         { key: "escape", label: "Escape", type: "boolean" },
         { key: "pending", label: "Pending", type: "boolean" },
         { key: "lost", label: "Lost", type: "boolean" },
+        { key: "filed", label: "Filed", type: "text" },
       ],
     }),
   );
@@ -110,11 +129,11 @@ async function installSource(
   updatePlugin("tapes", { enabled: true, priority: 5, settings });
 }
 
-async function runSteps(jobId: string, until: string) {
+async function runSteps(jobId: string, until: string, start: Partial<Payload> = {}) {
   const fail = async (_payload: Payload, _job: unknown, message: string) => {
     throw new Error(message);
   };
-  let payload: Payload | null = { jobId, phase: "search", source: "plugin:tapes" };
+  let payload: Payload | null = { jobId, phase: "search", source: "plugin:tapes", ...start };
   const phases: string[] = [];
   while (payload && payload.phase !== until) {
     phases.push(payload.phase);
@@ -127,6 +146,47 @@ async function runSteps(jobId: string, until: string) {
 }
 
 const runToEnd = async (jobId: string) => (await runSteps(jobId, "done")).phases;
+
+async function step(payload: Payload) {
+  const next: unknown = await processPluginPipelinePayload(payload, {
+    failOrTryNextSource: async (_payload, _job, message) => {
+      throw new Error(message);
+    },
+  });
+  return next && typeof next === "object" && "phase" in next ? (next as Payload) : null;
+}
+
+function indexAlbum(
+  artistId: number,
+  title: string,
+  files: Record<string, string>,
+  releaseGroupMbid: string | null = null,
+) {
+  const album = libraryStore.upsertLibraryAlbum({
+    identityKey: `${title}:${releaseGroupMbid ?? "untagged"}`,
+    releaseGroupMbid,
+    artistId,
+    title,
+  });
+  Object.entries(files).forEach(([song, filePath], index) => {
+    const track = libraryStore.upsertLibraryTrack({
+      identityKey: `${title}:${song}`,
+      title: song,
+      artistName: "Glass Coast",
+    });
+    libraryStore.linkLibraryAlbumTrack({
+      albumId: album.id,
+      trackId: track.id,
+      trackNumber: index + 1,
+    });
+    libraryStore.upsertLibraryMediaFile({
+      trackId: track.id,
+      albumId: album.id,
+      source: "readonly",
+      path: filePath,
+    });
+  });
+}
 
 beforeEach(async () => {
   resetDatabase(db);
@@ -213,8 +273,19 @@ test("a plugin source is told to discard a pending download that failed or was c
       "plugin-source",
     );
   const jobId = track();
+  const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
 
-  await assert.rejects(runToEnd(jobId), /download failed: the client lost it/);
+  try {
+    await assert.rejects(runToEnd(jobId), /download failed: the client lost it/);
+    assert.deepEqual(
+      warn.mock.calls
+        .filter((call) => JSON.stringify(call).includes("the client lost it"))
+        .map(([category, message]) => [category, message]),
+      [["plugin:tapes", "Download failed"]],
+    );
+  } finally {
+    warn.mockRestore();
+  }
   assert.equal(await readFile(`${fixture}.discarded`, "utf8"), "client-7");
 
   await rm(`${fixture}.discarded`);
@@ -272,4 +343,146 @@ test("an album-only plugin source fills a track request with the one file it kep
   assert.equal(job.status, "done");
   assert.equal(job.remoteFilename, "02 Night Drive.flac");
   await access(String(job.finalPath));
+});
+
+async function filedFixtures(t: { onTestFinished: (fn: () => void) => void }) {
+  const music = await realpath(fixtureDir);
+  const folder = path.join(music, "Glass Coast");
+  await mkdir(folder, { recursive: true });
+  const write = (name: string, title: string, album: string, track: number) =>
+    writeFlacFixture(
+      path.join(folder, name),
+      { title, artist: "Glass Coast", album, track },
+      { seconds: 1 },
+    );
+  const harbor = await write("01 Harbor.flac", "Harbor", "Breakwater", 1);
+  const tide = await write("01 Tide.flac", "Tide", "Lowlands", 1);
+  const nightDrive = await write("02 Night Drive.flac", "Night Drive", "Lowlands", 2);
+  assert.ok(harbor && tide && nightDrive);
+  t.onTestFinished(() => {
+    dbOps.setJSONSetting("readOnlyFolders", []);
+    clearScheduledLibraryScan();
+  });
+  const artist = libraryStore.upsertLibraryArtist({
+    identityKey: "glass-coast",
+    name: "Glass Coast",
+  });
+  const request = (trackName: string, trackNumber: number, playlist: string) =>
+    createTrackedJob(
+      downloadTracker,
+      {
+        artistName: "Glass Coast",
+        trackName,
+        albumName: "Lowlands",
+        albumMbid: "lowlands-group",
+        releaseMbid: "lowlands-release",
+        trackNumber,
+        durationMs: 1000,
+      },
+      playlist,
+    );
+  return { music, artistId: artist.id, harbor, tide, nightDrive, request };
+}
+
+test("a source that files its own album downloads has them found in a read-only folder and used where they are", async (t) => {
+  const { music, artistId, harbor, tide, nightDrive, request } = await filedFixtures(t);
+  indexAlbum(artistId, "Breakwater", { Harbor: harbor });
+  indexAlbum(artistId, "Lowlands", { "Night Drive": nightDrive }, "lowlands-group");
+  indexAlbum(artistId, "Lowlands (Deluxe)", { Tide: tide });
+  const before = await Promise.all([readFile(tide), readFile(nightDrive)]);
+  await installSource({ filed: "2" }, { tracks: false, albums: true }, IN_PLACE_SOURCE);
+  await serveGroups(t, [
+    brainzmashGroup({
+      id: "lowlands-group",
+      title: "Lowlands",
+      artist: "Glass Coast",
+      releases: [
+        {
+          id: "lowlands-release",
+          tracks: ["Tide", "Night Drive"].map((title) => ({ title, durationMs: 1000 })),
+        },
+      ],
+    }),
+  ]);
+
+  await assert.rejects(
+    runToEnd(request("Night Drive", 2, "no-read-only-folders")),
+    /download failed: finished, but Aurral didn't find the album in a read-only folder/,
+  );
+
+  dbOps.setJSONSetting("readOnlyFolders", [music]);
+  const track = request("Night Drive", 2, "track-request");
+  assert.deepEqual(await runToEnd(track), ["search", "download", "poll", "finalize"]);
+  clearScheduledLibraryScan();
+  const album = request("Tide", 1, "album-request");
+  await runSteps(album, "done", {
+    albumGrab: true,
+    albumGroupJobIds: [album],
+    releaseMbid: "lowlands-release",
+  });
+  for (const [jobId, filePath] of [
+    [track, nightDrive],
+    [album, tide],
+  ] as const) {
+    const job = trackedJob(downloadTracker, jobId);
+    assert.equal(job.status, "done");
+    assert.equal(job.finalPath, filePath);
+    assert.equal(job.externalPath, filePath);
+  }
+
+  const upgrade = downloadTracker.addUpgradeJob(trackedJob(downloadTracker, track));
+  assert.ok(upgrade);
+  await assert.rejects(runToEnd(upgrade), /download failed: filed an upgrade itself/);
+
+  await installSource({ filed: "2" }, { albums: true }, IN_PLACE_SOURCE);
+  await assert.rejects(
+    runToEnd(request("Night Drive", 2, "track-source")),
+    /download failed: finished a download without its path/,
+  );
+  assert.deepEqual(await Promise.all([readFile(tide), readFile(nightDrive)]), before);
+});
+
+test("a filed album waits for the Library index, and scans the read-only folders once before giving up", async (t) => {
+  const { music, artistId, tide, nightDrive, request } = await filedFixtures(t);
+  dbOps.setJSONSetting("readOnlyFolders", [music]);
+  await installSource({ filed: "2" }, { tracks: false, albums: true }, IN_PLACE_SOURCE);
+  await serveGroups(t, [
+    brainzmashGroup({
+      id: "lowlands-group",
+      title: "Lowlands",
+      artist: "Glass Coast",
+      releases: [
+        {
+          id: "lowlands-release",
+          tracks: ["Tide", "Night Drive"].map((title) => ({ title, durationMs: 1000 })),
+        },
+      ],
+    }),
+  ]);
+
+  indexAlbum(artistId, "Lowlands", { Tide: tide });
+  scheduleLibraryScan({ changedPaths: [music] });
+  const waiting = request("Night Drive", 2, "waits");
+  let payload = await step((await runSteps(waiting, "poll")).payload!);
+  assert.equal(payload?.phase, "poll");
+  payload = await step(payload!);
+  assert.equal(payload?.filedPolls, 0);
+  indexAlbum(artistId, "Lowlands", { Tide: tide, "Night Drive": nightDrive });
+  clearScheduledLibraryScan();
+  assert.equal((await step(payload!))?.phase, "finalize");
+
+  const missing = request("Night Drive", 2, "missing");
+  payload = (await runSteps(missing, "poll")).payload!;
+  db.prepare("UPDATE library_media_files SET available = 0").run();
+  while (payload && Number(payload.filedPolls ?? 0) < 8) payload = await step(payload);
+  assert.equal(payload?.fallbackScanned, true);
+  assert.ok(isLibraryScanActive());
+  payload = await step(payload!);
+  assert.equal(payload?.filedPolls, 8);
+  clearScheduledLibraryScan();
+  while (payload && Number(payload.filedPolls ?? 0) < 16) payload = await step(payload);
+  await assert.rejects(
+    step(payload!),
+    /download failed: finished, but Aurral didn't find the album in a read-only folder/,
+  );
 });

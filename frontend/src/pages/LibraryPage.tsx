@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { parseResponse } from "hono/client";
 import { Link, useNavigate, useNavigationType, useParams, useSearchParams } from "react-router";
@@ -38,7 +38,6 @@ import {
   SkeletonText,
   SkeletonTrackList,
 } from "../components/Skeletons";
-import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
 import { useDocumentTitle } from "../hooks/useDocumentTitle";
 import { libraryClient } from "../utils/api/clients/library.ts";
@@ -56,12 +55,7 @@ import {
   favoriteId,
   firstAvailableFile,
 } from "../utils/libraryPageData.ts";
-import {
-  aurralAlbumStatusKey,
-  describeAurralAlbumStatus,
-  shouldPollAlbumStatuses,
-} from "../utils/aurralAlbumStatus.ts";
-import { canRemoveLibraryArtist } from "../utils/libraryDestination.ts";
+import { describeAlbumStatus, shouldPollAlbumStatuses } from "../utils/albumStatus.ts";
 import { useArtistMonitoring } from "../components/ArtistMonitoringButtons";
 import { LIBRARY_VIEWS } from "../navigation/libraryNavConfig";
 import {
@@ -76,13 +70,12 @@ import {
   libraryViewQueryOptions,
   resolveLibrarySection,
   type LibraryViewLibrary,
-} from "./libraryViewQuery.ts";
-import ArtistMbidModal from "./ArtistMbidModal";
+} from "../utils/libraryViewQuery.ts";
+import { ArtistMatchModal, type ArtistMatchResult } from "./library/MatchModal";
 import { Pagination } from "../components/Pagination.tsx";
 import { DiscoverRail } from "../components/DiscoverRail";
 import { LibraryHomeMixes } from "./library/LibraryHomeMixes";
 import { LibraryHomePlaylists } from "./library/LibraryHomePlaylists";
-import { getApiErrorMessage, getApiErrorText } from "./ArtistDetails/utils";
 import { useResponsiveReleaseLimit } from "./ArtistDetails/hooks/useResponsiveReleaseLimit";
 import { queryKeys } from "../queryClient.ts";
 import Tooltip from "../components/Tooltip";
@@ -98,6 +91,7 @@ import {
   useLibraryScanRefresh,
   useLibraryViewData,
 } from "./library/libraryShared.tsx";
+import { getApiErrorMessage, getApiErrorText } from "../utils/api/errors.ts";
 
 type LibraryData = LibraryViewLibrary;
 
@@ -133,6 +127,9 @@ const QUERY_DEBOUNCE_MS = 250;
 
 const wait = (durationMs: number) => new Promise((resolve) => setTimeout(resolve, durationMs));
 
+const canRemoveLibraryArtist = (artist: LibraryArtist) =>
+  Boolean(artist.mbid) || artist.sources?.some((source) => source === "aurral") === true;
+
 const artistAlbumTotal = (artist: LibraryArtist) =>
   ("albumCount" in artist ? artist.albumCount : undefined) ?? artist.albumIds?.length ?? 0;
 
@@ -163,7 +160,6 @@ function LibraryPage() {
   const navigate = useNavigate();
   const { section: routeSection, artistId: routeArtistId } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { bootstrap } = useAuth();
   const { showError, showSuccess } = useToast();
   const navigationType = useNavigationType();
   const urlQuery = searchParams.get("q") || "";
@@ -410,7 +406,7 @@ function LibraryPage() {
   const queryData = libraryQuery.data;
   const { isPreviewLibrary, library, favoriteIds } = useLibraryViewData(queryData, forcePreview);
   const loading = !forcePreview && libraryQuery.isPending;
-  const error = forcePreview ? null : getApiErrorMessage(libraryQuery.error) || null;
+  const error = forcePreview ? null : getApiErrorMessage(libraryQuery.error, "") || null;
   const pageData = useMemo(() => {
     if (!queryData || isPreviewLibrary || isDetail || section === "favorites") return null;
     if (section === "home") {
@@ -685,8 +681,8 @@ function LibraryPage() {
     onChanged: invalidateLibraryViews,
   });
   const libraryArtistMonitoringItems = (() => {
-    if (!libraryArtist?.mbid || isPreviewLibrary || !libraryArtistMonitoring.ready) return [];
-    const { label, manager, monitoringItems, reason } = libraryArtistMonitoring;
+    if (!libraryArtist?.mbid || isPreviewLibrary) return [];
+    const { label, monitoringItems, reason } = libraryArtistMonitoring;
     const submenuItems = reason
       ? [{ id: "monitoring-blocked", label: reason, disabled: true }]
       : monitoringItems;
@@ -694,7 +690,7 @@ function LibraryPage() {
       ? [
           {
             id: "monitoring",
-            label: manager === "aurral" ? label : `Monitor: ${label}`,
+            label,
             icon: Eye,
             separatorBefore: true,
             submenuItems,
@@ -703,27 +699,26 @@ function LibraryPage() {
       : [];
   })();
 
-  const aurralAlbumStatusKeys = useMemo(() => {
+  const albumStatusIds = useMemo(() => {
     if (isPreviewLibrary) return [];
     return library.albums
       .filter((album) => {
-        if (album.managedBy !== "aurral") return false;
+        if (!album.managed) return false;
         const { total, available } = albumAvailability(album);
         return !total || available < total;
       })
-      .map((album) => aurralAlbumStatusKey(album.id))
+      .map((album) => String(album.id))
       .sort();
   }, [albumAvailability, isPreviewLibrary, library.albums]);
-  const aurralAlbumStatusesQuery = useQuery({
-    queryKey: queryKeys.downloadStatus(aurralAlbumStatusKeys),
-    queryFn: ({ signal }) =>
-      getDownloadStatus(aurralAlbumStatusKeys, { signal, bypassCache: true }),
-    enabled: aurralAlbumStatusKeys.length > 0,
+  const albumStatusesQuery = useQuery({
+    queryKey: queryKeys.downloadStatus(albumStatusIds),
+    queryFn: ({ signal }) => getDownloadStatus(albumStatusIds, { signal, bypassCache: true }),
+    enabled: albumStatusIds.length > 0,
     staleTime: 0,
     refetchInterval: (query) => (shouldPollAlbumStatuses(query.state.data) ? 4000 : false),
     refetchIntervalInBackground: false,
   });
-  const aurralAlbumStatuses = aurralAlbumStatusesQuery.data || {};
+  const albumStatuses = albumStatusesQuery.data || {};
 
   useDocumentTitle(
     isDetail
@@ -798,7 +793,7 @@ function LibraryPage() {
       ? [
           {
             id: "mbid",
-            label: "Edit MusicBrainz ID",
+            label: "Match artist",
             icon: Fingerprint,
             separatorBefore,
             onSelect: () => setMbidArtist(artist),
@@ -806,7 +801,7 @@ function LibraryPage() {
         ]
       : [];
 
-  const handleArtistMbidSaved: ComponentProps<typeof ArtistMbidModal>["onSaved"] = (result) => {
+  const handleArtistMbidSaved = (result: ArtistMatchResult) => {
     const previousId = mbidArtist?.id;
     setMbidArtist(null);
     const previousName = mbidArtist?.name || "Artist";
@@ -814,8 +809,8 @@ function LibraryPage() {
       result.merged
         ? `Merged ${previousName} into ${result.name}`
         : result.mbid
-          ? `Linked ${previousName} to ${result.musicbrainzName || "MusicBrainz"}`
-          : `Removed the MusicBrainz ID from ${previousName}`,
+          ? `Matched ${previousName} to ${result.musicbrainzName || "MusicBrainz"}`
+          : `Removed the match from ${previousName}`,
     );
     if (
       routeArtistId &&
@@ -968,13 +963,12 @@ function LibraryPage() {
       !getAlbumTracks(album).length && !album.trackCount && !album.trackIds?.length;
     const meta = albumCardMeta(album, albumAvailability(album));
     const isFavorite = favoriteIds.has(favoriteId("album", album));
-    const aurralState =
-      album.managedBy === "aurral"
-        ? describeAurralAlbumStatus(aurralAlbumStatuses[aurralAlbumStatusKey(album.id)] || {})
-        : null;
+    const downloadState = album.managed ? describeAlbumStatus(albumStatuses[album.id] || {}) : null;
     // The yellow track count already shows a partial album, so the label would only crowd it out.
     const cardStatus =
-      aurralState?.status === "complete" || aurralState?.status === "partial" ? null : aurralState;
+      downloadState?.status === "complete" || downloadState?.status === "partial"
+        ? null
+        : downloadState;
     const albumLinkState = {
       artistMbid: artist?.mbid || null,
       seed: {
@@ -1058,7 +1052,7 @@ function LibraryPage() {
               </span>
             )}
             {meta.details && meta.details + " · "}
-            {meta.partial && aurralState?.status !== "unreleased" ? (
+            {meta.partial && downloadState?.status !== "unreleased" ? (
               <span className="native-library-card__status" data-tone="warning">
                 {meta.count}
                 <span className="sr-only"> available</span>
@@ -1332,22 +1326,19 @@ function LibraryPage() {
     <>
       {libraryArtistMonitoring.dialog}
       {actions.renderModals()}
-      <ArtistMbidModal
-        artist={mbidArtist}
-        onClose={() => setMbidArtist(null)}
-        onSaved={handleArtistMbidSaved}
-      />
+      {mbidArtist ? (
+        <ArtistMatchModal
+          key={mbidArtist.id}
+          artist={mbidArtist}
+          onClose={() => setMbidArtist(null)}
+          onSaved={handleArtistMbidSaved}
+        />
+      ) : null}
     </>
   );
 
-  const providerWarning = bootstrap?.lidarr?.circuitOpen === true;
   const renderStatus = () => (
     <>
-      {providerWarning && (
-        <p className="native-library-notice" role="status">
-          Lidarr is unavailable. Showing the last indexed library.
-        </p>
-      )}
       {loading &&
         (isDetail ? (
           <div className="native-library-content">

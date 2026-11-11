@@ -27,7 +27,7 @@ const [
   () => import("../../backend/services/downloadJobs/downloadTracker.ts"),
   () => import("../../backend/services/manualMissingSearchService.ts"),
   () => import("../../backend/services/downloadPipeline.ts"),
-  () => import("../../backend/services/qualityProfileService.ts"),
+  () => import("../../backend/services/qualityProfile.ts"),
   () => import("../../backend/services/downloadPipelineWorker.ts"),
   () => import("../../backend/services/trackMatching/postDownloadValidator.ts"),
 );
@@ -166,7 +166,6 @@ test("manual replacement queues the exact candidate without changing the current
     {
       artistName: "An Artist",
       trackName: "Current Song",
-      managedBy: "aurral",
     },
     "replacement-test",
   );
@@ -212,7 +211,6 @@ test("failed manual replacement handoff leaves the current track intact", () => 
     {
       artistName: "An Artist",
       trackName: "Current Song",
-      managedBy: "aurral",
     },
     "replacement-test",
   );

@@ -12,6 +12,7 @@ import {
   findLibraryAlbumByReleaseMbid,
   findLibraryAlbumTrack,
   findLegacyKeyedLibraryFiles,
+  findHandMatchedLibraryAlbum,
   followLibraryFileIdentity,
   getLibraryMediaFile,
   getAvailableLibraryMediaPaths,
@@ -37,6 +38,7 @@ import {
   type DownloadTrackFields,
 } from "./downloadUtils.ts";
 import { logger, safeLogDiagnostic } from "./logger.ts";
+import { isPathWithin } from "./libraryFolders.ts";
 
 type ScannedMetadata = {
   common?: Partial<ICommonTagsResult>;
@@ -253,11 +255,6 @@ async function* walkAudioFiles(
   }
 }
 
-function isPathWithin(rootPath: string, candidatePath: string) {
-  const relative = path.relative(path.resolve(rootPath), path.resolve(candidatePath));
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
-}
-
 const normalizePathKey = (value: unknown) => {
   const resolved = path.resolve(String(value || ""));
   return process.platform === "win32" ? resolved.toLowerCase() : resolved;
@@ -355,10 +352,6 @@ function normalizeScanPaths(rootPath: string, filePaths: string[] | null) {
   ];
 }
 
-const albumHasLidarrFileStmt = db.prepare(
-  "SELECT 1 FROM library_media_files WHERE album_id = ? AND source = 'lidarr' AND available = 1 LIMIT 1",
-);
-
 const trackPerformerStmt = db.prepare<
   [string | null, string, string, string | null],
   { artist_tag: string }
@@ -390,8 +383,8 @@ async function forgetMissingFiles(source: string, rootPath: string, paths: strin
 function claimUnownedAlbum(
   album: Pick<LibraryAlbumsRow, "id" | "identity_key" | "artist_id" | "title">,
 ) {
-  if (getLibraryManagementEntry("album", album.id) || albumHasLidarrFileStmt.get(album.id)) return;
-  setLibraryManagement({ entityKind: "album", entityId: album.id, managedBy: "aurral" });
+  if (getLibraryManagementEntry("album", album.id)) return;
+  setLibraryManagement({ entityKind: "album", entityId: album.id });
   upsertLibraryAlbum({
     identityKey: album.identity_key,
     artistId: album.artist_id,
@@ -485,12 +478,16 @@ export async function scanMusicRoot({
             metadata: record.artistMetadata,
             syncSearch,
           });
+          const untagged = !record.releaseGroupMbid && !record.albumMbid;
+          const matchedAlbum =
+            untagged && existing?.album_id ? findHandMatchedLibraryAlbum(existing.album_id) : null;
           const titledAlbum =
-            !record.releaseGroupMbid && !record.albumMbid
+            untagged && !matchedAlbum
               ? findLibraryAlbumByArtistTitle(artist.id, record.albumName, record.title)
               : null;
           const namedAlbum =
-            titledAlbum && legacyKeyed.albumIds.has(titledAlbum.id) ? null : titledAlbum;
+            matchedAlbum ||
+            (titledAlbum && legacyKeyed.albumIds.has(titledAlbum.id) ? null : titledAlbum);
           const releaseAlbum = findLibraryAlbumByReleaseMbid(record.releaseGroupMbid) || namedAlbum;
           const albumKey = releaseAlbum?.identity_key || record.albumKey;
           const listedTrack =
@@ -512,7 +509,7 @@ export async function scanMusicRoot({
             identityKey: albumKey,
             mbid: releaseAlbum?.mbid || record.albumMbid,
             releaseGroupMbid: releaseAlbum?.release_group_mbid || record.releaseGroupMbid,
-            artistId: artist.id,
+            artistId: matchedAlbum?.artist_id ?? artist.id,
             title: namedAlbum?.title || record.albumName,
             albumArtist: record.albumArtist,
             releaseDate: record.releaseDate,

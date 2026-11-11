@@ -6,19 +6,8 @@ import {
   countReleaseTracks,
   describeAlbumRequestResult,
   isAlbumCompleteInLibrary,
-  shouldTriggerAlbumSearch,
 } from "../../frontend/src/utils/albumAddAction.ts";
 import { resolveReleaseLibraryDisplay } from "../../frontend/src/pages/ArtistDetails/utils.ts";
-
-test("shouldTriggerAlbumSearch follows monitored state", () => {
-  assert.equal(shouldTriggerAlbumSearch({ status: "available" }), false);
-  assert.equal(shouldTriggerAlbumSearch({ status: "unmonitored", inLibrary: true }), false);
-  assert.equal(shouldTriggerAlbumSearch({ status: "monitored" }), true);
-  assert.equal(shouldTriggerAlbumSearch({ inLibrary: true, monitored: true }), true);
-  assert.equal(shouldTriggerAlbumSearch({ inLibrary: true, monitored: false }), false);
-  assert.equal(shouldTriggerAlbumSearch({ status: "inLibrary", monitored: true }), true);
-  assert.equal(shouldTriggerAlbumSearch({ status: "inLibrary", monitored: false }), false);
-});
 
 test("isAlbumCompleteInLibrary only treats on-disk albums as complete", () => {
   assert.equal(isAlbumCompleteInLibrary({ status: "monitored" }), false);
@@ -47,9 +36,9 @@ test("album request results describe what happens without naming a manager", () 
 test("an album that isn't out yet says it will wait, before and after the request", () => {
   const day = (offset: number) =>
     new Date(Date.now() + offset * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-  assert.equal(buildAlbumAddAction(true, {}, day(30)).label, "Download when it's out");
-  assert.equal(buildAlbumAddAction(true, {}, day(0)).label, "Download album");
-  assert.equal(buildAlbumAddAction(true, {}, null).label, "Download album");
+  assert.equal(buildAlbumAddAction(day(30)).label, "Download when it's out");
+  assert.equal(buildAlbumAddAction(day(0)).label, "Download album");
+  assert.equal(buildAlbumAddAction(null).label, "Download album");
   const waiting = describeAlbumRequestResult(
     { status: "inLibrary", albumStatus: { status: "unreleased" }, album: { releaseDate: day(30) } },
     "Dummy",
@@ -60,7 +49,7 @@ test("an album that isn't out yet says it will wait, before and after the reques
 test("an unmonitored Aurral album counts the release's tracks, so a downloaded single isn't complete", () => {
   const single = {
     inLibrary: true,
-    managedBy: "aurral",
+    managed: true,
     monitored: false,
     trackCount: 1,
     trackFileCount: 1,
@@ -72,7 +61,7 @@ test("an unmonitored Aurral album counts the release's tracks, so a downloaded s
   assert.deepEqual([counted.trackCount, counted.percentOfTracks], [4, 25]);
   for (const library of [
     { ...single, monitored: true },
-    { ...single, managedBy: "lidarr" },
+    { ...single, managed: false },
     { ...single, trackCount: 4, trackFileCount: 4 },
   ]) {
     assert.equal(countReleaseTracks(library, 4), library);
@@ -82,25 +71,21 @@ test("an unmonitored Aurral album counts the release's tracks, so a downloaded s
 test("release display keeps albums with an incomplete track list incomplete", () => {
   const lookup = {
     inLibrary: true,
-    managedBy: "aurral",
+    managed: true,
     monitored: true,
     trackListComplete: false,
     trackCount: 1,
     trackFileCount: 1,
   };
-  const display = resolveReleaseLibraryDisplay(countReleaseTracks(lookup, 12), undefined);
+  const display = resolveReleaseLibraryDisplay(countReleaseTracks(lookup, 12));
   assert.equal(display.isComplete, false);
   assert.equal(display.kind, "incomplete");
   assert.equal(display.label, "Incomplete");
-  assert.equal(resolveReleaseLibraryDisplay(lookup, { status: "partial" }).kind, "incomplete");
-  const complete = resolveReleaseLibraryDisplay(
-    {
-      ...lookup,
-      trackListComplete: true,
-      percentOfTracks: 100,
-    },
-    undefined,
-  );
+  const complete = resolveReleaseLibraryDisplay({
+    ...lookup,
+    trackListComplete: true,
+    percentOfTracks: 100,
+  });
   assert.equal(complete.isComplete, true);
   assert.equal(complete.label, "In library");
 });
@@ -108,18 +93,17 @@ test("release display keeps albums with an incomplete track list incomplete", ()
 test("release display shows an incomplete album's share as a whole percent", () => {
   const lookup = {
     inLibrary: true,
-    managedBy: "aurral",
+    managed: true,
     monitored: false,
     trackCount: 1,
     trackFileCount: 1,
   };
   const label = (releaseTrackCount: number) =>
-    resolveReleaseLibraryDisplay(countReleaseTracks(lookup, releaseTrackCount), undefined).label;
+    resolveReleaseLibraryDisplay(countReleaseTracks(lookup, releaseTrackCount)).label;
   assert.equal(label(15), "Incomplete · 6%");
   assert.equal(label(300), "Incomplete · 1%");
   assert.equal(
-    resolveReleaseLibraryDisplay({ ...lookup, trackCount: 1000, percentOfTracks: 99.9 }, undefined)
-      .label,
+    resolveReleaseLibraryDisplay({ ...lookup, trackCount: 1000, percentOfTracks: 99.9 }).label,
     "Incomplete · 99%",
   );
 });

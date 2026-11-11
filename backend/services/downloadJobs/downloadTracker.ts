@@ -21,11 +21,11 @@ import {
   stringifyStringListJson,
   type DownloadTrackFields,
 } from "../downloadUtils.ts";
-import { buildAurralTrackDestination } from "../downloadPaths.ts";
+import { buildTrackDestination } from "../downloadPaths.ts";
 import { upgradeSourceIds } from "../downloadSourceService.ts";
 import { flowPlaylistConfig } from "../playlists/flowPlaylistConfig.ts";
 import { isPlaylistOwnerActive } from "./playlistOwnerStatus.ts";
-import { isDownloadOwnerProcess } from "./downloadOwnerClient.ts";
+import { isDownloadOwnerProcess, requestDownloadOwner } from "./downloadOwnerClient.ts";
 import { logger } from "../logger.ts";
 import { getShareDownload } from "../shareLinks/downloadStore.ts";
 import { recordAlbumGrabQueued, recordAlbumTrackState } from "../albumGrabActivity.ts";
@@ -40,6 +40,7 @@ import {
   isDownloadJobCancelled,
   isPipelinePayloadActive,
 } from "./downloadCancellation.ts";
+import { discardReviewFile, discardHeldFile } from "./reviewFiles.ts";
 
 export const NO_RELEASE_REASON =
   "The requested release could not be resolved; searching for the track";
@@ -48,7 +49,6 @@ export const OFF_RELEASE_REASON = "Track is not on the requested release; search
 export type DownloadTrackInput = DownloadTrackFields & {
   reason?: string | null;
   requestGroupId?: string | null;
-  managedBy?: string | null;
 };
 
 type RequestKind = "album" | "track";
@@ -229,7 +229,6 @@ function rowToJob(row: DownloadJobsRow) {
     playlistId: row.owner_id || row.owner_type,
     playlistGeneration: Number(row.playlist_generation ?? 0),
     playlistType: row.owner_type || row.owner_id,
-    managedBy: row.managed_by === "lidarr" ? ("lidarr" as const) : ("aurral" as const),
     requestGroupId: row.request_group_id || null,
     requestKind: row.request_kind === "album" ? ("album" as const) : ("track" as const),
     albumGrabAttempted: row.album_grab_attempted === 1,
@@ -321,7 +320,6 @@ const insertStmt = db.prepare(`
     owner_id,
     playlist_generation,
     owner_type,
-    managed_by,
     request_group_id,
     status,
     staging_path,
@@ -344,7 +342,7 @@ const insertStmt = db.prepare(`
     reused_library_file,
     started_by_playlist
   )
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
 const updateStmt = db.prepare(`
@@ -519,7 +517,7 @@ function buildPipelinePayload(job: DownloadJob) {
       recordingMbidAliases,
     },
     attempt: 0,
-    destination: buildAurralTrackDestination(playlistId, artistDir, albumDir, { ephemeral }),
+    destination: buildTrackDestination(playlistId, artistDir, albumDir, { ephemeral }),
     upgrade: Boolean(job.upgradeForJobId) && !job.manualReplacementSearch,
     upgradeForJobId: job.upgradeForJobId || null,
     manualReplacementSearch: job.manualReplacementSearch === true,
@@ -576,16 +574,14 @@ function discardReviewFiles(
     .filter((job) => job?.heldForReview && job.heldForReview.sourcePath !== job.stagingPath)
     .map((job): [string, DownloadJob["heldForReview"]] => [job.id, job.heldForReview]);
   if (reviewed.length === 0 && held.length === 0) return;
-  import("./reviewFiles.ts")
-    .then(async ({ discardReviewFile, discardHeldFile }) => {
-      for (const job of reviewed) await discardReviewFile(job);
-      for (const [jobId, file] of held) await discardHeldFile(jobId, file);
-    })
-    .catch((error) => {
-      logger.warn("downloads", "Could not remove files held for review", {
-        reason: asAppError(error)?.message || String(error),
-      });
+  void (async () => {
+    for (const job of reviewed) await discardReviewFile(job);
+    for (const [jobId, file] of held) await discardHeldFile(jobId, file);
+  })().catch((error) => {
+    logger.warn("downloads", "Could not remove files held for review", {
+      reason: asAppError(error)?.message || String(error),
     });
+  });
 }
 
 export class DownloadTracker {
@@ -602,6 +598,8 @@ export class DownloadTracker {
   declare externalDataVersion: number | undefined;
   declare externalJobsRevision: number | undefined;
   declare loaded: boolean;
+  declare pendingWorkListener: (() => unknown) | null;
+  declare pendingWorkAnnounced: boolean;
 
   constructor({
     enqueuePipeline = (payload) => downloadPipelineQueue.enqueue(payload),
@@ -617,7 +615,30 @@ export class DownloadTracker {
     this.slskdDispatched = new Set();
     this.revision = 0;
     this.loaded = false;
+    this.pendingWorkListener = isDownloadOwnerProcess()
+      ? null
+      : () => requestDownloadOwner("startIfPending", []);
+    this.pendingWorkAnnounced = false;
     if (isDownloadOwnerProcess()) this._ensureLoaded();
+  }
+
+  onPendingWork(listener: (() => unknown) | null) {
+    this.pendingWorkListener = listener;
+  }
+
+  // Runs after the caller's synchronous work, so a batch of jobs or a
+  // transaction that queues them is announced once, after it commits.
+  _announcePendingWork() {
+    if (this.pendingWorkAnnounced || !this.pendingWorkListener) return;
+    this.pendingWorkAnnounced = true;
+    queueMicrotask(() => {
+      this.pendingWorkAnnounced = false;
+      Promise.try(() => this.pendingWorkListener?.()).catch((error) => {
+        logger.warn("downloads", "Queued downloads are waiting for the download worker", {
+          error: asAppError(error)?.message || String(error),
+        });
+      });
+    });
   }
 
   _ensureLoaded() {
@@ -767,6 +788,11 @@ export class DownloadTracker {
     }
   }
 
+  releaseFromPipeline(id: string) {
+    this.clearSlskdPipelineState(id);
+    if (this.jobs.get(id)?.status === "pending") this._announcePendingWork();
+  }
+
   updateDownloadMetadata(
     id: string,
     metadata: Partial<Record<DownloadMetadataKey, string | number | null>> = {},
@@ -849,7 +875,7 @@ export class DownloadTracker {
 
   // The tracks one release attempt fills: this job and the pending tracks of
   // its request that the release lists, each pinned to that release. A pin
-  // the release group no longer lists, as after a merge, pins nothing.
+  // the release group no longer lists whole, as after a merge, pins nothing.
   // An upgrade's attempt holds only upgrades: every one of the release still
   // waiting to start, whatever request or owner its track came from, as the
   // upgrade check queues them together. An upgrade whose owner is not active
@@ -1301,7 +1327,6 @@ export class DownloadTracker {
       job.playlistId || job.playlistType,
       job.playlistGeneration ?? 0,
       job.playlistType || job.playlistId,
-      job.managedBy === "lidarr" ? "lidarr" : "aurral",
       job.requestGroupId ?? null,
       job.status,
       job.stagingPath ?? null,
@@ -1403,7 +1428,6 @@ export class DownloadTracker {
         ? options.playlistGeneration!
         : getPlaylistDownloadGeneration(playlistId),
       playlistType,
-      managedBy: track?.managedBy === "lidarr" ? "lidarr" : "aurral",
       requestGroupId: track?.requestGroupId ? String(track.requestGroupId).trim() || null : null,
       requestKind: options?.requestKind === "album" ? "album" : "track",
       quickSearchedSources: [],
@@ -1426,6 +1450,7 @@ export class DownloadTracker {
     this.pendingFreshQueue.push(id);
     this.pendingSet.add(id);
     this.pendingRetrySet.delete(id);
+    this._announcePendingWork();
     return id;
   }
 
@@ -1436,7 +1461,6 @@ export class DownloadTracker {
     const existing = [...this.jobs.values()].find(
       (job) =>
         job.status === "done" &&
-        job.managedBy === "aurral" &&
         !job.upgradeForJobId &&
         job.finalPath &&
         path.resolve(job.finalPath) === resolvedPath,
@@ -1444,7 +1468,7 @@ export class DownloadTracker {
     if (existing) return existing;
 
     const id = this.addJob(
-      { ...track, managedBy: "aurral", reason: track?.reason || "Aurral library track" },
+      { ...track, reason: track?.reason || "Aurral library track" },
       "library",
       { playlistId: "library" },
     );
@@ -1738,16 +1762,6 @@ export class DownloadTracker {
     return jobs;
   }
 
-  getPending(limit = 10) {
-    const pending: DownloadJob[] = [];
-    for (const job of this.jobs.values()) {
-      if (job.status === "pending" && pending.length < limit) {
-        pending.push(job);
-      }
-    }
-    return pending;
-  }
-
   setDownloading(id: string, stagingPath: string | null = null) {
     const job = this.jobs.get(id);
     if (!job || this._isCancelledAlbumJob(job)) return false;
@@ -1792,6 +1806,7 @@ export class DownloadTracker {
       this.pendingRetrySet.delete(id);
       this.pendingFreshQueue.push(id);
     }
+    this._announcePendingWork();
     return true;
   }
 
@@ -1881,6 +1896,7 @@ export class DownloadTracker {
     this._removeFromPendingQueues(id);
     job.status = "done";
     job.retryCycle = false;
+    job.error = null;
     job.completedAt = Date.now();
     this._setAlbumGrabFailures(job, 0);
     job.finalPath = finalPath;
@@ -2065,45 +2081,6 @@ export class DownloadTracker {
     return false;
   }
 
-  failActiveJobsForPlaylist(playlistType: string, error: string = "Retry cycle paused") {
-    let count = 0;
-    const failedJobs: DownloadJob[] = [];
-    for (const job of this.jobs.values()) {
-      if (job.playlistType !== playlistType) continue;
-      if (job.status !== "pending" && job.status !== "downloading") continue;
-      const previousStatus = job.status;
-      this.clearSlskdPipelineState(job.id);
-      this.pendingSet.delete(job.id);
-      this.pendingRetrySet.delete(job.id);
-      this._removeFromPendingQueues(job.id);
-      job.status = "failed";
-      job.retryCycle = false;
-      job.startedAt = null;
-      job.stagingPath = null;
-      job.completedAt = Date.now();
-      job.error = typeof error === "string" ? error : String(error || "");
-      this._update(job);
-      this._applyStatusDelta(job.playlistType, previousStatus, job.status);
-      failedJobs.push(job);
-      count += 1;
-    }
-    if (failedJobs.length > 0) {
-      import("../aurralHistoryService.ts")
-        .then(({ recordTrackJobFailed }) => {
-          for (const job of failedJobs) {
-            recordTrackJobFailed(job, job.error || error);
-          }
-        })
-        .catch((historyError) => {
-          logger.warn("history", "Could not record failed download jobs", {
-            jobCount: failedJobs.length,
-            reason: asAppError(historyError)?.message || String(historyError),
-          });
-        });
-    }
-    return count;
-  }
-
   getAll() {
     return sortByCreatedAt(Array.from(this.jobs.values()));
   }
@@ -2214,10 +2191,6 @@ export class DownloadTracker {
         (job.status === "done" || job.status === "failed") &&
         !(job.status === "done" && this.findActiveUpgradeJob(job)),
     );
-  }
-
-  clearByPlaylistType(playlistType: string) {
-    return this._deleteJobsWhere((job) => job.playlistType === playlistType);
   }
 
   clearByPlaylistId(playlistId: string) {

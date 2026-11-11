@@ -1,0 +1,399 @@
+import { test, beforeAll, beforeEach, afterAll } from "vite-plus/test";
+import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import path from "node:path";
+
+import { cleanupIsolatedState, setupIsolatedBackend } from "../helpers/backendTestHarness.ts";
+import { requireFixture } from "../playlists/fixtures.ts";
+
+const [
+  isolatedState,
+  { db },
+  { dbOps },
+  libraryStore,
+  managementStore,
+  { downloadTracker },
+  { downloadWorker },
+  { libraryManager },
+  { requestLibraryTrack },
+] = await setupIsolatedBackend(
+  "aurral-track-monitoring",
+  () => import("../../backend/config/db-sqlite.ts"),
+  () => import("../../backend/db/helpers/index.ts"),
+  () => import("../../backend/services/libraryMediaStore.ts"),
+  () => import("../../backend/services/libraryManagementStore.ts"),
+  () => import("../../backend/services/downloadJobs/downloadTracker.ts"),
+  () => import("../../backend/services/downloadJobs/downloadWorker.ts"),
+  () => import("../../backend/services/libraryManager.ts"),
+  () => import("../../backend/services/libraryTrackRequests.ts"),
+);
+
+let sequence = 0;
+
+async function createAlbum({
+  readOnly = false,
+  monitored = true,
+  tracks = ["missing"],
+}: { tracks?: string[]; monitored?: boolean; readOnly?: boolean } = {}) {
+  sequence += 1;
+  const suffix = String(sequence).padStart(12, "0");
+  const artistMbid = `bbbbbbbb-bbbb-4bbb-8bbb-${suffix}`;
+  const albumMbid = `cccccccc-cccc-4ccc-8ccc-${suffix}`;
+  const artist = libraryStore.upsertLibraryArtist({
+    identityKey: `mbid:${artistMbid}`,
+    mbid: artistMbid,
+    name: `Monitoring Artist ${sequence}`,
+  });
+  const album = libraryStore.upsertLibraryAlbum({
+    identityKey: `release-group:${albumMbid}`,
+    mbid: albumMbid,
+    releaseGroupMbid: albumMbid,
+    artistId: artist.id,
+    title: `Monitoring Album ${sequence}`,
+    metadata: { monitored },
+  });
+  if (!readOnly) {
+    managementStore.setLibraryManagement({
+      entityKind: "album",
+      entityId: album.id,
+      monitorMode: monitored ? null : "unmonitored",
+    });
+  }
+  const jobIds = [];
+  const filePaths = [];
+  const albumTracks: {
+    mbid: string;
+    id: number;
+    identity_key: string;
+    title: string;
+    artist_name: string | null;
+    metadata_json: string | null;
+    created_at: number;
+    updated_at: number;
+    monitored: number;
+  }[] = [];
+  for (const [index, state] of tracks.entries()) {
+    const trackMbid = `dddddddd-dddd-4ddd-8ddd-${suffix.slice(2)}${String(index).padStart(2, "0")}`;
+    const track = libraryStore.upsertLibraryTrack({
+      identityKey: `recording:${trackMbid}`,
+      mbid: trackMbid,
+      title: `Track ${index + 1}`,
+      artistName: artist.name,
+    });
+    libraryStore.linkLibraryAlbumTrack({
+      albumId: album.id,
+      trackId: track.id,
+      trackNumber: index + 1,
+    });
+    if (state === "available") {
+      const filePath = path.join(isolatedState.dataDir, `album-${sequence}`, `${index + 1}.flac`);
+      await fs.mkdir(path.dirname(filePath), { recursive: true });
+      await fs.writeFile(filePath, "audio");
+      libraryStore.upsertLibraryMediaFile({
+        scanId: undefined,
+        trackId: track.id,
+        albumId: album.id,
+        source: readOnly ? "readonly" : "aurral",
+        path: filePath,
+      });
+      filePaths[index] = filePath;
+    } else if (state === "pending") {
+      jobIds[index] = downloadTracker.addJob(
+        {
+          artistName: artist.name,
+          trackName: track.title,
+          albumName: album.title,
+          albumMbid,
+          trackMbid,
+        },
+        "library",
+      );
+    }
+    albumTracks.push({ ...track, mbid: trackMbid });
+  }
+  return { artist, album, albumMbid, tracks: albumTracks, jobIds, filePaths };
+}
+
+const trackMonitored = (trackId: number) =>
+  db
+    .prepare<
+      unknown[],
+      { monitored: import("../../backend/db/rows.ts").LibraryTracksRow["monitored"] }
+    >("SELECT monitored FROM library_tracks WHERE id = ?")
+    .get(trackId)?.monitored;
+
+const albumJobs = (albumMbid: string) =>
+  downloadTracker.getAll().filter((job) => job.albumMbid === albumMbid);
+
+const originalSettings = dbOps.getSettings();
+const originalWorkerStart = downloadWorker.start;
+
+beforeAll(() => {
+  dbOps.updateSettings({
+    ...originalSettings,
+    integrations: {
+      ...originalSettings.integrations,
+      slskd: { enabled: true, url: "http://127.0.0.1:9", apiKey: "test-key" },
+    },
+  });
+  downloadWorker.start = async () => {};
+});
+
+beforeEach(() => {
+  downloadTracker.clearAll();
+});
+
+afterAll(async () => {
+  downloadWorker.start = originalWorkerStart;
+  dbOps.updateSettings(originalSettings);
+  await cleanupIsolatedState(isolatedState);
+});
+
+test("unmonitoring a track cancels its unfinished download and keeps finished files", async () => {
+  const { tracks, jobIds, filePaths } = await createAlbum({ tracks: ["available", "pending"] });
+
+  const downloading = await libraryManager.setTrackMonitoring(requireFixture(tracks[1]).id, {
+    monitored: false,
+  });
+  const finished = await libraryManager.setTrackMonitoring(requireFixture(tracks[0]).id, {
+    monitored: false,
+  });
+
+  assert.equal(downloading.monitored, false);
+  assert.equal(trackMonitored(requireFixture(tracks[1]).id), 0);
+  assert.equal(getJob(jobIds[1]).status, "cancelled");
+  assert.equal(finished.monitored, false);
+  assert.equal(await fs.readFile(requireFixture(filePaths[0]), "utf8"), "audio");
+});
+
+test("monitoring a track again fetches only that track when its album is monitored", async () => {
+  const { albumMbid, tracks } = await createAlbum({ tracks: ["missing", "missing"] });
+  await libraryManager.setTrackMonitoring(requireFixture(tracks[0]).id, { monitored: false });
+
+  const result = await libraryManager.setTrackMonitoring(requireFixture(tracks[0]).id, {
+    monitored: true,
+  });
+
+  assert.equal(result.monitored, true);
+  assert.deepEqual(
+    albumJobs(albumMbid).map((job) => [job.trackMbid, job.status]),
+    [[requireFixture(tracks[0]).mbid, "pending"]],
+  );
+});
+
+test("monitoring a track in an unmonitored album queues only that track", async () => {
+  const { album, albumMbid, tracks } = await createAlbum({ tracks: ["missing", "missing"] });
+  await libraryManager.setAlbumMonitoring(album.id, { monitored: false });
+
+  const result = await libraryManager.setTrackMonitoring(requireFixture(tracks[0]).id, {
+    monitored: true,
+  });
+
+  assert.equal(result.monitored, true);
+  assert.deepEqual(
+    tracks.map((track) => trackMonitored(track.id)),
+    [1, 0],
+  );
+  assert.deepEqual(
+    albumJobs(albumMbid).map((job) => [job.trackMbid, job.status]),
+    [[requireFixture(tracks[0]).mbid, "pending"]],
+  );
+});
+
+test("a track unmonitored while its album is turned back on is not queued", async () => {
+  const { album, albumMbid, tracks } = await createAlbum({
+    monitored: false,
+    tracks: ["missing", "missing"],
+  });
+  const missingFileJob = downloadTracker.addJob(
+    {
+      artistName: "Monitoring Artist",
+      trackName: requireFixture(tracks[0]).title,
+      albumName: album.title,
+      albumMbid,
+      trackMbid: requireFixture(tracks[0]).mbid,
+    },
+    "library",
+  );
+  assert.ok(missingFileJob != null);
+  downloadTracker.setDone(
+    missingFileJob,
+    path.join(isolatedState.dataDir, "gone", "1.flac"),
+    album.title,
+  );
+
+  const monitoring = libraryManager.setAlbumMonitoring(album.id, { monitored: true });
+  for (let turn = 0; turn < 50; turn += 1) await Promise.resolve();
+  db.prepare("UPDATE library_tracks SET monitored = 0 WHERE id = ?").run(
+    requireFixture(tracks[1]).id,
+  );
+  await monitoring;
+
+  assert.equal(
+    albumJobs(albumMbid).some((job) => job.trackMbid === requireFixture(tracks[1]).mbid),
+    false,
+  );
+});
+
+test("one track asked for is a track request, asking for the album's missing tracks makes every queued one an album request, and a failed one asked for alone is a track request again", async () => {
+  const { album, tracks } = await createAlbum({ tracks: ["missing", "missing", "missing"] });
+  const requestKinds = () =>
+    Object.fromEntries(
+      db
+        .prepare<unknown[], { track_mbid: string; request_kind: string }>(
+          "SELECT track_mbid, request_kind FROM download_jobs WHERE track_mbid IN (?, ?, ?)",
+        )
+        .all(...tracks.map((track) => track.mbid))
+        .map((row) => [row.track_mbid.slice(-2), row.request_kind]),
+    );
+
+  const single = await libraryManager.monitorTrack({
+    libraryTrackId: requireFixture(tracks[0]).id,
+  });
+  assert.ok(single != null);
+  assert.equal(single.queuedJobIds.length, 1);
+  assert.deepEqual(requestKinds(), { "00": "track" });
+
+  await libraryManager.searchAlbumMissingTracks(album.id);
+  assert.deepEqual(requestKinds(), { "00": "album", "01": "album", "02": "album" });
+
+  const second = downloadTracker
+    .getAll()
+    .find((job) => job.trackMbid === requireFixture(tracks[1]).mbid);
+  assert.ok(second != null);
+  downloadTracker.setFailed(second.id, "No source had the track");
+  const retried = await libraryManager.monitorTrack({
+    libraryTrackId: requireFixture(tracks[1]).id,
+  });
+  assert.ok(retried != null);
+  assert.deepEqual(retried.queuedJobIds, [second.id]);
+  assert.deepEqual(requestKinds(), { "00": "album", "01": "track", "02": "album" });
+});
+
+test("unmonitoring a track without an MBID leaves a same-titled track's download alone", async () => {
+  const { album, albumMbid, tracks, jobIds } = await createAlbum({
+    tracks: ["missing", "pending"],
+  });
+  const untagged = libraryStore.upsertLibraryTrack({
+    identityKey: `track:untagged-${album.id}`,
+    title: requireFixture(tracks[1]).title,
+    artistName: "Monitoring Artist",
+  });
+  libraryStore.linkLibraryAlbumTrack({ albumId: album.id, trackId: untagged.id, trackNumber: 3 });
+
+  await libraryManager.setTrackMonitoring(untagged.id, { monitored: false });
+
+  assert.equal(getJob(jobIds[1]).status, "pending");
+  assert.equal(albumJobs(albumMbid).filter((job) => job.status === "cancelled").length, 0);
+});
+
+test("a track in a read-only album can be unmonitored", async () => {
+  const { artist, tracks, jobIds } = await createAlbum({
+    readOnly: true,
+    tracks: ["pending"],
+  });
+  libraryStore.upsertLibraryTrack({
+    identityKey: requireFixture(tracks[0]).identity_key,
+    mbid: requireFixture(tracks[0]).mbid,
+    title: requireFixture(tracks[0]).title,
+    artistName: `${artist.name} feat. Guest`,
+  });
+  const ownerJob = downloadTracker.addJob(
+    { artistName: artist.name, trackName: requireFixture(tracks[0]).title },
+    "library",
+  );
+  const otherArtistJob = downloadTracker.addJob(
+    { artistName: "Another Artist", trackName: requireFixture(tracks[0]).title },
+    "library",
+  );
+
+  const result = await libraryManager.setTrackMonitoring(requireFixture(tracks[0]).id, {
+    monitored: false,
+  });
+
+  assert.equal(result.error, undefined);
+  assert.equal(trackMonitored(requireFixture(tracks[0]).id), 0);
+  assert.equal(getJob(jobIds[0]).status, "cancelled");
+  assert.equal(getJob(ownerJob).status, "cancelled");
+  assert.equal(getJob(otherArtistJob).status, "pending");
+});
+
+test("downloading a missing track in a read-only album leaves the download to the track route", async () => {
+  const { tracks } = await createAlbum({ readOnly: true, tracks: ["missing"] });
+
+  const result = await libraryManager.monitorTrack({
+    libraryTrackId: requireFixture(tracks[0]).id,
+  });
+
+  assert.equal(result, null);
+  assert.equal(trackMonitored(requireFixture(tracks[0]).id), 1);
+});
+
+test("requesting a guest track retains canonical album ownership for acquisition", async () => {
+  const { artist, album, albumMbid, tracks } = await createAlbum();
+  const track = requireFixture(tracks[0]);
+  libraryStore.upsertLibraryTrack({
+    identityKey: track.identity_key,
+    mbid: track.mbid,
+    title: track.title,
+    artistName: "Guest & Owner",
+  });
+
+  const result = await requestLibraryTrack(
+    {
+      artistName: "Guest & Owner",
+      artistMbid: null,
+      trackName: track.title,
+      albumName: album.title,
+      albumMbid,
+      trackMbid: track.mbid,
+    },
+    { libraryTrackId: track.id },
+  );
+
+  assert.equal(result.monitored, true);
+  const job = getJob(result.jobId);
+  assert.ok(job != null);
+  assert.equal(job.artistName, artist.name);
+  assert.equal(job.artistMbid, artist.mbid);
+  assert.equal(job.albumMbid, albumMbid);
+  assert.equal(job.trackMbid, track.mbid);
+});
+
+test("a track request in a read-only album keeps the album owner's identity on its fallback job", async () => {
+  const { artist, album, albumMbid, tracks } = await createAlbum({ readOnly: true });
+  const track = requireFixture(tracks[0]);
+  libraryStore.upsertLibraryTrack({
+    identityKey: track.identity_key,
+    mbid: track.mbid,
+    title: track.title,
+    artistName: "Guest & Owner",
+  });
+
+  const result = await requestLibraryTrack(
+    {
+      artistName: artist.name,
+      artistMbid: artist.mbid,
+      trackName: track.title,
+      albumName: album.title,
+      albumMbid,
+      trackMbid: track.mbid,
+    },
+    { libraryTrackId: track.id },
+  );
+
+  assert.equal(result.queued, true);
+  assert.equal(result.monitored, undefined);
+  const job = getJob(result.jobId);
+  assert.ok(job != null);
+  assert.equal(job.artistName, artist.name);
+  assert.equal(job.artistMbid, artist.mbid);
+  assert.equal(job.albumMbid, albumMbid);
+  assert.equal(job.trackMbid, track.mbid);
+});
+
+function getJob(id: Parameters<typeof downloadTracker.getJob>[0]) {
+  const job = downloadTracker.getJob(id);
+  assert.ok(job, `Expected download job ${id}`);
+  return job;
+}

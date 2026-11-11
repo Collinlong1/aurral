@@ -1,23 +1,17 @@
 import { RELEASE_LIST_VIEW_MODE_KEY } from "./constants.ts";
-import { TAG_COLORS } from "../discoverUtils.ts";
-import { shouldTriggerAlbumSearch } from "../../utils/albumAddAction.ts";
+import { TAG_COLORS } from "../../utils/discoverUtils.ts";
 import { formatDate } from "../../utils/dateTime.ts";
 import {
   releaseTypeOf,
   type LibraryAlbum as LibraryPageAlbum,
 } from "../../utils/libraryPageData.ts";
 import { formatCompactNumber } from "../../utils/numberFormat.ts";
-import { asApiError, resolveAuthenticatedApiAssetUrl } from "../../utils/api/core.ts";
+import { resolveAuthenticatedApiAssetUrl } from "../../utils/api/core.ts";
 import type { ArtistDetailsResponse } from "../../utils/api/endpoints/artists.ts";
-import type {
-  LegacyReleaseGroupSummary,
-  toNormalizedAlbum,
-} from "../../../../backend/services/providers/brainzmashMappers.ts";
+import type { LegacyReleaseGroupSummary } from "../../../../backend/services/providers/brainzmashMappers.ts";
 import type { LibraryAlbumEntry, OwnedAlbum } from "./hooks/useArtistDetailsStream.ts";
 
 export type ReleaseListViewMode = "grid" | "list";
-
-export type ReleaseRating = NonNullable<ReturnType<typeof toNormalizedAlbum>["rating"]>;
 
 export type ReleaseGroup = Partial<Omit<LegacyReleaseGroupSummary, "artist-credit">> & {
   "artist-credit"?: { name?: string; artist?: { id?: string; name?: string } }[];
@@ -60,7 +54,7 @@ export interface ArtistCoverImage {
 
 export interface ReleaseLibraryInfo {
   inLibrary?: boolean;
-  managedBy?: string | null;
+  managed?: boolean;
   monitored?: boolean;
   trackListComplete?: boolean;
   trackCount?: number;
@@ -69,12 +63,8 @@ export interface ReleaseLibraryInfo {
   sizeOnDisk?: number;
 }
 
-export interface ReleaseDownloadStatus {
-  status?: string | null;
-}
-
 interface ReleaseLibraryDisplay {
-  kind: "missing" | "complete" | "failed" | "active" | "incomplete" | "monitored" | "unmonitored";
+  kind: "missing" | "complete" | "incomplete" | "monitored" | "unmonitored";
   label: string | null;
   isComplete: boolean;
   isInLibrary: boolean;
@@ -89,17 +79,6 @@ interface LibraryAlbum extends Pick<ReleaseGroup, "mbid" | "foreignAlbumId"> {
   artistId?: string | number | null;
   monitored?: boolean;
 }
-
-export const getApiErrorText = (error: unknown, key: "message" | "error") => {
-  const data = asApiError(error)?.response?.data;
-  const value = typeof data === "object" && data ? data[key] : undefined;
-  return typeof value === "string" ? value : undefined;
-};
-
-export const getApiErrorMessage = (error: unknown) =>
-  getApiErrorText(error, "message") ||
-  getApiErrorText(error, "error") ||
-  asApiError(error)?.message;
 
 export const readReleaseListViewMode = (): ReleaseListViewMode => {
   if (typeof window === "undefined") return "grid";
@@ -198,97 +177,6 @@ export const deduplicateAlbums = <T extends LibraryAlbum>(albums: T[]): T[] => {
   });
 };
 
-export const normalizePlaylistNameKey = (value: string | null | undefined) =>
-  String(value || "")
-    .trim()
-    .toLowerCase();
-
-export const reserveUniquePlaylistName = (
-  playlists: readonly { name?: string | null }[] | null | undefined,
-  baseName = "Playlist",
-) => {
-  const normalizedBase = String(baseName || "").trim() || "Playlist";
-  const existing = new Set(
-    (playlists ?? []).map((playlist) => normalizePlaylistNameKey(playlist?.name)).filter(Boolean),
-  );
-  if (!existing.has(normalizedBase.toLowerCase())) {
-    return normalizedBase;
-  }
-  let index = 2;
-  while (index < 10000) {
-    const candidate = `${normalizedBase} ${index}`;
-    if (!existing.has(candidate.toLowerCase())) {
-      return candidate;
-    }
-    index += 1;
-  }
-  return `${normalizedBase} ${Date.now()}`;
-};
-
-const normalizeTrackDurationMs = (value: unknown) =>
-  value != null && Number.isFinite(Number(value)) ? Number(value) : null;
-
-interface StaticPlaylistTrackInput {
-  artistName?: string;
-  trackName?: string;
-  albumName?: string;
-  artistMbid?: string;
-  albumMbid?: string;
-  releaseMbid?: string | null;
-  trackMbid?: string;
-  releaseYear?: string | null;
-  durationMs?: number | null;
-  trackNumber?: number | null;
-  discNumber?: number | null;
-  reason?: string | null;
-}
-
-export const buildStaticPlaylistTrackPayload = ({
-  artistName = "",
-  trackName = "",
-  albumName = "",
-  artistMbid = "",
-  albumMbid = "",
-  releaseMbid = null,
-  trackMbid = "",
-  releaseYear = null,
-  durationMs = null,
-  trackNumber = null,
-  discNumber = null,
-  reason = null,
-}: StaticPlaylistTrackInput = {}) => ({
-  artistName,
-  trackName,
-  albumName,
-  artistMbid,
-  albumMbid,
-  releaseMbid: releaseMbid || null,
-  trackMbid,
-  releaseYear: releaseYear || null,
-  durationMs: normalizeTrackDurationMs(durationMs),
-  trackNumber: trackNumber || null,
-  discNumber: discNumber || null,
-  reason,
-  artistAliases: [],
-});
-
-export const formatLifeSpan = (
-  lifeSpan:
-    | { begin?: string | null; end?: string | null; ended?: boolean | null }
-    | null
-    | undefined,
-) => {
-  if (!lifeSpan) return null;
-  const { begin, end, ended } = lifeSpan;
-  if (!begin) return null;
-  const beginYear = begin.split("-")[0];
-  if (ended && end) {
-    const endYear = end.split("-")[0];
-    return `${beginYear} - ${endYear}`;
-  }
-  return `${beginYear} - Present`;
-};
-
 const ownText = (table: Partial<Record<string, string>>, key: string) =>
   Object.hasOwn(table, key) ? table[key] : undefined;
 
@@ -299,16 +187,6 @@ const ARTIST_TYPE_LABELS = {
   Choir: "Choir",
   Character: "Character",
   Other: "Other",
-};
-
-const DOWNLOAD_STATUS_LABELS = {
-  adding: "Adding...",
-  searching: "Searching...",
-  downloading: "Downloading...",
-  moving: "Moving files...",
-  added: "Added",
-  processing: "Searching...",
-  failed: "Failed",
 };
 
 export const getArtistType = (type: string | null | undefined) =>
@@ -330,9 +208,6 @@ export const buildTasteArtist = ({
   tags: (tags || []).map((tag) => tag.name),
   genres: genres || [],
 });
-
-export const getDownloadStatusLabel = (status: string) =>
-  ownText(DOWNLOAD_STATUS_LABELS, status) || status;
 
 export const getCoverImage = (coverImages: readonly ArtistCoverImage[] | null | undefined) => {
   if (!coverImages?.length) return null;
@@ -507,27 +382,14 @@ export function buildAlbumHeaderMeta({
 
 export const resolveReleaseLibraryDisplay = (
   libraryInfo: ReleaseLibraryInfo | null | undefined,
-  downloadStatus: ReleaseDownloadStatus | null | undefined,
-) => {
-  const withAction = (display: ReleaseLibraryDisplay) => ({
-    ...display,
-    triggerSearch: shouldTriggerAlbumSearch({
-      inLibrary: display.isInLibrary,
-      monitored: libraryInfo?.monitored,
-      status: downloadStatus?.status,
-      percentOfTracks: libraryInfo?.percentOfTracks,
-      sizeOnDisk: libraryInfo?.sizeOnDisk,
-      trackFileCount: libraryInfo?.trackFileCount,
-    }),
-  });
-
+): ReleaseLibraryDisplay => {
   if (!libraryInfo?.inLibrary) {
-    return withAction({
+    return {
       kind: "missing",
       label: null,
       isComplete: false,
       isInLibrary: false,
-    });
+    };
   }
 
   const percent = Number(libraryInfo.percentOfTracks || 0);
@@ -540,26 +402,16 @@ export const resolveReleaseLibraryDisplay = (
     (trackCount > 0 ? percent >= 100 || trackFileCount >= trackCount : hasFiles);
 
   if (isComplete) {
-    return withAction({
+    return {
       kind: "complete",
       label: "In library",
       isComplete: true,
       isInLibrary: true,
-    });
-  }
-
-  const activeStatus = String(downloadStatus?.status || "").trim();
-  if (activeStatus && activeStatus !== "partial") {
-    return withAction({
-      kind: activeStatus === "failed" ? "failed" : "active",
-      label: getDownloadStatusLabel(activeStatus),
-      isComplete: false,
-      isInLibrary: true,
-    });
+    };
   }
 
   if (libraryInfo.trackListComplete === false || percent > 0) {
-    return withAction({
+    return {
       kind: "incomplete",
       label:
         libraryInfo.trackListComplete === false
@@ -567,24 +419,24 @@ export const resolveReleaseLibraryDisplay = (
           : `Incomplete · ${Math.max(1, Math.floor(percent))}%`,
       isComplete: false,
       isInLibrary: true,
-    });
+    };
   }
 
   if (libraryInfo.monitored) {
-    return withAction({
+    return {
       kind: "monitored",
       label: "Monitored",
       isComplete: false,
       isInLibrary: true,
-    });
+    };
   }
 
-  return withAction({
+  return {
     kind: "unmonitored",
     label: null,
     isComplete: false,
     isInLibrary: true,
-  });
+  };
 };
 
 const getReleaseListeners = (releaseGroup: ReleaseGroup | null | undefined) =>
@@ -651,7 +503,7 @@ const isUnrequestedReleaseGroup = (
   return !status || status === "unmonitored";
 };
 
-export const buildAurralPick = <T extends ReleaseGroup>({
+export const buildPick = <T extends ReleaseGroup>({
   releaseGroups = [],
   getAlbumStatus,
   requestedReleaseGroupId = null,
@@ -683,7 +535,7 @@ export const buildAurralPick = <T extends ReleaseGroup>({
 };
 
 export const isLibraryPlaybackTrack = (track: PlayableTrack | null | undefined) =>
-  track?.previewProvider === "lidarr" || !!track?.streamPath;
+  !!track?.streamPath;
 
 export const getTrackPlayAccessibilityLabel = (
   track: PlayableTrack | null | undefined,

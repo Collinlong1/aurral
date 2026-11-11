@@ -2,11 +2,10 @@ import fs from "node:fs/promises";
 import { db } from "../../config/db-sqlite.ts";
 import { asAppError } from "../../../lib/errors.ts";
 import { recordTrackJobQueued } from "../aurralHistoryService.ts";
-import { cancelTrackDownload, cancelTrackDownloads } from "../aurralAlbumJobs.ts";
+import { cancelTrackDownload, cancelTrackDownloads } from "../albumJobs.ts";
 import { downloadTracker, type DownloadJob } from "../downloadJobs/downloadTracker.ts";
 import { downloadWorker } from "../downloadJobs/downloadWorker.ts";
 import { jobDownloadedItsFile, reuseTrackForPlaylist } from "../downloadJobs/fileReuse.ts";
-import { wakeDownloadWorker } from "../downloadJobs/mutationGuards.ts";
 import { removeLibraryMediaFiles } from "../libraryMediaStore.ts";
 import { logger } from "../logger.ts";
 import { flowPlaylistConfig } from "./flowPlaylistConfig.ts";
@@ -157,7 +156,6 @@ export async function linkTracksToLibrary(
     }
     linked.push({ ...track, canonicalJobId: created.jobId });
   }
-  if (queuedJobIds.length) await wakeDownloadWorker();
   return { tracks: linked, queuedJobIds, reusedJobIds, createdJobIds };
 }
 

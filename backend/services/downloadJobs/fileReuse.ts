@@ -1,6 +1,5 @@
 import fs from "fs/promises";
 import path from "path";
-import { db } from "../../config/db-sqlite.ts";
 import { asAppError } from "../../../lib/errors.ts";
 import { downloadTracker, type DownloadJob, type DownloadTrackInput } from "./downloadTracker.ts";
 import { flowPlaylistConfig } from "../playlists/flowPlaylistConfig.ts";
@@ -19,14 +18,15 @@ import {
   sanitizePathPart,
 } from "../downloadUtils.ts";
 import { AURRAL_FLOWS_DIR, isPathInsideRoot, resolveDownloadRoot } from "../downloadPaths.ts";
-import { getPathMappings, resolveLocalPath } from "../pathMappings.ts";
+import { recordTrackReused } from "../aurralHistoryService.ts";
+import { playlistManager } from "../playlists/playlistManager.ts";
 
 type FolderSource = keyof typeof FOLDER_SOURCES;
 type SourceOptions = {
   targetPlaylistType?: string | null;
   downloadRoot?: string | null;
   excludeJobIds?: string[] | null;
-  allowLidarr?: boolean;
+  allowFolderSources?: boolean;
 };
 type ReuseTrackOptions = SourceOptions & {
   existingJobId?: string | null;
@@ -52,7 +52,6 @@ export type RemovedFolderRequeue = {
   downloadRoot?: string;
   removedFolders?: string[];
   keptFolders?: string[];
-  externalFiles?: boolean;
   reason?: string;
 };
 
@@ -134,12 +133,6 @@ function sortReusableJobs<T extends DownloadJob>(jobs: T[]): T[] {
   });
 }
 
-/**
- * Checks whether a playlist type corresponds to an ephemeral Flow playlist.
- *
- * @param {string} playlistType - Target playlist identifier.
- * @returns {boolean} True if the playlist type is a configured flow.
- */
 function isFlowPlaylistType(playlistType: string) {
   return Boolean(flowPlaylistConfig.getFlow(String(playlistType || "").trim()));
 }
@@ -164,13 +157,6 @@ function isTrackFileBaseName(
   );
 }
 
-/**
- * Scans local storage directories to locate an existing audio file matching track metadata.
- *
- * @param {object} track - Track metadata including artistName, albumName, and trackName.
- * @param {object} [options={}] - Options containing targetPlaylistType and downloadRoot.
- * @returns {Promise<{sourceType: string, sourcePath: string, sourceJob: null, albumName: string|null}|null>} Resolved source or null.
- */
 async function findLocalExistingSource(
   track: DownloadTrackInput,
   options: SourceOptions = {},
@@ -258,7 +244,6 @@ async function findAurralSource(
   );
   const candidates = [];
   for (const job of downloadTracker.getDoneByTrackName(track.trackName)) {
-    if (options.allowLidarr === false && job.managedBy === "lidarr") continue;
     if (excludeJobIds.has(String(job.id || ""))) continue;
     if (!job.finalPath || typeof job.finalPath !== "string") continue;
     const matches =
@@ -286,11 +271,7 @@ async function findAurralSource(
 
 export function jobDownloadedItsFile(job: DownloadJob | null | undefined) {
   return (
-    job?.status === "done" &&
-    Boolean(job.finalPath) &&
-    job.managedBy === "aurral" &&
-    !job.externalPath &&
-    !job.reusedLibraryFile
+    job?.status === "done" && Boolean(job.finalPath) && !job.externalPath && !job.reusedLibraryFile
   );
 }
 
@@ -487,22 +468,17 @@ function findMatchingTrack(tracks: ReadTrack[], track: DownloadTrackInput, stric
 }
 
 const FOLDER_SOURCES = {
-  aurral: { label: "Library", external: false, mapPath: (filePath: string) => filePath },
-  lidarr: {
-    label: "Lidarr",
-    external: true,
-    mapPath: (filePath: string) => resolveLocalPath(filePath, getPathMappings("lidarr")),
-  },
-  readonly: { label: "Read-only folder", external: true, mapPath: (filePath: string) => filePath },
+  aurral: { label: "Library", external: false },
+  readonly: { label: "Read-only folder", external: true },
 };
 
 // Indexed files stay where they are, so a playlist uses the file in place.
 async function findLibraryFolderSource(
   track: DownloadTrackInput,
   options: SourceOptions = {},
-  source: FolderSource = "lidarr",
+  source: FolderSource,
 ): Promise<ReuseSource | null> {
-  const { label, external, mapPath } = FOLDER_SOURCES[source];
+  const { label, external } = FOLDER_SOURCES[source];
   const strictAlbum = options.targetPlaylistType === "library";
   const { artists, albums, tracks } = buildLibraryReadModel(
     getLibraryForArtistReferences({
@@ -551,7 +527,7 @@ async function findLibraryFolderSource(
       );
       continue;
     }
-    const sourcePath = path.resolve(mapPath(matchedTrack.path));
+    const sourcePath = path.resolve(matchedTrack.path);
     if (!(await fileExists(sourcePath))) {
       console.warn(
         `[FileReuse] ${label} track exists but file is not accessible from Aurral: ${matchedTrack.path} (resolved to ${sourcePath})`,
@@ -577,24 +553,13 @@ async function findFolderSource(
   track: DownloadTrackInput,
   options: SourceOptions,
 ): Promise<ReuseSource | null> {
-  if (options.allowLidarr === false) return null;
-  const { lidarrClient } = await import("../lidarrClient.ts");
+  if (options.allowFolderSources === false) return null;
   return (
     (await findLibraryFolderSource(track, options, "aurral")) ||
-    (lidarrClient.isConfigured()
-      ? await findLibraryFolderSource(track, options, "lidarr")
-      : null) ||
     findLibraryFolderSource(track, options, "readonly")
   );
 }
 
-/**
- * Resolves a reusable track source from local storage, Aurral library, or Lidarr library.
- *
- * @param {object} track - Track metadata to locate.
- * @param {object} [options={}] - Reuse options including targetPlaylistType.
- * @returns {Promise<{source: object|null, reason: string|null}>}
- */
 export async function resolveReusableTrackSource(
   track: DownloadTrackInput,
   options: SourceOptions = {},
@@ -606,16 +571,9 @@ export async function resolveReusableTrackSource(
   if (aurralSource) return { source: aurralSource, reason: null };
   const folderSource = await findFolderSource(track, options);
   if (folderSource) return { source: folderSource, reason: null };
-  return { source: null, reason: "No reusable Aurral, Lidarr, or read-only folder file found" };
+  return { source: null, reason: "No reusable Library or read-only folder file found" };
 }
 
-/**
- * Resolves a repair source for a track, checking local storage, Lidarr, and Aurral library.
- *
- * @param {object} track - Track metadata to locate for repair.
- * @param {object} [options={}] - Repair options including targetPlaylistType.
- * @returns {Promise<{source: object|null, reason: string|null}>}
- */
 export async function resolveRepairTrackSource(
   track: DownloadTrackInput,
   options: SourceOptions = {},
@@ -627,7 +585,7 @@ export async function resolveRepairTrackSource(
   if (folderSource) return { source: folderSource, reason: null };
   const aurralSource = await findAurralSource(track, options);
   if (aurralSource) return { source: aurralSource, reason: null };
-  return { source: null, reason: "No reusable Aurral, Lidarr, or read-only folder file found" };
+  return { source: null, reason: "No reusable Library or read-only folder file found" };
 }
 
 export async function restoreCompletedTrack(job: DownloadJob, options: RestoreOptions = {}) {
@@ -645,7 +603,7 @@ export async function restoreCompletedTrack(job: DownloadJob, options: RestoreOp
     ...options,
     targetPlaylistType: job.playlistType,
     excludeJobIds: [job.id],
-    allowLidarr: options.allowLidarr ?? !job.requestGroupId,
+    allowFolderSources: options.allowFolderSources ?? !job.requestGroupId,
   });
   if (source) {
     const sourcePath = path.resolve(source.sourcePath);
@@ -701,20 +659,16 @@ export function requeueJobsUsingRemovedFolders({
   downloadRoot = resolveDownloadRoot(),
   removedFolders = [],
   keptFolders = [],
-  externalFiles = false,
   reason,
 }: RemovedFolderRequeue = {}) {
   const root = path.resolve(downloadRoot);
   let requeued = 0;
   for (const job of downloadTracker.getAll()) {
-    if (job?.status !== "done" || typeof job.finalPath !== "string" || job.managedBy === "lidarr")
-      continue;
+    if (job?.status !== "done" || typeof job.finalPath !== "string") continue;
     const finalPath = path.resolve(job.finalPath);
     if (isPathInsideRoot(finalPath, root)) continue;
     if (keptFolders.some((folder) => isWithinFolder(folder, finalPath))) continue;
-    const removed =
-      removedFolders.some((folder) => isWithinFolder(folder, finalPath)) ||
-      (externalFiles && Boolean(job.externalPath));
+    const removed = removedFolders.some((folder) => isWithinFolder(folder, finalPath));
     if (removed && downloadTracker.setPending(job.id, reason)) requeued += 1;
   }
   return requeued;
@@ -762,7 +716,6 @@ export async function repairJobsUnderRemovedPlaylistDir(
   }
 
   if (repaired > 0 || requeued > 0) {
-    const { playlistManager } = await import("../playlists/playlistManager.ts");
     playlistManager.requestPlaylistSync([...changedPlaylistTypes]);
     if (changedPlaylistTypes.has("library")) playlistManager.scheduleScanLibrary();
   }
@@ -784,7 +737,6 @@ function parsePlaylistIdFromFinalPath(finalPath: string) {
 
 export async function repairOrphanedPlaylistTrackPaths(options: RestoreOptions = {}) {
   const downloadRoot = path.resolve(options.downloadRoot || resolveDownloadRoot());
-  const { flowPlaylistConfig } = await import("../playlists/flowPlaylistConfig.ts");
   const activeIds = new Set([
     ...flowPlaylistConfig.getFlows().map((flow: { id: string }) => String(flow.id)),
     ...flowPlaylistConfig
@@ -878,19 +830,8 @@ export async function repairReusableTrackLinks(
     console.log(
       `[FileReuse] Track health sweep repaired ${repaired}, requeued ${requeued} of ${batch.length} checked tracks`,
     );
-    const { playlistManager } = await import("../playlists/playlistManager.ts");
     playlistManager.requestPlaylistSync([...changedPlaylistTypes]);
     if (changedPlaylistTypes.has("library")) playlistManager.scheduleScanLibrary();
-    if (requeued > 0) {
-      const [{ downloadWorker }, { restartWorkerIfPending }] = await Promise.all([
-        import("./downloadWorker.ts"),
-        import("./mutationGuards.ts"),
-      ]);
-      await restartWorkerIfPending();
-      if (downloadWorker.running) {
-        downloadWorker.wake();
-      }
-    }
   }
   return {
     scanned: batch.length,
@@ -903,77 +844,15 @@ export async function repairReusableTrackLinks(
   };
 }
 
-const handedOverAurralPathsStmt = db
-  .prepare<[], string>(`
-  SELECT media.path
-  FROM library_media_files AS media
-  JOIN library_albums AS album ON album.id = media.album_id
-  JOIN library_management AS management
-    ON management.entity_kind = 'album' AND management.entity_id = album.id
-  WHERE media.source = 'aurral'
-    AND media.available = 1
-    AND management.managed_by = 'lidarr'
-    AND json_valid(album.metadata_json)
-    AND json_extract(album.metadata_json, '$.aurralHandoverAt') IS NOT NULL
-`)
-  .pluck();
-
-export async function moveHandedOverTracksToLidarr() {
-  const handedOver = new Set(
-    handedOverAurralPathsStmt.all().map((filePath) => path.resolve(filePath)),
-  );
-  if (handedOver.size === 0) return { moved: 0, deleted: 0 };
-
-  const jobsByPath = new Map<string, DownloadJob[]>();
-  for (const job of downloadTracker.getAll()) {
-    if (job?.status !== "done" || typeof job.finalPath !== "string") continue;
-    const current = path.resolve(job.finalPath);
-    if (handedOver.has(current)) jobsByPath.set(current, [...(jobsByPath.get(current) || []), job]);
-  }
-
-  const movedPaths: string[] = [];
-  const changedPlaylistTypes = new Set<string>();
-  let moved = 0;
-  for (const [oldPath, jobs] of jobsByPath) {
-    const [first] = jobs;
-    if (!first) continue;
-    const source = await findLibraryFolderSource(first, { targetPlaylistType: "library" });
-    if (!source || !(await fileExists(source.sourcePath))) continue;
-    for (const job of jobs) {
-      downloadTracker.setDone(
-        job.id,
-        path.resolve(source.sourcePath),
-        source.albumName || job.albumName || null,
-        source.externalPath || null,
-      );
-      if (job.playlistType) changedPlaylistTypes.add(String(job.playlistType));
-    }
-    moved += jobs.length;
-    movedPaths.push(oldPath);
-  }
-  if (movedPaths.length === 0) return { moved: 0, deleted: 0 };
-
-  const { playlistManager } = await import("../playlists/playlistManager.ts");
-  playlistManager.requestPlaylistSync([...changedPlaylistTypes]);
-  for (const oldPath of movedPaths) await fs.rm(oldPath, { force: true });
-  const deleted = movedPaths.length;
-  scheduleLibraryScanJob({ includeLidarr: false, changedPaths: movedPaths });
-  console.log(
-    `[FileReuse] Moved ${moved} tracks onto Lidarr files and removed ${deleted} Aurral copies`,
-  );
-  return { moved, deleted };
-}
-
 export async function refreshPlaylistAfterReuse(
   playlistTypes: string[],
   shouldScheduleLibraryScan = false,
   changedPaths: string[] | null = null,
 ) {
-  const { playlistManager } = await import("../playlists/playlistManager.ts");
   playlistManager.requestPlaylistSync([...new Set(playlistTypes)]);
   if (!shouldScheduleLibraryScan) return;
   if (Array.isArray(changedPaths)) {
-    scheduleLibraryScanJob({ includeLidarr: false, changedPaths });
+    scheduleLibraryScanJob({ includeReadOnly: false, changedPaths });
   } else {
     playlistManager.scheduleScanLibrary();
   }
@@ -1041,16 +920,12 @@ export async function reuseTrackForPlaylist(
   console.log(
     `[FileReuse] Reused ${source.sourceType} track for ${playlistType}: ${track.artistName} - ${track.trackName}`,
   );
-  if (!options.skipHistory && source.sourceType !== "lidarr") {
-    import("../aurralHistoryService.ts")
-      .then(({ recordTrackReused }) =>
-        recordTrackReused({
-          track,
-          playlistId: playlistType,
-          sourceType: source.sourceType,
-        }),
-      )
-      .catch(() => {});
+  if (!options.skipHistory) {
+    recordTrackReused({
+      track,
+      playlistId: playlistType,
+      sourceType: source.sourceType,
+    });
   }
   const movedFrom = finalPath === path.resolve(source.sourcePath) ? [] : downloadTracker.getAll();
   refreshPlaylistAfterReuse(
@@ -1060,7 +935,7 @@ export async function reuseTrackForPlaylist(
       ...flowPlaylistConfig.getStaticPlaylistIdsUsingJobs([jobId]),
     ],
     targetPlaylistType === "library",
-    options.libraryScanChangedPaths || (options.allowLidarr === false ? [finalPath] : null),
+    options.libraryScanChangedPaths || (options.allowFolderSources === false ? [finalPath] : null),
   ).catch((error) => {
     console.warn(
       `[FileReuse] Failed to refresh playlist ${playlistType}: ${asAppError(error)?.message || error}`,

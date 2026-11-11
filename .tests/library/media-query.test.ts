@@ -21,7 +21,7 @@ import {
   getLibraryTrackSample,
   invalidateLibraryQueryCache,
 } from "../../backend/services/libraryQueryService.ts";
-import { toPublicLibrary } from "../../backend/routes/library/handlers/libraryIndex.ts";
+import { toPublicLibrary } from "../../backend/services/publicLibrary.ts";
 import {
   buildLibraryReadModel,
   getLibraryReadModelForAlbumReferences,
@@ -94,13 +94,13 @@ test("getLibraryTrackPath keeps shared tracks scoped to the requested album", ()
   upsertLibraryMediaFile({
     trackId: track.id,
     albumId: firstAlbum.id,
-    source: "lidarr",
+    source: "readonly",
     path: firstPath,
   });
   upsertLibraryMediaFile({
     trackId: track.id,
     albumId: secondAlbum.id,
-    source: "lidarr",
+    source: "readonly",
     path: secondPath,
   });
 
@@ -376,25 +376,29 @@ test("getLibrary merges sources and preserves normalized hierarchy", async () =>
     );
     await scanMusicRoot({ rootPath: root, source, metadataReader: async () => metadata });
 
-    await scanMusicRoot({ rootPath: root, source: "lidarr", metadataReader: async () => metadata });
+    await scanMusicRoot({
+      rootPath: root,
+      source: "readonly",
+      metadataReader: async () => metadata,
+    });
 
     const all = getLibrary();
     assert.strictEqual(getLibrary(), all);
     assert.equal(all.artists.length, 1);
     assert.equal(all.albums.length, 1);
     assert.equal(all.tracks.length, 1);
-    assert.deepEqual(all.tracks[0]?.sources, ["lidarr", source]);
+    assert.deepEqual(all.tracks[0]?.sources, [source, "readonly"]);
     assert.equal(all.tracks[0]?.files.length, 2);
     assert.equal(all.albums[0]?.trackIds[0], all.tracks[0].id);
     assert.equal(all.artists[0]?.albumIds[0], all.albums[0].id);
     assert.equal(all.tracks[0]?.available, true);
 
-    const lidarr = getLibrary({ source: "lidarr" });
-    assert.equal(lidarr.tracks.length, 1);
-    assert.deepEqual(lidarr.tracks[0]?.sources, ["lidarr"]);
+    const readOnly = getLibrary({ source: "readonly" });
+    assert.equal(readOnly.tracks.length, 1);
+    assert.deepEqual(readOnly.tracks[0]?.sources, ["readonly"]);
 
     db.prepare("UPDATE library_media_files SET available = 0 WHERE source = ? AND path = ?").run(
-      "lidarr",
+      "readonly",
       filePath,
     );
     const available = getLibrary({ availableOnly: true });
@@ -405,7 +409,7 @@ test("getLibrary merges sources and preserves normalized hierarchy", async () =>
     await rm(root, { recursive: true, force: true });
     db.prepare("DELETE FROM library_media_files WHERE source IN (?, ?) AND path = ?").run(
       source,
-      "lidarr",
+      "readonly",
       filePath,
     );
   }
@@ -592,7 +596,7 @@ test("artist and album reference reads resolve through indexed entity lookups", 
   upsertLibraryMediaFile({
     trackId: track.id,
     albumId: album.id,
-    source: "lidarr",
+    source: "readonly",
     path: `/tmp/${key}.flac`,
   });
   const prepared: string[] = [];
@@ -1066,7 +1070,7 @@ test("library responses do not expose filesystem paths", () => {
           >["metadata"],
         }),
         providerId: null,
-        managedBy: null,
+        managed: false,
         monitorMode: null,
         monitored: false,
         albumIds: [],

@@ -52,6 +52,8 @@ import {
 import { nativeDownloadSource } from "./download/nativeSources.ts";
 import { pluginIdFromSource } from "./plugins/pluginStore.ts";
 import { isNzbSource } from "./usenetClientCommon.ts";
+import { recordTrackJobFailed } from "./aurralHistoryService.ts";
+import { finalizeQualityUpgradeFailure } from "./qualityUpgradeOutcome.ts";
 
 // Runs one step of a download job: it picks the next enabled source in
 // priority order and hands the step to that source's adapter. Every source
@@ -112,35 +114,25 @@ export function enqueuePendingJobsWithoutBatch() {
       .filter(Boolean),
   );
   let count = 0;
-  let resolving = false;
   for (const job of downloadTracker.getByStatus("pending")) {
     const hasProviderSearch = job.slskdBatchId || job.slskdSearchId;
     if (!hasProviderSearch && job.manualReplacementSearch !== true) continue;
     if (activePipelineJobIds.has(job.id)) continue;
-    downloadTracker.clearSlskdPipelineState(job.id);
+    downloadTracker.releaseFromPipeline(job.id);
     // The worker resolves the release of a track that can search by one.
-    if (downloadTracker.canSearchByRelease(job)) resolving = true;
-    else if (downloadTracker.enqueueDownloadPipeline(job.id)) count += 1;
-  }
-  if (resolving) {
-    void import("./downloadJobs/mutationGuards.ts")
-      .then(({ wakeDownloadWorker }) => wakeDownloadWorker())
-      .catch(() => {});
+    if (downloadTracker.canSearchByRelease(job)) continue;
+    if (downloadTracker.enqueueDownloadPipeline(job.id)) count += 1;
   }
   return count;
 }
 
 async function failJob(job: DownloadJob, message: string) {
   if (job.upgradeForJobId) {
-    const { finalizeQualityUpgradeFailure } = await import("./qualityProfileService.ts");
     await finalizeQualityUpgradeFailure(job, message);
     return;
   }
   downloadTracker.setFailed(job.id, message);
-  try {
-    const { recordTrackJobFailed } = await import("./aurralHistoryService.ts");
-    recordTrackJobFailed(job, message);
-  } catch {}
+  recordTrackJobFailed(job, message);
   try {
     const { downloadWorker } = await import("./downloadJobs/downloadWorker.ts");
     downloadWorker.wake(0);
