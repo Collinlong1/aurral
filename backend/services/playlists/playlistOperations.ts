@@ -202,6 +202,12 @@ const indexedFileStmt = db.prepare<
 `);
 
 const linkIndexedFiles = async (tracks: unknown, ownerUserId: unknown) => {
+  const inputTracks = unknownList(tracks);
+  if (
+    !Array.isArray(tracks) ||
+    !tracks.some((track) => isRecord(track) && typeof track.path === "string")
+  )
+    return inputTracks;
   const libraryJobsByPath = new Map(
     downloadTracker
       .getAll()
@@ -225,12 +231,19 @@ const linkIndexedFiles = async (tracks: unknown, ownerUserId: unknown) => {
         trackNumber: file.track_number,
         discNumber: file.disc_number,
       });
+    if (isRecord(track) && typeof track.path === "string" && (!file || !input)) {
+      throw new Error("The requested local file is no longer available in the Library");
+    }
     if (!file || !input || !filterBlockedPlaylistTracks(ownerUserId, [input]).length) {
+      if (isRecord(track) && typeof track.path === "string")
+        throw new Error("The requested local file is not permitted");
       linked.push(track);
       continue;
     }
     const finalPath =
       file.source === "lidarr" ? resolveLocalPath(file.path, getPathMappings("lidarr")) : file.path;
+    if (!(await fileExists(finalPath)))
+      throw new Error("The requested local file could not be opened");
     const existing = libraryJobsByPath.get(finalPath);
     if (existing) {
       linked.push({ ...input, canonicalJobId: existing.id });
@@ -238,6 +251,8 @@ const linkIndexedFiles = async (tracks: unknown, ownerUserId: unknown) => {
     }
     const jobId = (await fileExists(finalPath)) && downloadTracker.addJob(input, "library");
     if (!jobId) {
+      if (isRecord(track) && typeof track.path === "string")
+        throw new Error("The requested local file could not be opened");
       linked.push(track);
       continue;
     }
@@ -532,7 +547,10 @@ async function appendStaticPlaylistTracks({ playlistId, tracks = [] }: Operation
   if (!playlist) return { missing: true };
   const tracksToAdd = filterMissingPlaylistTracks(
     playlist.tracks,
-    filterBlockedPlaylistTracks(playlist.ownerUserId, normalizeTrackList(tracks)),
+    filterBlockedPlaylistTracks(
+      playlist.ownerUserId,
+      normalizeTrackList(await linkIndexedFiles(tracks, playlist.ownerUserId)),
+    ),
   );
   if (tracksToAdd.length === 0) {
     return { success: true, playlist, tracksQueued: 0, tracksReused: 0, jobIds: [] };
@@ -578,6 +596,7 @@ function matchCurrentTracks(
     }
     incoming.forEach((track, index) => {
       if (assigned.has(index)) return;
+      if (track.canonicalJobId && key !== referencedJob) return;
       const match = byKey.get(key(track))?.find((candidate) => unused.has(candidate));
       if (match === undefined) return;
       assigned.set(index, unused.get(match)!.canonicalJobId!);
@@ -609,7 +628,10 @@ async function updateStaticPlaylistLocked({
       ? { ...stored, ...importSourcePatch }
       : importSourcePatch;
   const normalizedTracks = hasTracksUpdate
-    ? filterBlockedPlaylistTracks(currentPlaylist.ownerUserId, normalizeTrackList(tracks))
+    ? filterBlockedPlaylistTracks(
+        currentPlaylist.ownerUserId,
+        normalizeTrackList(await linkIndexedFiles(tracks, currentPlaylist.ownerUserId)),
+      )
     : [];
   let createdJobIds: string[] = [];
   const result = await withPlaylistMutationLock(safePlaylistId, async () => {
@@ -836,6 +858,13 @@ export async function processPlaylistOperation(
   if (kind === "enable-flow-refresh") return runFlowSeed({ ...payload, requireEnabled: true });
   return withPlaylistOperationLock(async () => {
     switch (kind) {
+      case "plugin-local-playlist": {
+        const { executeUserPlaylist } = await import("../plugins/pluginUserOperations.ts");
+        const { grant, existing } = await executeUserPlaylist(payload);
+        return existing
+          ? updateStaticPlaylistLocked({ ...payload, hasTracksUpdate: true, hasNameUpdate: true })
+          : createStaticPlaylist({ ...payload, ownerUserId: grant.userId, downloadMissing: false });
+      }
       case "share-import":
         return (await import("../shareLinks/import.ts")).importShare(payload);
       case "disable-flow-cleanup":

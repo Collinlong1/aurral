@@ -64,12 +64,10 @@ import {
   canLinkLibraryFile,
   runLinkLibraryFile,
   searchLibraryFiles,
-  type LinkLibraryFileResult,
 } from "../../../services/downloadJobs/linkLibraryFile.ts";
 import {
   importDiskFileToJob,
   listDiskFiles,
-  type ImportDiskFileResult,
 } from "../../../services/downloadJobs/importDiskFile.ts";
 import {
   getLibraryCoverUrlsForJobs,
@@ -471,11 +469,9 @@ export default new Hono<AppEnv>()
       try {
         const result = isDownloadOwnerProcess()
           ? await runLinkLibraryFile(job.id, fileId)
-          : await requestDownloadOwner(
-              "linkLibraryFileToJob",
-              [job.id, fileId],
-              { timeoutMs: 60_000 },
-            );
+          : await requestDownloadOwner("linkLibraryFileToJob", [job.id, fileId], {
+              timeoutMs: 60_000,
+            });
         if (!result.ok) return c.json({ error: result.error }, result.status);
         invalidateRequestsCache();
         return c.json({ success: true, jobId: job.id, status: result.status }, 200);
@@ -518,11 +514,9 @@ export default new Hono<AppEnv>()
       try {
         const result = isDownloadOwnerProcess()
           ? await importDiskFileToJob(job.id, filePath)
-          : await requestDownloadOwner(
-              "importDiskFileToJob",
-              [job.id, filePath],
-              { timeoutMs: 10 * 60 * 1000 },
-            );
+          : await requestDownloadOwner("importDiskFileToJob", [job.id, filePath], {
+              timeoutMs: 10 * 60 * 1000,
+            });
         if (!result.ok) return c.json({ error: result.error }, result.status);
         invalidateRequestsCache();
         return c.json({ success: true, jobId: job.id }, 200);

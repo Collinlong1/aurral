@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { issueUserOperationGrant } from "./pluginUserOperations.ts";
 import * as v from "valibot";
 import type { RequestUser } from "../../middleware/requestUser.ts";
 import { logger } from "../logger.ts";
@@ -249,6 +250,8 @@ export async function runPluginAction(
   if (!plugin || !action || !isCapabilityOn(plugin, `action:${action.id}`))
     throw new PluginRequestError(404, "Plugin action not found");
   if (!canUse(action, user)) throw new PluginRequestError(403, "Only admins can run this action");
+  if (action.localPlaylists && (!Number.isSafeInteger(user.id) || user.id <= 0))
+    throw new PluginRequestError(403, "A real user account is required for user-owned playlists");
   let context;
   try {
     context = await actionTarget(user, action.target, target);
@@ -260,6 +263,13 @@ export async function runPluginAction(
     ...pluginInput(plugin),
     user: { id: user.id, username: user.username, role: user.role },
     ...context,
+    ...(action.localPlaylists && {
+      userOperations: {
+        version: 1,
+        url: `http://127.0.0.1:${process.env.PORT || 3001}/api/plugins/${plugin.id}/user-operations`,
+        token: issueUserOperationGrant(plugin.id, action.id, user.id),
+      },
+    }),
   };
   if (!action.background)
     return { message: await invokeAction(plugin, action, input, ACTION_TIMEOUT_MS) };

@@ -43,6 +43,11 @@ import {
 } from "./albumGrab.ts";
 import { selectSoulseekAlbumFolder, soulseekReleaseCopies } from "./albumReleaseSearch.ts";
 import { attemptTrackRequest } from "./releaseManifest.ts";
+import {
+  resolvePluginAcquisitionIdentity,
+  matchesAcquisitionTerms,
+  type AcquisitionIdentity,
+} from "./plugins/pluginAcquisitionIdentity.ts";
 import { attemptRelease } from "./releaseResolver.ts";
 import {
   commitDownloadedFile,
@@ -99,6 +104,7 @@ type SlskdPayload = {
   albumGrab?: boolean;
   albumTransfers?: (SlskdTransfer | null)[] | null;
   searchQueries?: string[];
+  acquisitionIdentity?: AcquisitionIdentity;
   searchQueryIndex?: number;
   searchIds?: string[];
   searchId?: string | null;
@@ -1038,12 +1044,21 @@ async function handleSearch(payload: SlskdPayload, helpers: SlskdHelpers) {
   }
   const release = await attemptRelease(payload, job);
   const resolvedTrack = attemptTrackRequest(job, release, payload.track);
+  const identity =
+    payload.acquisitionIdentity ??
+    (payload.searchQueries ? null : await resolvePluginAcquisitionIdentity(resolvedTrack));
+  if (identity && "blocked" in identity)
+    throw new Error("Acquisition identity needs review: no performer supplied");
+  const queryTrack =
+    identity && "artist" in identity
+      ? { ...resolvedTrack, artistName: identity.artist, artistAliases: identity.aliases }
+      : resolvedTrack;
   const albumJobs = payload.albumGrab === true ? albumGrabJobs(payload) : null;
   const queries =
     payload.searchQueries ||
     (albumJobs
-      ? buildAlbumSearchTiers({ ...resolvedTrack, compilation: release?.compilation === true })
-      : buildSlskdSearchTierGroups(resolvedTrack)
+      ? buildAlbumSearchTiers({ ...queryTrack, compilation: release?.compilation === true })
+      : buildSlskdSearchTierGroups(queryTrack)
     ).flatMap((tier) => tier.queries);
   const currentTier = payload.upgradeForJobId
     ? downloadTracker.getJob(payload.upgradeForJobId)?.qualityTier
@@ -1070,7 +1085,7 @@ async function handleSearch(payload: SlskdPayload, helpers: SlskdHelpers) {
     manifest: release,
   };
   const step = await advanceSlskdSearch(
-    { ...payload, searchQueries: queries },
+    { ...payload, searchQueries: queries, ...(identity && { acquisitionIdentity: identity }) },
     job,
     queries,
     resolvedTrack,
@@ -1080,7 +1095,13 @@ async function handleSearch(payload: SlskdPayload, helpers: SlskdHelpers) {
   if (step.loggedOut)
     return waitForSoulseekLogin(step.payload!, job, helpers, asAppError(step.loggedOut)?.message);
   if (step.payload) return step.payload;
-  const { aggregated, searchIds, queryCount } = step;
+  const { searchIds, queryCount } = step;
+  const aggregated =
+    identity && "artist" in identity
+      ? step.aggregated.filter((entry) =>
+          matchesAcquisitionTerms(entry.file || "", identity.requiredTerms),
+        )
+      : step.aggregated;
   const searchId = payload.searchId || searchIds[0] || null;
   if (albumJobs) {
     const selection = selectAlbumFolders(aggregated, searchOptions);

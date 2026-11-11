@@ -1,4 +1,10 @@
 import { Hono, type Context, type Input } from "hono";
+import {
+  enqueueUserPlaylist,
+  ownedLibrarySnapshot,
+  userOperationStatus,
+  userPlaylistInput,
+} from "../services/plugins/pluginUserOperations.ts";
 import * as v from "valibot";
 import { requireAdmin, requireAuth } from "../middleware/guards.ts";
 import type { AppEnv } from "../middleware/requestUser.ts";
@@ -69,6 +75,44 @@ async function answer<Env extends AppEnv, Path extends string, In extends Input,
 
 export default new Hono<AppEnv>()
   .basePath("/plugins")
+  .get("/:id/user-operations/library", (c) => {
+    try {
+      return c.json(
+        ownedLibrarySnapshot(c.req.header("X-Action-Grant") || "", c.req.param("id")),
+        200,
+      );
+    } catch {
+      return c.json({ error: "Action denied" }, 403);
+    }
+  })
+  .post("/:id/user-operations/playlists", validate("json", userPlaylistInput), async (c) => {
+    try {
+      return c.json(
+        await enqueueUserPlaylist(
+          c.req.header("X-Action-Grant") || "",
+          c.req.param("id"),
+          c.req.valid("json"),
+        ),
+        200,
+      );
+    } catch {
+      return c.json({ error: "Action denied" }, 403);
+    }
+  })
+  .get("/:id/user-operations/jobs/:jobId", (c) => {
+    try {
+      return c.json(
+        userOperationStatus(
+          c.req.header("X-Action-Grant") || "",
+          c.req.param("id"),
+          Number(c.req.param("jobId")),
+        ),
+        200,
+      );
+    } catch {
+      return c.json({ error: "Action denied" }, 403);
+    }
+  })
   .get("/", requireAuth, requireAdmin, async (c) => c.json(await listPlugins(), 200))
   .put(
     "/safe-mode",

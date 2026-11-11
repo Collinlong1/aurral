@@ -30,6 +30,7 @@ export interface PlaylistTrackInput {
   canonicalJobId?: unknown;
   libraryJobId?: unknown;
   membershipId?: unknown;
+  path?: unknown;
 }
 
 type PlaylistJob = PlaylistTrackInput & { id: string; createdAt?: unknown };
@@ -80,6 +81,7 @@ export const normalizePlaylistTrack = (track: PlaylistTrackInput | null | undefi
     ...(discNumber && { discNumber }),
     ...(canonicalJobId && { canonicalJobId }),
     ...(membershipId && { membershipId }),
+    ...(typeof track.path === "string" && track.path.trim() && { path: track.path.trim() }),
   };
 };
 
@@ -177,7 +179,7 @@ export const dedupePlaylistTracks = (tracks: PlaylistTrackInput[] | null | undef
   for (const track of Array.isArray(tracks) ? tracks : []) {
     const normalizedTrack = normalizePlaylistTrack(track);
     if (!normalizedTrack) continue;
-    const identity = `${buildPlaylistTrackIdentity(normalizedTrack)}\u0001${normalizedTrack.membershipId || ""}`;
+    const identity = `${localTrackIdentity(normalizedTrack)}\u0001${normalizedTrack.membershipId || ""}`;
     if (seen.has(identity)) continue;
     seen.add(identity);
     uniqueTracks.push(normalizedTrack);
@@ -185,18 +187,23 @@ export const dedupePlaylistTracks = (tracks: PlaylistTrackInput[] | null | undef
   return uniqueTracks;
 };
 
+const localTrackIdentity = (track: PlaylistTrackInput) =>
+  track.canonicalJobId
+    ? `job:${String(track.canonicalJobId)}`
+    : track.path
+      ? `path:${String(track.path)}`
+      : buildPlaylistTrackIdentity(track);
+
 export const filterMissingPlaylistTracks = (
   existingTracks: PlaylistTrackInput[] | null | undefined,
   incomingTracks: PlaylistTrackInput[] | null | undefined,
 ) => {
-  const seen = new Set(
-    dedupePlaylistTracks(existingTracks).map((track) => buildPlaylistTrackIdentity(track)),
-  );
+  const seen = new Set(dedupePlaylistTracks(existingTracks).map(localTrackIdentity));
   const missingTracks = [];
   for (const track of Array.isArray(incomingTracks) ? incomingTracks : []) {
     const normalizedTrack = normalizePlaylistTrack(track);
     if (!normalizedTrack) continue;
-    const identity = buildPlaylistTrackIdentity(normalizedTrack);
+    const identity = localTrackIdentity(normalizedTrack);
     if (seen.has(identity)) continue;
     seen.add(identity);
     missingTracks.push(normalizedTrack);

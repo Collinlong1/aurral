@@ -120,6 +120,19 @@ const acceptsLinkToken = (method: string, path: string) =>
 export const authenticate = createMiddleware<AppEnv>(async (c, next) => {
   const { method, path } = c.req;
   if (!path.startsWith("/api") || isOpen(method, path)) return next();
+  const actionOperation = path.match(
+    /^\/api\/plugins\/([a-z0-9-]+)\/user-operations\/(?:library|playlists|jobs\/\d+)$/,
+  );
+  if (actionOperation && c.req.header("X-Action-Grant")) {
+    try {
+      const { resolveUserOperationGrant } =
+        await import("../services/plugins/pluginUserOperations.ts");
+      resolveUserOperationGrant(c.req.header("X-Action-Grant")!, actionOperation[1]!);
+      return next();
+    } catch {
+      return unauthorized(c);
+    }
+  }
   if (acceptsLinkToken(method, path)) {
     const user = resolveTokenUser(requestCredentials(c));
     if (user) c.set("user", user);

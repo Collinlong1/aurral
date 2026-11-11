@@ -1,6 +1,7 @@
 export type SettingValue = string | number | boolean;
 
 export interface Base {
+  userOperations?: { version: 1; url: string; token: string };
   settings: Record<string, SettingValue>;
   libraryFolder: string;
   dataFolder: string;
@@ -170,6 +171,15 @@ export type QualityTier =
 export type Upgrade = { currentTier: QualityTier | null } | null;
 
 export interface DownloadSource {
+  acquisitionIdentity?(
+    input: Base & { track: TrackRequest },
+  ):
+    | { blocked: true }
+    | { artist: string; aliases: string[]; requiredTerms?: string[] }
+    | null
+    | Promise<
+        { blocked: true } | { artist: string; aliases: string[]; requiredTerms?: string[] } | null
+      >;
   search?(
     input: Base & { track: TrackRequest; upgrade: Upgrade },
   ): TrackResult[] | Promise<TrackResult[]>;
