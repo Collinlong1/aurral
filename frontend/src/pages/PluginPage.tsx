@@ -3,6 +3,7 @@ import { Link, useParams, useSearchParams } from "react-router";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { parseResponse } from "hono/client";
 import type { PluginPageData } from "../../../backend/services/plugins/pluginPages.ts";
+import PluginAdminPage from "./PluginAdminPage.tsx";
 import { pluginsClient } from "../utils/api/clients/plugins.ts";
 import { useAuth } from "../contexts/AuthContext.tsx";
 import { readApiError } from "./Settings/utils/apiError.ts";
@@ -161,29 +162,32 @@ export default function PluginPage() {
   const [editingForm, setEditingForm] = useState<string | null>(null);
   const selection = params.get("selection") || "",
     q = params.get("q") || "",
-    offset = params.get("offset") || "0";
+    offset = params.get("offset") || "0",
+    tab = params.get("tab") || "";
   const query = useQuery({
-    queryKey: ["plugins", "page", id, pageId, selection, q, offset, user?.id],
+    queryKey: ["plugins", "page", id, pageId, selection, q, offset, tab, user?.id],
     enabled: user?.role === "admin" && !editingForm,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     queryFn: async ({ signal }) => {
       const data = await parseResponse(
         pluginsClient[":id"].pages[":pageId"].$get(
-          { param: { id, pageId }, query: { selection, q, offset } },
+          { param: { id, pageId }, query: { selection, q, offset, tab } },
           { init: { signal } },
         ),
       );
-      if (!("version" in data)) throw new Error("The plugin returned an invalid page");
+      if (!("version" in data) || "lookup" in data)
+        throw new Error("The plugin returned an invalid page");
       return data;
     },
     retry: false,
   });
-  const data = query.data;
-  const navigate = (next: { selection?: string; q?: string; offset?: string }) => {
+  const loaded = query.data;
+  const data = loaded?.version === 1 ? loaded : undefined;
+  const navigate = (next: { selection?: string; q?: string; offset?: string; tab?: string }) => {
     setMessage("");
     setError("");
-    setParams({ ...{ selection, q, offset }, ...next });
+    setParams({ ...{ selection, q, offset, tab }, ...next });
   };
   const mutation = useMutation({
     mutationFn: async ({ command, values }: { command: string; values: Values }) => {
@@ -222,6 +226,19 @@ export default function PluginPage() {
       <div className="plugin-page">
         <h1>Admin access required</h1>
       </div>
+    );
+  if (loaded?.version === 2)
+    return (
+      <PluginAdminPage
+        key={`${id}:${pageId}`}
+        pluginId={id}
+        pageId={pageId}
+        data={loaded}
+        params={{ selection, q, offset, tab }}
+        fetching={query.isFetching}
+        onNavigate={(next) => navigate(next)}
+        onRefetch={() => query.refetch()}
+      />
     );
   return (
     <div className="plugin-page">
