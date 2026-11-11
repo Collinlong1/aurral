@@ -1,10 +1,12 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { parseResponse } from "hono/client";
-import { Link, useParams } from "react-router";
+import { Link, useNavigate, useParams } from "react-router";
 import { useAuth } from "../contexts/AuthContext.tsx";
 import { useAudioQueue } from "../contexts/audioQueueContext.ts";
 import { pluginsClient } from "../utils/api/clients/plugins.ts";
 import { normalizeStreamQueueTrack } from "../utils/audioQueue.ts";
+import { albumPath } from "../../../lib/albumPath.ts";
+import { readApiError } from "./Settings/utils/apiError.ts";
 import type { readPluginResource } from "../../../backend/services/plugins/pluginPresentation.ts";
 import "./PluginPage.css";
 
@@ -14,6 +16,7 @@ export default function PluginResourcePage() {
   const { id = "", pageId = "", resourceId = "" } = useParams();
   const { user } = useAuth();
   const { playQueue } = useAudioQueue();
+  const navigate = useNavigate();
   const query = useQuery({
     queryKey: ["plugin-resource", id, pageId, resourceId, user?.id],
     queryFn: () =>
@@ -38,8 +41,14 @@ export default function PluginResourcePage() {
       ),
     onSuccess: () => query.refetch(),
   });
+  const mutationError = mutation.isError
+    ? (() => {
+        const details = readApiError(mutation.error);
+        return details.error || details.message || "Couldn't save that change. Try again.";
+      })()
+    : "";
   const data = query.data;
-  const play = (recording: WorkView["recordings"][number]) =>
+  const play = (recording: WorkView["recordings"][number], startTrackId: string | null = null) =>
     playQueue(
       recording.items.map((item) =>
         normalizeStreamQueueTrack({
@@ -55,7 +64,10 @@ export default function PluginResourcePage() {
           recordHistory: true,
         }),
       ),
-      { source: { type: "plugin-work", id: recording.id, label: data?.work.title } },
+      {
+        startTrackId,
+        source: { type: "plugin-work", id: recording.id, label: data?.work.title },
+      },
     );
   if (query.isPending)
     return (
@@ -73,7 +85,9 @@ export default function PluginResourcePage() {
   const composers = data.work.credits.filter((credit) => credit.role === "composer");
   return (
     <div className="plugin-page plugin-resource">
-      <Link to="/library/albums">Library</Link>
+      <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigate(-1)}>
+        Back
+      </button>
       <h1>{data.work.title}</h1>
       {data.work.nickname && <p>{data.work.nickname}</p>}
       {composers.length > 0 && <p>{composers.map((credit) => credit.name).join(", ")}</p>}
@@ -97,11 +111,13 @@ export default function PluginResourcePage() {
           ))}
         </ol>
       </section>
+      {mutationError && <p role="alert">{mutationError}</p>}
       <section>
         <h2>Owned recordings</h2>
         {data.recordings.map((recording) => (
           <article className="plugin-resource__recording" key={recording.id}>
             <h3>{recording.label}</h3>
+            {recording.albumId && <Link to={albumPath(recording.albumId)}>Open album</Link>}
             {recording.credits.length > 0 && (
               <p>
                 {recording.credits.map((credit) => `${credit.name} · ${credit.role}`).join("; ")}
@@ -114,32 +130,56 @@ export default function PluginResourcePage() {
             </p>
             <ol>
               {recording.items.map((item) => (
-                <li key={item.id}>{item.title}</li>
+                <li key={item.id}>
+                  <button
+                    type="button"
+                    className="plugin-resource__movement"
+                    aria-label={`Play ${item.title}`}
+                    onClick={() => play(recording, item.id)}
+                  >
+                    {item.title}
+                  </button>
+                </li>
               ))}
             </ol>
             <button type="button" className="btn btn-primary" onClick={() => play(recording)}>
               Play whole work
             </button>
-            <button
-              type="button"
-              className="btn btn-secondary"
-              disabled={mutation.isPending}
-              onClick={() => mutation.mutate({ command: "pick", realizationId: recording.id })}
-            >
-              {data.pickedRealizationId === recording.id
-                ? `Your pick${data.pickScope === "admin" ? " (admin fallback)" : ""}`
-                : "Make my pick"}
-            </button>
+            {data.pickedRealizationId === recording.id && data.pickScope === "user" ? (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                aria-pressed="true"
+                disabled={mutation.isPending}
+                onClick={() => mutation.mutate({ command: "pick", realizationId: null })}
+              >
+                Your pick · Clear
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={mutation.isPending}
+                onClick={() => mutation.mutate({ command: "pick", realizationId: recording.id })}
+              >
+                {data.pickedRealizationId === recording.id
+                  ? "Server pick · Make my pick"
+                  : "Make my pick"}
+              </button>
+            )}
             {user?.role === "admin" && (
               <button
                 type="button"
                 className="btn btn-ghost"
                 disabled={mutation.isPending}
                 onClick={() =>
-                  mutation.mutate({ command: "admin-pick", realizationId: recording.id })
+                  mutation.mutate({
+                    command: "admin-pick",
+                    realizationId: data.adminPickId === recording.id ? null : recording.id,
+                  })
                 }
               >
-                Set admin pick
+                {data.adminPickId === recording.id ? "Clear server pick" : "Set server pick"}
               </button>
             )}
           </article>

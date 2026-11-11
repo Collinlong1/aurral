@@ -140,7 +140,10 @@ function AlbumPage() {
     setPresentationMode(mode);
     localStorage.setItem(presentationPreferenceKey, mode);
   };
-  const playClassicalGroup = (group: NonNullable<AlbumPresentation>["groups"][number]) =>
+  const playClassicalGroup = (
+    group: NonNullable<AlbumPresentation>["groups"][number],
+    startTrackId: string | null = null,
+  ) =>
     playQueue(
       group.items.map((item) =>
         normalizeStreamQueueTrack({
@@ -156,7 +159,7 @@ function AlbumPage() {
           recordHistory: true,
         }),
       ),
-      { source: { type: "plugin-work", id: group.id, label: group.title } },
+      { startTrackId, source: { type: "plugin-work", id: group.id, label: group.title } },
     );
 
   const albumLookupQuery = useQuery({
@@ -421,6 +424,10 @@ function AlbumPage() {
   });
 
   const discHeadings = albumDiscHeadings(merged);
+  // Tracks outside every work group stay visible in By Work view.
+  const groupedTrackIds = new Set(
+    presentation?.groups.flatMap((group) => group.items.map((item) => item.trackId)) ?? [],
+  );
   const rows: TrackListRow[] = merged.map((entry, index) => {
     const { releaseIndex } = entry;
     const section = discHeadings[index];
@@ -477,6 +484,10 @@ function AlbumPage() {
           },
         }),
     };
+  });
+  const ungroupedRows = rows.filter((_, index) => {
+    const id = merged[index]?.libraryTrack?.id;
+    return id == null || !groupedTrackIds.has(String(id));
   });
   const trackParam = searchParams.get("track") || "";
   const highlightKey = trackParam
@@ -832,7 +843,25 @@ function AlbumPage() {
                 </button>
                 <ol>
                   {group.items.map((item) => (
-                    <li key={item.id}>{item.title}</li>
+                    <li key={item.id}>
+                      <button
+                        type="button"
+                        className="classical-presentation__movement"
+                        aria-label={`Play ${item.title}`}
+                        onClick={() => playClassicalGroup(group, item.id)}
+                      >
+                        <span>{item.title}</span>
+                        {formatDuration(
+                          item.endMs != null ? item.endMs - item.startMs : item.durationMs,
+                        ) && (
+                          <span className="classical-presentation__time">
+                            {formatDuration(
+                              item.endMs != null ? item.endMs - item.startMs : item.durationMs,
+                            )}
+                          </span>
+                        )}
+                      </button>
+                    </li>
                   ))}
                 </ol>
                 {group.missing.length > 0 && (
@@ -842,6 +871,17 @@ function AlbumPage() {
                 )}
               </article>
             ))}
+        </section>
+      )}
+      {presentation && presentationMode === "work" && ungroupedRows.length > 0 && (
+        <section aria-label="Other tracks">
+          <h2 className="classical-presentation__other">Other tracks</h2>
+          <TrackList
+            label={`${title || "Album"} other tracks`}
+            rows={ungroupedRows}
+            variant="release"
+            highlightKey={highlightKey}
+          />
         </section>
       )}
       {(!presentation || presentationMode === "track") &&

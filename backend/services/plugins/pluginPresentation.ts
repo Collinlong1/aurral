@@ -29,6 +29,7 @@ const credit = v.object({
 const recording = v.object({
   id,
   label: text(),
+  albumId: v.optional(v.nullable(id), null),
   recordingIds: v.pipe(v.array(id), v.maxLength(100)),
   credits: v.pipe(v.array(credit), v.maxLength(100)),
   items: v.pipe(v.array(queueItem), v.maxLength(500)),
@@ -49,6 +50,7 @@ const workView = v.object({
   favourite: v.boolean(),
   pickedRealizationId: v.nullable(id),
   pickScope: v.nullable(v.picklist(["user", "admin"])),
+  adminPickId: v.optional(v.nullable(id), null),
   recordings: v.pipe(v.array(recording), v.maxLength(200)),
 });
 const albumPresentationSchema = v.nullable(

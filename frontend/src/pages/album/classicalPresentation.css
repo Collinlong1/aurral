@@ -20,3 +20,36 @@
 .classical-presentation__missing {
   color: var(--aurral-text-muted);
 }
+.classical-presentation__work li {
+  margin: 0;
+}
+.classical-presentation__movement {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--aurral-radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.classical-presentation__movement:focus-visible {
+  background: var(--aurral-surface-hover);
+}
+@media (hover: hover) and (pointer: fine) {
+  .classical-presentation__movement:hover {
+    background: var(--aurral-surface-hover);
+  }
+}
+.classical-presentation__time {
+  color: var(--aurral-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.classical-presentation__other {
+  font-size: var(--aurral-font-lg);
+  margin: 24px 0 8px;
+}

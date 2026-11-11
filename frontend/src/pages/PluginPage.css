@@ -106,6 +106,25 @@
   border-bottom: 1px solid var(--aurral-border);
   padding: 16px 0 24px;
 }
+.plugin-resource__movement {
+  padding: 4px 8px;
+  margin-left: -8px;
+  border: 0;
+  border-radius: var(--aurral-radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.plugin-resource__movement:focus-visible {
+  background: var(--aurral-surface-hover);
+}
+@media (hover: hover) and (pointer: fine) {
+  .plugin-resource__movement:hover {
+    background: var(--aurral-surface-hover);
+  }
+}
 .plugin-resource__recording .btn {
   margin: 8px 8px 0 0;
 }
