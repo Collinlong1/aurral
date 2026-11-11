@@ -16,6 +16,7 @@ import {
 import {
   enqueueUserPlaylist,
   ownedLibrarySnapshot,
+  pluginLibrarySnapshot,
   userOperationStatus,
   userPlaylistInput,
 } from "../services/plugins/pluginUserOperations.ts";
@@ -166,8 +167,11 @@ export default new Hono<AppEnv>()
   )
   .get("/:id/user-operations/library", (c) => {
     try {
+      const apiKey = c.req.header("X-Api-Key");
       return c.json(
-        ownedLibrarySnapshot(c.req.header("X-Action-Grant") || "", c.req.param("id")),
+        apiKey
+          ? pluginLibrarySnapshot(apiKey, c.req.param("id"))
+          : ownedLibrarySnapshot(c.req.header("X-Action-Grant") || "", c.req.param("id")),
         200,
       );
     } catch {

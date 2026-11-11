@@ -3,7 +3,7 @@ import * as v from "valibot";
 import { userOps } from "../../db/helpers/index.ts";
 import { getSettingsEncryptionKey } from "../../db/helpers/settings.ts";
 import { buildPermissions } from "../../middleware/auth.ts";
-import { activePlugin, isCapabilityOn } from "./pluginStore.ts";
+import { activePlugin, isCapabilityOn, pluginForApiKey } from "./pluginStore.ts";
 import { flowPlaylistConfig } from "../playlists/flowPlaylistConfig.ts";
 import { playlistOperationQueue } from "../playlists/playlistOperationQueue.ts";
 import { playlistOperationQueue as queue } from "../jobs/queues.ts";
@@ -116,6 +116,17 @@ export function userOperationStatus(token: string, pluginId: string, id: number)
 
 export function ownedLibrarySnapshot(token: string, pluginId: string) {
   resolveUserOperationGrant(token, pluginId);
+  return librarySnapshot();
+}
+
+// A plugin with API access already acts as an admin; let its own key read the
+// same snapshot so scheduled runs can reconcile without a user action grant.
+export function pluginLibrarySnapshot(apiKey: string, pluginId: string) {
+  if (!apiKey || pluginForApiKey(apiKey) !== pluginId) throw new Error("Plugin key denied");
+  return librarySnapshot();
+}
+
+function librarySnapshot() {
   const library = getLibrary({ availableOnly: true });
   return {
     version: 1,

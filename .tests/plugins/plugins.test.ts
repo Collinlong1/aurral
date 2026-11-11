@@ -790,6 +790,31 @@ test("a scheduled plugin runs once its interval passes and keeps files in its da
   await assert.rejects(access(pluginDataFolder("ticker")));
 });
 
+test("a plugin's own API key reads its library snapshot for scheduled syncs", async () => {
+  setSafeMode(false);
+  await install("reader", { apiAccess: true }, "export default {};");
+  await install("other", { apiAccess: true }, "export default {};");
+  await turnOn("reader");
+  await turnOn("other");
+  const keyFor = (id: string) => pluginInput(activePlugin(id)!).api?.key ?? "";
+  const snapshot = (apiKey: string) =>
+    routes(stranger).request("/plugins/reader/user-operations/library", {
+      headers: { "X-Api-Key": apiKey },
+    });
+  const readerKey = keyFor("reader");
+  const allowed = await snapshot(readerKey);
+  assert.equal(allowed.status, 200);
+  const body: unknown = await allowed.json();
+  assert.equal(
+    v.parse(v.object({ version: v.number(), complete: v.boolean() }), body).complete,
+    true,
+  );
+  assert.equal((await snapshot(keyFor("other"))).status, 403);
+  assert.equal((await snapshot(`${keyFor("reader")}x`)).status, 403);
+  await turnOn("reader", { capabilities: { api: false } });
+  assert.equal((await snapshot(readerKey)).status, 403);
+});
+
 test("a plugin's API key acts as an admin only while the plugin can run", async () => {
   await install("helper", { apiAccess: true }, "export default {};");
   await turnOn("helper");
