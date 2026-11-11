@@ -166,6 +166,45 @@ test("page transport rejects cross-site/oversized/malformed requests and propaga
   );
 });
 
+test("admin pages v2 and lookups pass validated data; plugins learn the host renders v2", async () => {
+  const code = `export default {pages:{read:async input=>input.query.lookup
+    ? ({version:2,lookup:input.query.lookup,options:[{value:'w1',label:'Symphony No. 5',detail:'Beethoven'}]})
+    : input.query.tab==='bad'
+      ? ({version:2,title:'Bad',revision:'1',tabs:[],list:{items:[],total:0,offset:0},view:{crumbs:[],title:'x',sections:[{type:'script',id:'x'}]}})
+      : ({version:2,title:'Editor v'+input.capabilities.adminForms,revision:'1',tab:input.query.tab,
+          tabs:[{id:'works',label:'Works',count:1}],
+          list:{items:[{id:'w1',label:'Symphony No. 5',selection:'w1',badge:{label:'Complete',tone:'success'}}],total:1,offset:0},
+          view:{crumbs:[{label:'Beethoven',selection:'p1'}],title:'Symphony No. 5',sections:[
+            {type:'form',id:'details',command:'save-entity',arguments:{target:'w1'},submitLabel:'Save',fields:[
+              {key:'title',label:'Title',type:'text',value:'Symphony No. 5',meta:{source:'MusicBrainz',pinned:false},actions:[{label:'Mark blank',command:'set-blank',arguments:{target:'w1',field:'title'}}]},
+              {key:'composer',label:'Composer',type:'lookup',lookup:'composers',value:'',valueLabel:''},
+              {key:'mapping',label:'Movement',type:'mapping',value:['m1'],rows:[{label:'1. Allegro'}],options:[{value:'',label:'Skip'},{value:'m1',label:'I. Allegro'}]}]},
+            {type:'rows',id:'movements',rows:[{id:'m1',label:'I. Allegro',actions:[{label:'Delete',command:'delete-movement',arguments:{},tone:'danger',confirm:'Sure?'}]}]},
+            {type:'details',id:'file',items:[{label:'File',value:'1.flac'}]}]}})}}`;
+  await install("pages2", { pages: [{ id: "editor", label: "Editor" }] }, code);
+  await turnOn("pages2");
+  const route = "/plugins/pages2/pages/editor";
+  const page = await routes(admin).request(`${route}?tab=works&selection=w1`);
+  assert.equal(page.status, 200);
+  const body: unknown = await page.json();
+  const parsed = v.parse(
+    v.object({ version: v.literal(2), title: v.string(), tab: v.string() }),
+    body,
+  );
+  assert.deepEqual(parsed, { version: 2, title: "Editor v2", tab: "works" });
+  const lookup = await routes(admin).request(`${route}?lookup=works&q=symphony`);
+  assert.equal(lookup.status, 200);
+  const options: unknown = await lookup.json();
+  assert.equal(
+    v.parse(v.object({ options: v.array(v.object({ value: v.string() })) }), options).options[0]
+      ?.value,
+    "w1",
+  );
+  // Unknown section types and malformed query keys are rejected.
+  assert.equal((await routes(admin).request(`${route}?tab=bad`)).status, 502);
+  assert.equal((await routes(admin).request(`${route}?lookup=../x`)).status, 400);
+});
+
 test("old plugins stay page-free and invalid page output fails with a bounded error", async () => {
   await install("legacy", {}, "export default {}");
   await turnOn("legacy");

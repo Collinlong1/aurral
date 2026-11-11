@@ -109,6 +109,14 @@ button.plugin-admin__row-main:focus-visible {
   overflow-wrap: anywhere;
 }
 
+.plugin-admin__row.is-active {
+  background: var(--aurral-surface-selected);
+}
+
+.plugin-admin__form .plugin-admin__lines.input {
+  min-height: 4.5rem;
+}
+
 .plugin-admin__row-actions {
   display: flex;
   flex-shrink: 0;
@@ -128,9 +136,10 @@ button.plugin-admin__row-main:focus-visible {
   border-radius: var(--aurral-radius-round);
   background: var(--aurral-surface-selected);
   color: var(--aurral-text-muted);
+  max-width: 100%;
   font-size: var(--aurral-font-2xs);
   font-weight: 600;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .plugin-admin__badge--muted {
@@ -156,17 +165,47 @@ button.plugin-admin__row-main:focus-visible {
 }
 
 .plugin-admin__crumbs {
+  display: flex;
   flex-wrap: wrap;
+  align-items: center;
   margin-bottom: 0.5rem;
+  color: var(--aurral-text-subtle);
   font-size: var(--aurral-font-sm);
 }
 
-.plugin-admin__crumbs button {
+.plugin-admin__crumbs > * + *::before {
+  content: "/" / "";
+  margin: 0 0.5rem;
+  color: var(--aurral-text-subtle);
+}
+
+.plugin-admin__crumb {
+  display: inline-flex;
+  align-items: center;
   padding: 0;
   border: 0;
   background: transparent;
+  color: inherit;
   font: inherit;
   cursor: pointer;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .plugin-admin__crumb:hover {
+    color: var(--aurral-text);
+  }
+}
+
+.plugin-admin__crumb:focus-visible {
+  outline: 2px solid var(--aurral-ring);
+  outline-offset: 2px;
+}
+
+.plugin-admin__crumb-back {
+  display: none;
+  width: var(--aurral-icon-sm);
+  height: var(--aurral-icon-sm);
+  margin-left: -0.25rem;
 }
 
 .plugin-admin__view-head {
@@ -384,6 +423,14 @@ button.plugin-admin__row-main:focus-visible {
     display: none;
   }
 
+  .plugin-admin__crumbs {
+    font-size: var(--aurral-font-base);
+  }
+
+  .plugin-admin__crumb-back {
+    display: inline-block;
+  }
+
   .plugin-admin__view-head {
     flex-direction: column;
   }
@@ -394,6 +441,14 @@ button.plugin-admin__row-main:focus-visible {
 
   .plugin-admin__row {
     flex-wrap: wrap;
+  }
+
+  .plugin-admin__row.is-active {
+    background: var(--aurral-surface-selected);
+  }
+
+  .plugin-admin__form .plugin-admin__lines.input {
+    min-height: 4.5rem;
   }
 
   .plugin-admin__row-actions {

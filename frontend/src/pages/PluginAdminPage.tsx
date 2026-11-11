@@ -245,7 +245,7 @@ function FormSection({
         return (
           <textarea
             id={id}
-            className="input settings-textarea"
+            className={`input settings-textarea${field.type === "lines" ? " plugin-admin__lines" : ""}`}
             rows={field.type === "lines" ? 3 : 4}
             maxLength={10000}
             required={field.required}
@@ -391,11 +391,13 @@ function FormSection({
 
 function RowItem({
   row,
+  active = false,
   disabled,
   onSelect,
   onAction,
 }: {
   row: Row;
+  active?: boolean;
   disabled: boolean;
   onSelect: (selection: string) => void;
   onAction: (action: PluginPageV2Action) => void;
@@ -410,10 +412,11 @@ function RowItem({
     </>
   );
   return (
-    <div className="plugin-admin__row">
+    <div className={`plugin-admin__row${active ? " is-active" : ""}`}>
       {row.selection ? (
         <button
           type="button"
+          aria-current={active ? "page" : undefined}
           className="settings-service plugin-admin__row-main"
           onClick={() => onSelect(row.selection!)}
         >
@@ -534,6 +537,9 @@ export default function PluginAdminPage({
 
   useEffect(() => setSearch(params.q), [params.q]);
 
+  // Links inside the detail view clear the tab so the plugin shows the list
+  // that matches the opened item.
+  const open = (selection: string) => go({ selection, tab: "", q: "", offset: "0" });
   const go = (next: Partial<AdminParams>, force = false) => {
     if (dirty && !force) {
       setPending(next);
@@ -554,17 +560,26 @@ export default function PluginAdminPage({
           json: { command, values, revision: data.revision },
         }),
       ),
-    onSuccess: async (result) => {
+    onMutate: () => {
+      setMessage("");
       setError(null);
+    },
+    onSuccess: async (result) => {
       setDirtyForms({});
-      setMessage("message" in result ? result.message : "Saved");
+      const text = "message" in result ? result.message : "Saved";
       if (
         "selection" in result &&
         typeof result.selection === "string" &&
         result.selection !== params.selection
       )
-        onNavigate({ selection: result.selection });
+        onNavigate(
+          result.selection
+            ? { selection: result.selection, tab: "", q: "", offset: "0" }
+            : { selection: "" },
+        );
+      // Report the result once the updated page is on screen.
       else await onRefetch();
+      setMessage(text);
     },
     onError: (failure: unknown) => {
       setMessage("");
@@ -668,6 +683,7 @@ export default function PluginAdminPage({
                 <RowItem
                   key={item.id}
                   row={item}
+                  active={!!item.selection && item.selection === params.selection}
                   disabled={busy}
                   onSelect={(selection) => go({ selection })}
                   onAction={runAction}
@@ -706,20 +722,21 @@ export default function PluginAdminPage({
         <div className="plugin-admin__detail" ref={detailRef}>
           {view ? (
             <>
-              <nav className="settings-bar__crumbs plugin-admin__crumbs" aria-label="Breadcrumb">
+              <nav className="plugin-admin__crumbs" aria-label="Breadcrumb">
                 <button
                   type="button"
-                  className="settings-bar__crumb plugin-admin__list-back"
+                  className="plugin-admin__crumb"
                   onClick={() => go({ selection: "" })}
                 >
+                  <ChevronLeft aria-hidden="true" className="plugin-admin__crumb-back" />
                   {data.tabs.find((tab) => tab.id === data.tab)?.label || "All"}
                 </button>
                 {view.crumbs.map((crumb) => (
                   <button
                     key={crumb.selection}
                     type="button"
-                    className="settings-bar__crumb"
-                    onClick={() => go({ selection: crumb.selection })}
+                    className="plugin-admin__crumb"
+                    onClick={() => open(crumb.selection)}
                   >
                     {crumb.label}
                   </button>
@@ -817,7 +834,7 @@ export default function PluginAdminPage({
                                 key={row.id}
                                 row={row}
                                 disabled={busy}
-                                onSelect={(selection) => go({ selection })}
+                                onSelect={open}
                                 onAction={runAction}
                               />
                             ))}
@@ -840,7 +857,7 @@ export default function PluginAdminPage({
                                 <button
                                   type="button"
                                   className="plugin-admin__link"
-                                  onClick={() => go({ selection: item.selection })}
+                                  onClick={() => item.selection && open(item.selection)}
                                 >
                                   {item.value}
                                 </button>

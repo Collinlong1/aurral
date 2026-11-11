@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useMutation } from "@tanstack/react-query";
 import { parseResponse } from "hono/client";
 import type { PluginPageData } from "../../../backend/services/plugins/pluginPages.ts";
 import PluginAdminPage from "./PluginAdminPage.tsx";
@@ -169,6 +169,8 @@ export default function PluginPage() {
     enabled: user?.role === "admin" && !editingForm,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
+    // Keep the current page on screen while the next selection loads.
+    placeholderData: keepPreviousData,
     queryFn: async ({ signal }) => {
       const data = await parseResponse(
         pluginsClient[":id"].pages[":pageId"].$get(
