@@ -4,7 +4,7 @@ import { Link, useNavigate, useParams } from "react-router";
 import { useAuth } from "../contexts/AuthContext.tsx";
 import { useAudioQueue } from "../contexts/audioQueueContext.ts";
 import { pluginsClient } from "../utils/api/clients/plugins.ts";
-import { normalizeStreamQueueTrack } from "../utils/audioQueue.ts";
+import { pluginQueueTrack } from "../utils/pluginQueue.ts";
 import { albumPath } from "../../../lib/albumPath.ts";
 import { readApiError } from "./Settings/utils/apiError.ts";
 import type { readPluginResource } from "../../../backend/services/plugins/pluginPresentation.ts";
@@ -50,20 +50,7 @@ export default function PluginResourcePage() {
   const data = query.data;
   const play = (recording: WorkView["recordings"][number], startTrackId: string | null = null) =>
     playQueue(
-      recording.items.map((item) =>
-        normalizeStreamQueueTrack({
-          id: item.id,
-          trackId: item.trackId,
-          title: item.title,
-          artist: item.artist,
-          album: item.album,
-          durationMs: item.endMs != null ? item.endMs - item.startMs : item.durationMs,
-          segmentStartMs: item.startMs,
-          segmentEndMs: item.endMs,
-          streamPath: item.streamPath,
-          recordHistory: true,
-        }),
-      ),
+      recording.items.map((item) => pluginQueueTrack(item, data?.work.title || "")),
       {
         startTrackId,
         source: { type: "plugin-work", id: recording.id, label: data?.work.title },

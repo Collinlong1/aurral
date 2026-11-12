@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router";
-import { AlertCircle, EyeOff, Search, Share } from "../../components/icons";
+import { AlertCircle, EyeOff, Pause, Play, Search, Share } from "../../components/icons";
 import AddActionButton from "../../components/AddActionButton";
 import { formatReleaseWait, isAwaitingRelease } from "../../utils/aurralAlbumStatus.ts";
 import { AurralAlbumStatus } from "../../components/AurralAlbumStatus";
@@ -76,7 +76,10 @@ import { useReleaseCover } from "./useReleaseCover.ts";
 import StatePanel from "../../components/StatePanel";
 import { pluginsClient } from "../../utils/api/clients/plugins.ts";
 import { parseResponse } from "hono/client";
-import { normalizeStreamQueueTrack } from "../../utils/audioQueue.ts";
+import {
+  pluginItemDurationMs as itemDurationMs,
+  pluginQueueTrack,
+} from "../../utils/pluginQueue.ts";
 import type { pluginAlbumPresentation } from "../../../../backend/services/plugins/pluginPresentation.ts";
 import "./classicalPresentation.css";
 
@@ -84,15 +87,15 @@ type AlbumPresentation = Awaited<ReturnType<typeof pluginAlbumPresentation>>;
 
 type AlbumPresentationGroup = NonNullable<AlbumPresentation>["groups"][number];
 
-const itemDurationMs = (item: AlbumPresentationGroup["items"][number]) =>
-  item.endMs != null ? item.endMs - item.startMs : item.durationMs;
-
-function playerTitle(group: AlbumPresentationGroup, item: AlbumPresentationGroup["items"][number]) {
-  return item.title.startsWith(group.title) ? item.title : `${group.title}: ${item.title}`;
-}
+const workSource = (group: AlbumPresentationGroup) => ({
+  type: "plugin-work",
+  id: group.id,
+  label: group.title,
+});
+const WORK_PLAYBACK_MENU_IDS = new Set(["play", "queue-next", "queue-add", "radio"]);
 
 // As Apple Music Classical heads a work: composer, then the work, then its
-// length when it spans several tracks. A single piece has no work page.
+// length when it spans several tracks. Unassigned pieces have no work page.
 function ClassicalWorkHeading({ group }: { group: AlbumPresentationGroup }) {
   const total =
     group.items.length > 1
@@ -191,23 +194,8 @@ function AlbumPage() {
   };
   const playClassicalGroup = (group: AlbumPresentationGroup, startTrackId: string | null = null) =>
     playQueue(
-      group.items.map((item) =>
-        normalizeStreamQueueTrack({
-          id: item.id,
-          trackId: item.trackId,
-          // The player stands alone, so it names the work too: "24 Jazz
-          // Preludes, Op. 53: No. 11", as Apple Music titles the track.
-          title: playerTitle(group, item),
-          artist: item.artist,
-          album: item.album,
-          durationMs: itemDurationMs(item),
-          segmentStartMs: item.startMs,
-          segmentEndMs: item.endMs,
-          streamPath: item.streamPath,
-          recordHistory: true,
-        }),
-      ),
-      { startTrackId, source: { type: "plugin-work", id: group.id, label: group.title } },
+      group.items.map((item) => pluginQueueTrack(item, group.title)),
+      { startTrackId, source: workSource(group) },
     );
 
   const albumLookupQuery = useQuery({
@@ -536,9 +524,7 @@ function AlbumPage() {
     const id = merged[index]?.libraryTrack?.id;
     return id == null || !groupedTrackIds.has(String(id));
   });
-  // By Work reuses each track's album row, so menus, favorites and hover
-  // behave exactly as in By Track; only numbering, title, time and playback
-  // follow the work.
+  // Native library actions stay on the track; playback actions use the work item.
   const rowByTrackId = new Map(
     merged.flatMap((entry, index) =>
       entry.libraryTrack && rows[index] ? [[String(entry.libraryTrack.id), rows[index]]] : [],
@@ -547,9 +533,12 @@ function AlbumPage() {
   const workRows: TrackListRow[] = (presentation?.groups ?? []).flatMap((group) =>
     group.items.map((item, index) => {
       const base = rowByTrackId.get(item.trackId);
-      const active =
-        String(currentTrack?.id) === item.id &&
-        matchesSource({ type: "plugin-work", id: group.id });
+      const active = String(currentTrack?.id) === item.id && matchesSource(workSource(group));
+      const playing = active && (isPlaying || isStarting);
+      const onPlay = () => (active ? togglePlayPause() : playClassicalGroup(group, item.id));
+      const queueItems = getQueueItems(pluginQueueTrack(item, group.title), {
+        source: workSource(group),
+      });
       return {
         ...base,
         key: `${group.id}:${item.id}`,
@@ -562,9 +551,23 @@ function AlbumPage() {
         timeMissing: false,
         missing: false,
         active,
-        playing: active && (isPlaying || isStarting),
+        playing,
         loading: active && isLoading,
-        onPlay: () => (active ? togglePlayPause() : playClassicalGroup(group, item.id)),
+        onPlay,
+        menu: {
+          ...base?.menu,
+          items: [
+            {
+              id: "play",
+              label: playing ? "Pause" : "Play",
+              icon: playing ? Pause : Play,
+              onSelect: onPlay,
+            },
+            ...queueItems,
+            ...(base?.menu?.items || []).filter((entry) => !WORK_PLAYBACK_MENU_IDS.has(entry.id)),
+          ],
+          additionalItemsAfter: queueItems.at(-1)?.id ?? "play",
+        },
       };
     }),
   );

@@ -15,6 +15,7 @@ import {
   shouldRestartTrack,
 } from "../../frontend/src/utils/audioQueue.ts";
 import { requireFixture } from "../playlists/fixtures.ts";
+import { pluginQueueTrack } from "../../frontend/src/utils/pluginQueue.ts";
 
 const track = {
   id: "flow-track",
@@ -29,6 +30,32 @@ test("flow playback can opt out of listening history", () => {
 });
 
 test("bounded work items expose range-relative duration and clamp coordinates", () => {
+  const item = {
+    id: "work-item",
+    trackId: "owned-track",
+    fileId: "owned-file",
+    albumId: "owned-album",
+    title: "No. 26",
+    artist: "Pianist",
+    album: "Recital",
+    durationMs: 120000,
+    startMs: 42000,
+    endMs: 81000,
+    streamPath: "/library/stream/owned-album/owned-track?fileId=owned-file",
+  };
+  const queued = pluginQueueTrack(item, "Études, Op. 5");
+  assert.equal(queued.title, "Études, Op. 5: No. 26");
+  assert.equal(queued.libraryTrackId, item.trackId);
+  assert.equal(queued.libraryAlbumId, item.albumId);
+  assert.equal(queued.segmentStartMs, 42000);
+  assert.equal(queued.segmentEndMs, 81000);
+  assert.equal(queued.durationMs, 39000);
+  assert.ok(queued.src?.endsWith(item.streamPath));
+  assert.equal(
+    pluginQueueTrack({ ...item, title: queued.title, startMs: 0, endMs: null }, "Études, Op. 5")
+      .title,
+    queued.title,
+  );
   assert.deepEqual(queueSegmentBounds({ segmentStartMs: 42000, segmentEndMs: 81000 }, 120), {
     start: 42,
     end: 81,

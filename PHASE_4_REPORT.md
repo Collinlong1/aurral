@@ -1,5 +1,7 @@
 # Phase 4 generic host integration
 
+Work-row playback correction: album row/menu actions share the plugin item's bounded queue conversion and work source. Native metadata and playlist actions retain their track context. Player titles include work and part from both album rows and resource pages; the original title is retained when it already includes the work name. The existing generic album/resource contracts are unchanged.
+
 Post-Phase-4 correction: menus now group multiple actions from one plugin under a plugin-named submenu, preventing long capability lists from rendering actions below the viewport. This is a generic core presentation change; single-action plugins remain direct menu items.
 
 Phase 4 was explicitly authorized on November 10, 2026 (America/Chicago). The fork adds three generic, independently capability-checked pieces for the plugin-owned classical experience:
