@@ -87,15 +87,28 @@ type AlbumPresentationGroup = NonNullable<AlbumPresentation>["groups"][number];
 const itemDurationMs = (item: AlbumPresentationGroup["items"][number]) =>
   item.endMs != null ? item.endMs - item.startMs : item.durationMs;
 
+// As Apple Music Classical heads a work: composer, then the work, then its
+// length when it spans several tracks. A single piece has no work page.
 function ClassicalWorkHeading({ group }: { group: AlbumPresentationGroup }) {
+  const total =
+    group.items.length > 1
+      ? formatDuration(group.items.reduce((sum, item) => sum + (itemDurationMs(item) ?? 0), 0))
+      : "";
   return (
     <span className="classical-presentation__work">
-      <RouteLink to={group.href} className="classical-presentation__work-title">
-        {group.title}
-      </RouteLink>
       {group.composer ? (
         <span className="classical-presentation__work-detail">{group.composer}</span>
       ) : null}
+      <span className="classical-presentation__work-line">
+        {group.href ? (
+          <RouteLink to={group.href} className="classical-presentation__work-title">
+            {group.title}
+          </RouteLink>
+        ) : (
+          <span className="classical-presentation__work-title">{group.title}</span>
+        )}
+        {total ? <span className="classical-presentation__work-time">{total}</span> : null}
+      </span>
       {group.missing.length ? (
         <span className="classical-presentation__work-detail">
           Missing {group.missing.map((movement) => movement.title).join(", ")}
@@ -537,6 +550,7 @@ function AlbumPage() {
         section: index === 0 ? <ClassicalWorkHeading group={group} /> : null,
         number: index + 1,
         title: item.title,
+        subtitle: item.performer || base?.subtitle,
         time: formatDuration(itemDurationMs(item)) || base?.time,
         timeMissing: false,
         missing: false,

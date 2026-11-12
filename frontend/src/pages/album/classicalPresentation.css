@@ -7,6 +7,17 @@
   gap: 2px;
   min-width: 0;
 }
+.classical-presentation__work-line {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+.classical-presentation__work-time {
+  color: var(--aurral-text-muted);
+  font-size: var(--aurral-font-sm);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
 .classical-presentation__work-title {
   color: var(--aurral-text);
   font-size: var(--aurral-font-base);

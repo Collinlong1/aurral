@@ -14,6 +14,8 @@ const queueItem = v.object({
   albumId: id,
   title: text(),
   artist: text(),
+  // Who plays, when the plugin can tell it from the artist.
+  performer: v.optional(text()),
   album: text(),
   durationMs: v.nullable(v.pipe(v.number(), v.integer(), v.minValue(1))),
   startMs: v.pipe(v.number(), v.integer(), v.minValue(0)),
@@ -60,14 +62,15 @@ const albumPresentationSchema = v.nullable(
     supportsToggle: v.literal(true),
     groups: v.pipe(
       v.array(
+        // A group is a work, or a single piece with no work page.
         v.object({
           id,
-          workId: id,
+          workId: v.nullable(id),
           title: text(),
           composer: text(),
-          items: v.pipe(v.array(queueItem), v.maxLength(500)),
+          items: v.pipe(v.array(queueItem), v.minLength(1), v.maxLength(500)),
           missing: v.pipe(v.array(movement), v.maxLength(200)),
-          movementCount: v.pipe(v.number(), v.integer(), v.minValue(2)),
+          movementCount: v.pipe(v.number(), v.integer(), v.minValue(1)),
         }),
       ),
       v.maxLength(200),
@@ -237,7 +240,7 @@ export async function pluginAlbumPresentation(user: RequestUser, albumId: string
         groups: result.groups
           .map((group) => ({
             ...group,
-            href: `/plugins/${plugin.id}/work/${group.workId}`,
+            href: group.workId ? `/plugins/${plugin.id}/work/${group.workId}` : null,
             items: playableItems(group.items, String(album.id)),
           }))
           .sort((a, b) => firstPosition(a) - firstPosition(b)),
