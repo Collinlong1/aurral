@@ -1,6 +1,5 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
-import { createPortal } from "react-dom";
 import { useLocation, useNavigate } from "react-router";
 import { libraryAlbumPath } from "../../../../lib/albumPath.ts";
 import ArtistImage from "../../components/ArtistImage";
@@ -10,6 +9,7 @@ import { AlertCircle, Check, Music } from "../../components/icons";
 import { ModalShell } from "../../components/PlaylistModals";
 import { useDebouncedValue } from "../../hooks/useDebouncedValue";
 import { queryKeys } from "../../queryClient.ts";
+import { resolveAuthenticatedApiAssetUrl } from "../../utils/api/core.ts";
 import { getApiErrorText } from "../../utils/api/errors.ts";
 import {
   fetchLibraryAlbumMatches,
@@ -117,7 +117,7 @@ function MatchModal({
     return null;
   };
 
-  return createPortal(
+  return (
     <ModalShell
       open
       className="match-modal"
@@ -212,8 +212,7 @@ function MatchModal({
           </p>
         ) : null}
       </div>
-    </ModalShell>,
-    document.body,
+    </ModalShell>
   );
 }
 
@@ -332,7 +331,7 @@ export function AlbumMatchModal({
         String(item.libraryAlbumId) !== String(album.id) &&
         "In your Library",
     ),
-    art: albumArt(item.coverUrl),
+    art: albumArt(resolveAuthenticatedApiAssetUrl(item.coverUrl)),
   });
   const known = new Set<string>(GROUPS.map(([type]) => type));
   const groups = fromDiscography

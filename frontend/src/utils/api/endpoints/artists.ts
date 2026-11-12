@@ -1,3 +1,4 @@
+import { queryOptions } from "@tanstack/react-query";
 import { parseResponse, type InferResponseType } from "hono/client";
 import {
   apiFetchWithin,
@@ -10,10 +11,15 @@ import { artistsClient } from "../clients/artists.ts";
 import { queryClient, queryKeys } from "../../../queryClient.ts";
 
 export type ArtistDetailsResponse = InferResponseType<(typeof artistsClient)[":mbid"]["$get"], 200>;
+type ReleaseGroupPreview = InferResponseType<
+  (typeof artistsClient)["release-group"][":mbid"]["previews"]["$get"],
+  200
+>["previews"][string];
 export type ReleaseGroupTrack = InferResponseType<
   (typeof artistsClient)["release-group"][":mbid"]["tracks"]["$get"],
   200
->[number];
+>[number] &
+  Partial<ReleaseGroupPreview>;
 export type SimilarArtistsResponse = InferResponseType<
   (typeof artistsClient)[":mbid"]["similar"]["$get"],
   200
@@ -22,10 +28,6 @@ type ReleaseGroupRatings = InferResponseType<
   (typeof artistsClient)["release-groups"]["ratings"]["$post"],
   200
 >;
-type ReleaseGroupCoverEntry = InferResponseType<
-  (typeof artistsClient)["release-groups"]["covers"]["$post"],
-  200
->["covers"][string];
 type ReleaseGroupCoverResponse = InferResponseType<
   (typeof artistsClient)["release-group"][":mbid"]["cover"]["$get"],
   200
@@ -34,46 +36,7 @@ type ArtistVideo = NonNullable<
   InferResponseType<(typeof artistsClient)[":mbid"]["video"]["$get"], 200>["video"]
 > & { trackTitle: string };
 
-type ArtistDetailsOptions = {
-  mode?: string;
-  releaseTypes?: string[];
-  appearsOnLimit?: number;
-};
-
-type ReleaseGroupCoverItem = { mbid: string; artistName: string; albumTitle: string };
-
 const coverFetch = apiFetchWithin(4000);
-
-export const getArtistDetails = (
-  mbid: string,
-  artistName?: string,
-  options: ArtistDetailsOptions = {},
-) =>
-  queryClient.fetchQuery({
-    queryKey: queryKeys.artistDetails(mbid, { artistName, ...options }),
-    queryFn: ({ signal }) =>
-      parseResponse(
-        artistsClient[":mbid"].$get(
-          {
-            param: { mbid: encodeURIComponent(mbid) },
-            query: {
-              artistName: artistName || undefined,
-              mode: options.mode || undefined,
-              releaseTypes: options.releaseTypes?.length
-                ? options.releaseTypes.join(",")
-                : undefined,
-              appearsOnLimit:
-                Number.isFinite(Number(options.appearsOnLimit)) &&
-                Number(options.appearsOnLimit) > 0
-                  ? String(Number.parseInt(String(options.appearsOnLimit), 10))
-                  : undefined,
-            },
-          },
-          { init: { signal } },
-        ),
-      ),
-    staleTime: 60_000,
-  });
 
 export const getReleaseTrackCredits = (mbid: string, { signal }: { signal?: AbortSignal } = {}) =>
   parseResponse(
@@ -83,27 +46,27 @@ export const getReleaseTrackCredits = (mbid: string, { signal }: { signal?: Abor
     ),
   );
 
-export const getReleaseGroupTracks = (
+export const getReleaseGroupTracks = (mbid: string, { signal }: { signal?: AbortSignal } = {}) =>
+  parseResponse(
+    artistsClient["release-group"][":mbid"].tracks.$get(
+      { param: { mbid: encodeURIComponent(mbid) } },
+      { init: { signal } },
+    ),
+  );
+
+export const getReleaseGroupPreviews = (
   mbid: string,
   {
     signal,
+    artistMbid,
     deezerAlbumId,
-    ...context
-  }: {
-    artistMbid?: string;
-    artistName?: string;
-    albumTitle?: string;
-    releaseType?: string;
-    releaseDate?: string;
-    deezerAlbumId?: string | number;
-    signal?: AbortSignal;
-  } = {},
+  }: { artistMbid?: string; deezerAlbumId?: string; signal?: AbortSignal } = {},
 ) =>
   parseResponse(
-    artistsClient["release-group"][":mbid"].tracks.$get(
+    artistsClient["release-group"][":mbid"].previews.$get(
       {
         param: { mbid: encodeURIComponent(mbid) },
-        query: { ...context, deezerAlbumId: deezerAlbumId ? String(deezerAlbumId) : undefined },
+        query: { artistMbid: artistMbid || undefined, deezerAlbumId: deezerAlbumId || undefined },
       },
       { init: { signal } },
     ),
@@ -136,8 +99,6 @@ export const getReleaseGroupRatingsBatch = async (
   });
 };
 
-const RELEASE_GROUP_COVER_BATCH_SIZE = 24;
-
 const normalizeCoverPart = (value: string | null | undefined) =>
   String(value || "")
     .trim()
@@ -148,13 +109,6 @@ const releaseGroupCoverCacheKey = (
   artistName: string | null | undefined = "",
   albumTitle: string | null | undefined = "",
 ) => `release-group:${mbid}:${normalizeCoverPart(artistName)}:${normalizeCoverPart(albumTitle)}`;
-
-const releaseGroupBatchCoverCacheKey = (
-  mbid: string,
-  artistName: string | null | undefined = "",
-  albumTitle: string | null | undefined = "",
-) =>
-  `release-group-batch:${mbid}:${normalizeCoverPart(artistName)}:${normalizeCoverPart(albumTitle)}`;
 
 export const getArtistCover = async (
   mbid: string | number,
@@ -179,66 +133,6 @@ export const getArtistCover = async (
       ),
     { bypassCache: refresh },
   );
-};
-
-export const getReleaseGroupCoversBatch = async (
-  items: {
-    mbid?: string | null;
-    id?: string;
-    artistName?: string | null;
-    albumTitle?: string | null;
-  }[] = [],
-): Promise<Record<string, ReleaseGroupCoverEntry>> => {
-  const normalizedItems = items
-    .map((item) => ({
-      mbid: String(item?.mbid || item?.id || "").trim(),
-      artistName: typeof item?.artistName === "string" ? item.artistName.trim() : "",
-      albumTitle: typeof item?.albumTitle === "string" ? item.albumTitle.trim() : "",
-    }))
-    .filter((item) => item.mbid);
-  if (!normalizedItems.length) {
-    return {};
-  }
-  const covers: Record<string, ReleaseGroupCoverEntry> = {};
-  const uncachedItems: ReleaseGroupCoverItem[] = [];
-  normalizedItems.forEach((item) => {
-    const cached = getCoverCacheEntry<ReleaseGroupCoverEntry>(
-      releaseGroupBatchCoverCacheKey(item.mbid, item.artistName, item.albumTitle),
-    );
-    if (cached) covers[item.mbid] = cached;
-    else uncachedItems.push(item);
-  });
-  if (!uncachedItems.length) return covers;
-  const batchKey = normalizedItems
-    .map((item) => `${item.mbid}:${item.artistName.toLowerCase()}:${item.albumTitle.toLowerCase()}`)
-    .sort()
-    .join("\0");
-  if (coverInflightRequests.has(batchKey)) {
-    return coverInflightRequests.get(batchKey) as Promise<Record<string, ReleaseGroupCoverEntry>>;
-  }
-  const request = (async () => {
-    for (let index = 0; index < uncachedItems.length; index += RELEASE_GROUP_COVER_BATCH_SIZE) {
-      const batch = uncachedItems.slice(index, index + RELEASE_GROUP_COVER_BATCH_SIZE);
-      const { covers: batchCovers } = await parseResponse(
-        artistsClient["release-groups"].covers.$post({ json: { items: batch } }),
-      );
-      Object.assign(covers, batchCovers);
-      Object.entries(batchCovers).forEach(([mbid, cover]) => {
-        const item = batch.find((candidate) => candidate.mbid === mbid);
-        if (item && !cover?.transientError) {
-          setCoverCacheEntry(
-            releaseGroupBatchCoverCacheKey(mbid, item.artistName, item.albumTitle),
-            cover,
-          );
-        }
-      });
-    }
-    return covers;
-  })().finally(() => {
-    coverInflightRequests.delete(batchKey);
-  });
-  coverInflightRequests.set(batchKey, request);
-  return request;
 };
 
 export const getReleaseGroupCover = async (
@@ -288,15 +182,66 @@ export const getReleaseGroupCover = async (
   return request;
 };
 
-export const getSimilarArtistsForArtist = (mbid: string, artistName = "", limit = 20) =>
-  queryClient.fetchQuery({
+export const artistSimilarQueryOptions = (mbid: string, artistName = "", limit = 20) =>
+  queryOptions({
     queryKey: queryKeys.artistSimilar(mbid, artistName, limit),
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       parseResponse(
-        artistsClient[":mbid"].similar.$get({
-          param: { mbid: encodeURIComponent(mbid) },
-          query: { limit: String(limit), artistName: artistName.trim() || undefined },
-        }),
+        artistsClient[":mbid"].similar.$get(
+          {
+            param: { mbid: encodeURIComponent(mbid) },
+            query: { limit: String(limit), artistName: artistName.trim() || undefined },
+          },
+          { init: { signal, cache: "no-cache" } },
+        ),
+      ),
+    staleTime: 5 * 60 * 1000,
+  });
+
+export const artistPlaylistsQueryOptions = (mbid: string, artistName: string) =>
+  queryOptions({
+    queryKey: queryKeys.artistPlaylists(mbid, artistName),
+    queryFn: ({ signal }) =>
+      parseResponse(
+        artistsClient[":mbid"].playlists.$get(
+          {
+            param: { mbid: encodeURIComponent(mbid) },
+            query: { artistName: artistName.trim() || undefined },
+          },
+          { init: { signal } },
+        ),
+      ),
+    staleTime: 60 * 60 * 1000,
+  });
+
+export const artistShowsQueryOptions = (mbid: string, artistName: string) =>
+  queryOptions({
+    queryKey: queryKeys.artistShows(mbid, artistName),
+    queryFn: ({ signal }) =>
+      parseResponse(
+        artistsClient[":mbid"].shows.$get(
+          {
+            param: { mbid: encodeURIComponent(mbid) },
+            query: { artistName: artistName.trim() || undefined },
+          },
+          { init: { signal } },
+        ),
+      ),
+    staleTime: 60 * 60 * 1000,
+  });
+
+export const artistListeningQueryOptions = (mbid: string, artistName: string) =>
+  queryOptions({
+    queryKey: queryKeys.artistListening(mbid, artistName),
+    queryFn: ({ signal }) =>
+      parseResponse(
+        artistsClient[":mbid"].listening.$get(
+          {
+            param: { mbid: encodeURIComponent(mbid) },
+            query: { artistName: artistName.trim() || undefined },
+          },
+          { init: { signal } },
+        ),
       ),
     staleTime: 5 * 60 * 1000,
   });
@@ -361,5 +306,7 @@ export const updateArtistOverrides = async (
   queryClient.setQueryData(queryKeys.artistOverrides(mbid), result);
   await queryClient.invalidateQueries({ queryKey: queryKeys.artistDetailsPrefix });
   await queryClient.invalidateQueries({ queryKey: queryKeys.artistSimilarPrefix });
+  await queryClient.invalidateQueries({ queryKey: queryKeys.artistAppearsOn(mbid) });
+  await queryClient.invalidateQueries({ queryKey: queryKeys.artistPlaylistsPrefix });
   return result;
 };

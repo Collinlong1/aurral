@@ -6,6 +6,7 @@ import { approveBlockedJob, denyBlockedJob } from "./blockedJobReview.ts";
 import { importDiskFileToJob } from "./importDiskFile.ts";
 import { runLinkLibraryFile } from "./linkLibraryFile.ts";
 import { downloadTracker } from "./downloadTracker.ts";
+import { followChangedLibraryFiles } from "./fileReuse.ts";
 import { DownloadWorker, downloadWorker, startWorkerIfPending } from "./downloadWorker.ts";
 
 type Worker = DownloadWorker;
@@ -57,6 +58,7 @@ export const downloadOwnerCommands = {
   enqueueManualReplacementSelection: (
     ...args: Parameters<typeof downloadTracker.enqueueManualReplacementSelection>
   ) => downloadTracker.enqueueManualReplacementSelection(...args),
+  followChangedLibraryFiles,
   approveBlockedJob,
   denyBlockedJob,
   cancelTrackDownload,

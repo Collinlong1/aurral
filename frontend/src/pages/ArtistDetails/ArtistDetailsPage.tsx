@@ -1,20 +1,12 @@
-import { useCallback, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useId, useMemo, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
-import type { ReleaseGroupTrack } from "../../utils/api/endpoints/artists.ts";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import {
-  getArtistCover,
-  getArtistDetails,
-  getArtistPreview,
-  getSimilarArtistsForArtist,
-  updateArtistOverrides,
-} from "../../utils/api/endpoints/artists.ts";
-import { lookupArtistInLibrary } from "../../utils/api/endpoints/library.ts";
+import { getArtistPreview, updateArtistOverrides } from "../../utils/api/endpoints/artists.ts";
 import { useAddTrackToLibrary } from "../../hooks/useAddTrackToLibrary";
 import { parseResponse } from "hono/client";
 import { artistsClient } from "../../utils/api/clients/artists.ts";
 import { staticPlaylistsClient } from "../../utils/api/clients/staticPlaylists.ts";
-import { buildTasteArtist, getArtistHeroImage, getCoverImage } from "./utils";
+import { buildTasteArtist, getCoverImage } from "./utils";
 import { useArtworkWash } from "../../utils/imageColors";
 import { useArtistTasteFeedback } from "../../hooks/useArtistTasteFeedback";
 import { useStaticPlaylists } from "../../hooks/useStaticPlaylists";
@@ -27,27 +19,30 @@ import { useToast } from "../../contexts/ToastContext";
 import { useAuth } from "../../contexts/AuthContext";
 import { useDocumentTitle } from "../../hooks/useDocumentTitle";
 import { useModalDialog } from "../../hooks/useModalDialog.ts";
-import { useArtistDetailsStream } from "./hooks/useArtistDetailsStream";
+import { useArtistDetails } from "./hooks/useArtistDetails";
 import { useArtistRouteState } from "./hooks/useArtistRouteState.ts";
 import { usePreviewPlayer } from "./hooks/usePreviewPlayer";
 import { useArtistDetailsLibrary } from "./hooks/useArtistDetailsLibrary";
-import { ARTIST_DETAILS_APPEARS_ON_LIMIT, allReleaseTypes } from "./constants";
 import { ArtistDetailsHero } from "./components/ArtistDetailsHero";
 import { ArtistDetailsActionBar } from "./components/ArtistDetailsActionBar";
+import { ArtistDetailsVideos } from "./components/ArtistDetailsVideos";
+import { useArtistVideos } from "./artistVideosSetting.ts";
+import { preferStudioReleases } from "./releaseFilters.ts";
+import "./ArtistDetailsPage.css";
 import { ArtistDetailsDownloadTargets } from "./components/ArtistDetailsDownloadTargets";
 import { ArtistDetailsReleaseGroups } from "./components/ArtistDetailsReleaseGroups";
 import { ArtistDetailsAppearsOn } from "./components/ArtistDetailsAppearsOn";
 import { ArtistDetailsPreviewTracks } from "./components/ArtistDetailsPreviewTracks";
 import { ArtistDetailsAbout } from "./components/ArtistDetailsAbout";
 import { ArtistDetailsSimilar } from "./components/ArtistDetailsSimilar";
+import { ArtistDetailsPlaylists } from "./components/ArtistDetailsPlaylists";
+import { ArtistDetailsTour } from "./components/ArtistDetailsTour";
+import { ArtistDetailsListening } from "./components/ArtistDetailsListening";
 import { queryKeys } from "../../queryClient.ts";
 import TooltipButton from "../../components/TooltipButton";
-import CrossViewLink from "../../components/CrossViewLink";
 import RouteLink from "../../components/RouteLink";
 import type { PlaylistSelection, PlaylistTrackIdentity } from "../../components/TrackPlaylistMenu";
 import type { ArtistPreviewTrack } from "./hooks/usePreviewPlayer";
-import type { ReleaseGroup } from "./utils";
-import { releaseTrackPayload } from "../album/releaseTracks.tsx";
 import type { ArtistFeedbackSource } from "../../utils/artistTaste.ts";
 import StatePanel from "../../components/StatePanel";
 import { getApiErrorMessage } from "../../utils/api/errors.ts";
@@ -55,6 +50,7 @@ import {
   buildStaticPlaylistTrackPayload,
   reserveUniquePlaylistName,
 } from "../../utils/staticPlaylists.ts";
+import { ModalBackdrop } from "../../components/ModalBackdrop";
 const MBID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function ArtistDetailsPage() {
@@ -62,11 +58,10 @@ function ArtistDetailsPage() {
   const {
     artistName: artistNameFromNav,
     artistImage: artistImageFromNav,
-    initialLibraryHint,
+    inLibrary,
   } = useArtistRouteState();
   const { showSuccess, showError, showInfo } = useToast();
   const { hasPermission } = useAuth();
-  const similarArtistsScrollRef = useRef(null);
   const [showEditIdsModal, setShowEditIdsModal] = useState(false);
   const [idsError, setIdsError] = useState("");
   const [idsValues, setIdsValues] = useState({
@@ -83,8 +78,6 @@ function ArtistDetailsPage() {
   } = useStaticPlaylists();
   const [playlistMenuSavingKey, setPlaylistMenuSavingKey] = useState("");
   const { savingKeys: libraryTrackSavingKeys, addTrackToLibrary } = useAddTrackToLibrary();
-  const [visibleReleaseGroupCoverIds, setVisibleReleaseGroupCoverIds] = useState<string[]>([]);
-  const [visibleAppearsOnCoverIds, setVisibleAppearsOnCoverIds] = useState<string[]>([]);
 
   const artistOverridesQuery = useQuery({
     queryKey: queryKeys.artistOverrides(mbid),
@@ -111,11 +104,10 @@ function ArtistDetailsPage() {
   const idsLoading = artistOverridesQuery.isFetching;
   const idsSaving = saveArtistOverridesMutation.isPending;
 
-  const stream = useArtistDetailsStream(mbid, artistNameFromNav, {
-    visibleCoverIds: [...visibleReleaseGroupCoverIds, ...visibleAppearsOnCoverIds],
-    initialLibraryHint,
-    appearsOnLimit: ARTIST_DETAILS_APPEARS_ON_LIMIT,
+  const details = useArtistDetails(mbid, artistNameFromNav, {
+    inLibrary,
     seedImage: artistImageFromNav ? normalizeMediaUrl(artistImageFromNav) || null : null,
+    similar: true,
   });
   const canAddArtist = hasPermission("addArtist");
   const {
@@ -130,28 +122,16 @@ function ArtistDetailsPage() {
   const {
     artist,
     coverImages,
-    setCoverImages,
-    libraryArtist,
-    setLibraryArtist,
-    libraryAlbums,
-    setLibraryAlbums,
-    ownedAlbums,
+    refreshCover,
     similarArtists,
-    setSimilarArtists,
     error,
-    setLoadingCover,
     loadingSimilar,
-    setLoadingSimilar,
     loadingLibrary,
     loadingReleases,
     loadingAppearsOn,
     existsInLibrary,
-    setExistsInLibrary,
-    albumCovers,
-    fulfilledCoverIds,
-    setAlbumCovers,
-    setArtist,
-  } = stream;
+    libraryArtistId,
+  } = details;
 
   const artistDisplayName = artist?.name || artistNameFromNav || "";
   useDocumentTitle(artistDisplayName);
@@ -202,25 +182,11 @@ function ArtistDetailsPage() {
   );
 
   const library = useArtistDetailsLibrary({
-    artist,
-    libraryArtist,
-    setLibraryArtist,
-    libraryAlbums,
-    setLibraryAlbums,
-    existsInLibrary,
-    setExistsInLibrary,
-    ownedAlbums,
+    ...details,
     showSuccess,
     showError,
     showInfo,
   });
-
-  const libraryLookup = useQuery({
-    queryKey: queryKeys.libraryLookupDetails(mbid),
-    queryFn: ({ signal }) => lookupArtistInLibrary(mbid, { signal }),
-    enabled: false,
-  });
-  const libraryArtistRecordId = libraryLookup.data?.libraryArtistId || null;
 
   const preview = usePreviewPlayer(mbid, artistNameFromNav, artist);
   const {
@@ -232,8 +198,11 @@ function ArtistDetailsPage() {
     isArtistPlaybackActive,
     handlePreviewPlay,
     handlePreviewPlayAll,
+    handlePreviewShuffle,
+    canPlayPreviews,
     setPreviewTracks,
   } = preview;
+  const showVideos = useArtistVideos();
 
   const handleOpenEditIds = async () => {
     if (!mbid) return;
@@ -263,9 +232,7 @@ function ArtistDetailsPage() {
       return;
     }
     setIdsError("");
-    setLoadingCover(true);
     setLoadingPreview(true);
-    setLoadingSimilar(true);
     try {
       await saveArtistOverrides({
         artistMbid: mbid,
@@ -277,39 +244,15 @@ function ArtistDetailsPage() {
       showSuccess("Artist IDs updated");
       setShowEditIdsModal(false);
       const name = artist?.name || artistNameFromNav || "";
-      const [details, cover, previewData, similar] = await Promise.all([
-        getArtistDetails(mbid, name, { releaseTypes: allReleaseTypes }).catch(() => null),
-        getArtistCover(mbid, name, true).catch(() => ({ images: [] })),
+      const [previewData] = await Promise.all([
         getArtistPreview(mbid, name).catch(() => ({ tracks: [] })),
-        getSimilarArtistsForArtist(mbid, name).catch(() => ({ artists: [] })),
+        refreshCover(),
       ]);
-      if (details?.id) {
-        setArtist(details);
-      }
-      setAlbumCovers({});
-      setCoverImages(cover?.images || []);
       setPreviewTracks(previewData?.tracks || []);
-      setSimilarArtists(similar?.artists || []);
     } catch (err) {
       showError(getApiErrorMessage(err, "Failed to update artist IDs"));
     } finally {
-      setLoadingCover(false);
       setLoadingPreview(false);
-      setLoadingSimilar(false);
-    }
-  };
-
-  const handleCoverError = async () => {
-    if (!mbid) return;
-    const name = artist?.name || artistNameFromNav || "";
-    setLoadingCover(true);
-    try {
-      const cover = await getArtistCover(mbid, name, true).catch(() => ({
-        images: [],
-      }));
-      setCoverImages(cover?.images || []);
-    } finally {
-      setLoadingCover(false);
     }
   };
 
@@ -318,11 +261,6 @@ function ArtistDetailsPage() {
       staticPlaylists,
       `${artist?.name || artistNameFromNav || track?.artistName || "Artist"} Picks`,
     );
-
-  const buildReleaseTrackPayload = (
-    track: ReleaseGroupTrack,
-    releaseGroup: ReleaseGroup | undefined,
-  ) => releaseTrackPayload(releaseGroup, track, artist?.name || artistNameFromNav || "", mbid);
 
   const buildPreviewTrackPayload = (track: ArtistPreviewTrack) =>
     buildStaticPlaylistTrackPayload({
@@ -389,23 +327,28 @@ function ArtistDetailsPage() {
     }
   };
 
-  const handleReleaseTrackAdd = (
-    track: ReleaseGroupTrack,
-    releaseGroup: ReleaseGroup | undefined,
-    target: PlaylistSelection,
-  ) => {
-    const payload = buildReleaseTrackPayload(track, releaseGroup);
-    const savingKey = String(track?.id ?? track?.mbid ?? "");
-    return saveTrackToPlaylist(payload, target, savingKey);
-  };
-
   const handlePreviewTrackAdd = (track: ArtistPreviewTrack, target: PlaylistSelection) => {
     const payload = buildPreviewTrackPayload(track);
     const savingKey = String(track?.id ?? track?.title ?? "");
     return saveTrackToPlaylist(payload, target, savingKey);
   };
 
-  const heroWash = useArtworkWash(getArtistHeroImage(coverImages));
+  const heroWash = useArtworkWash(getCoverImage(coverImages));
+  const { getAlbumStatus } = library;
+  const librarySummary = useMemo(() => {
+    if (!existsInLibrary || !libraryArtistId) return null;
+    const albums = preferStudioReleases(artist?.["release-groups"] ?? [], "albums");
+    const owned = albums.flatMap((releaseGroup) => {
+      const status = releaseGroup.id ? getAlbumStatus(releaseGroup.id) : null;
+      return status?.status === "available" ? [status] : [];
+    });
+    return {
+      to: `/library/artist/${encodeURIComponent(libraryArtistId)}`,
+      owned: owned.length,
+      total: albums.length,
+      incomplete: owned.filter((status) => status.partial).length,
+    };
+  }, [artist, existsInLibrary, getAlbumStatus, libraryArtistId]);
 
   if (error) {
     return (
@@ -435,7 +378,7 @@ function ArtistDetailsPage() {
 
   return (
     <div
-      className="artist-details-page"
+      className="artist-details-page artist-overview"
       style={
         heroWash
           ? {
@@ -445,84 +388,72 @@ function ArtistDetailsPage() {
           : undefined
       }
     >
-      <ArtistDetailsHero
-        artist={artist}
-        coverImages={coverImages}
-        onCoverError={handleCoverError}
-      />
+      <ArtistDetailsHero artist={artist} coverImages={coverImages} onCoverError={refreshCover} />
 
       <ArtistDetailsActionBar
         library={library}
         mbid={mbid!}
         artistName={artist?.name || artistNameFromNav || ""}
         existsInLibrary={existsInLibrary}
-        libraryLink={
-          libraryArtistRecordId ? (
-            <CrossViewLink
-              view="library"
-              to={`/library/artist/${encodeURIComponent(libraryArtistRecordId)}`}
-            />
-          ) : null
-        }
+        librarySummary={librarySummary}
         loadingLibrary={loadingLibrary}
         canChangeMonitoring={canChangeMonitoring}
         canAddArtist={canAddArtist}
         buildingQueue={buildingQueue}
         isArtistPlaybackActive={isArtistPlaybackActive}
         handlePreviewPlayAll={handlePreviewPlayAll}
+        handlePreviewShuffle={handlePreviewShuffle}
+        canPlayPreviews={canPlayPreviews}
+        missingDownloads={
+          canAddAlbum && (library.missingDownloadCount > 0 || library.reSearchingMissingAlbums)
+            ? {
+                count: library.missingDownloadCount,
+                pending: library.reSearchingMissingAlbums,
+                onFind: library.handleReSearchMissingDownloads,
+              }
+            : null
+        }
         onEditIds={handleOpenEditIds}
         onTasteFeedback={handleCurrentArtistTasteFeedback}
         tasteFeedbackUsed={currentArtistFeedback}
         tasteActionPending={tasteActionPending}
       />
 
-      <ArtistDetailsPreviewTracks
-        mbid={mbid!}
-        artistName={artist?.name || artistNameFromNav || ""}
-        loadingPreview={loadingPreview}
-        previewTracks={previewTracks}
-        playingPreviewId={playingPreviewId}
-        isArtistPlaybackActive={isArtistPlaybackActive}
-        handlePreviewPlay={handlePreviewPlay}
-        onAddTrackToPlaylist={handlePreviewTrackAdd}
-        onAddTrackToLibrary={(track, trackKey) =>
-          addTrackToLibrary(buildPreviewTrackPayload(track), trackKey)
-        }
-        libraryTrackSavingKeys={libraryTrackSavingKeys}
-        resolveMembershipTrack={buildPreviewTrackPayload}
-        playlists={staticPlaylists}
-        playlistsLoading={playlistModalLoading}
-        playlistSavingKey={playlistMenuSavingKey}
-        playlistError={playlistModalError}
-        getDefaultPlaylistName={getDefaultTrackPlaylistName}
-        onLoadPlaylists={loadStaticPlaylists}
-      />
+      <div className="artist-top">
+        <ArtistDetailsPreviewTracks
+          mbid={mbid!}
+          artistName={artist?.name || artistNameFromNav || ""}
+          loadingPreview={loadingPreview}
+          previewTracks={previewTracks}
+          playingPreviewId={playingPreviewId}
+          isArtistPlaybackActive={isArtistPlaybackActive}
+          handlePreviewPlay={handlePreviewPlay}
+          onAddTrackToPlaylist={handlePreviewTrackAdd}
+          onAddTrackToLibrary={(track, trackKey) =>
+            addTrackToLibrary(buildPreviewTrackPayload(track), trackKey)
+          }
+          libraryTrackSavingKeys={libraryTrackSavingKeys}
+          resolveMembershipTrack={buildPreviewTrackPayload}
+          playlists={staticPlaylists}
+          playlistsLoading={playlistModalLoading}
+          playlistSavingKey={playlistMenuSavingKey}
+          playlistError={playlistModalError}
+          getDefaultPlaylistName={getDefaultTrackPlaylistName}
+          onLoadPlaylists={loadStaticPlaylists}
+        />
 
-      <ArtistDetailsDownloadTargets
-        releaseGroups={artist?.["release-groups"] || []}
-        getAlbumStatus={library.getAlbumStatus}
-        artist={artist}
-        albumCovers={albumCovers}
-        fulfilledCoverIds={fulfilledCoverIds}
-        artistCoverImage={artistCoverImage}
-        canAddAlbum={canAddAlbum}
-        requestingAlbum={library.requestingAlbum}
-        handleRequestAlbum={library.handleRequestAlbum}
-        playbackSource={playbackSource}
-        artistName={artistDisplayName}
-        onAddTrackToPlaylist={handleReleaseTrackAdd}
-        onAddTrackToLibrary={(track, releaseGroup, trackKey) =>
-          addTrackToLibrary(buildReleaseTrackPayload(track, releaseGroup), trackKey)
-        }
-        libraryTrackSavingKeys={libraryTrackSavingKeys}
-        resolveMembershipTrack={buildReleaseTrackPayload}
-        playlists={staticPlaylists}
-        playlistsLoading={playlistModalLoading}
-        playlistSavingKey={playlistMenuSavingKey}
-        playlistError={playlistModalError}
-        getDefaultPlaylistName={getDefaultTrackPlaylistName}
-        onLoadPlaylists={loadStaticPlaylists}
-      />
+        <ArtistDetailsDownloadTargets
+          releaseGroups={artist?.["release-groups"] || []}
+          getAlbumStatus={library.getAlbumStatus}
+          artist={artist}
+          artistCoverImage={artistCoverImage}
+          canAddAlbum={canAddAlbum}
+          requestingAlbum={library.requestingAlbum}
+          handleRequestAlbum={library.handleRequestAlbum}
+          playbackSource={playbackSource}
+          artistName={artistDisplayName}
+        />
+      </div>
 
       {(loadingReleases ||
         Boolean(artist["release-groups"]?.length) ||
@@ -530,8 +461,6 @@ function ArtistDetailsPage() {
         <ArtistDetailsReleaseGroups
           artist={artist}
           loadingReleases={loadingReleases}
-          albumCovers={albumCovers}
-          fulfilledCoverIds={fulfilledCoverIds}
           artistCoverImage={artistCoverImage}
           getAlbumStatus={library.getAlbumStatus}
           libraryReleaseGroups={library.libraryReleaseGroups}
@@ -542,7 +471,6 @@ function ArtistDetailsPage() {
           handleRequestAlbum={library.handleRequestAlbum}
           requestingAlbum={library.requestingAlbum}
           artistName={artistDisplayName}
-          onVisibleCoverIdsChange={setVisibleReleaseGroupCoverIds}
           viewAllLink={{
             to: `/artist/${artist.id}/albums`,
             state: { artistName: artist.name, inLibrary: existsInLibrary },
@@ -556,15 +484,12 @@ function ArtistDetailsPage() {
         <ArtistDetailsAppearsOn
           artist={artist}
           loadingAppearsOn={loadingAppearsOn}
-          albumCovers={albumCovers}
-          fulfilledCoverIds={fulfilledCoverIds}
           artistCoverImage={artistCoverImage}
           getAlbumStatus={library.getAlbumStatus}
           canAddAlbum={canAddAlbum}
           handleRequestAlbum={library.handleRequestAlbum}
           requestingAlbum={library.requestingAlbum}
           artistName={artistDisplayName}
-          onVisibleCoverIdsChange={setVisibleAppearsOnCoverIds}
           viewAllLink={{
             to: `/artist/${artist.id}/appears-on`,
             state: { artistName: artist.name, inLibrary: existsInLibrary },
@@ -572,17 +497,30 @@ function ArtistDetailsPage() {
         />
       )}
 
-      <ArtistDetailsAbout artist={artist} coverImages={coverImages} />
+      <ArtistDetailsTour mbid={mbid!} artistName={artistDisplayName} />
+
+      {showVideos && !loadingPreview && previewTracks.length > 0 ? (
+        <ArtistDetailsVideos mbid={mbid!} artistName={artistDisplayName} tracks={previewTracks} />
+      ) : null}
 
       {(loadingSimilar || similarArtists.length > 0) && (
         <ArtistDetailsSimilar
           loadingSimilar={loadingSimilar}
           similarArtists={similarArtists}
-          similarArtistsScrollRef={similarArtistsScrollRef}
           onArtistFeedback={handleArtistTasteFeedback}
           artistFeedbackLookup={artistFeedbackLookup}
         />
       )}
+
+      <ArtistDetailsPlaylists mbid={mbid!} artistName={artistDisplayName} />
+
+      <ArtistDetailsListening
+        mbid={mbid!}
+        artistName={artistDisplayName}
+        releaseGroups={artist["release-groups"] ?? []}
+      />
+
+      <ArtistDetailsAbout artist={artist} />
 
       <EditArtistIdsModal
         show={showEditIdsModal}
@@ -635,7 +573,7 @@ function EditArtistIdsModal({
 
   if (!show) return null;
   return (
-    <div className="artist-modal-backdrop" onClick={handleBackdropClick}>
+    <ModalBackdrop onClick={handleBackdropClick}>
       <div
         ref={dialogRef}
         className="artist-modal"
@@ -710,6 +648,6 @@ function EditArtistIdsModal({
           </button>
         </div>
       </div>
-    </div>
+    </ModalBackdrop>
   );
 }

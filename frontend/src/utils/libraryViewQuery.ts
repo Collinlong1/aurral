@@ -77,6 +77,7 @@ export const libraryListParams = (section: LibraryViewId, searchParams: URLSearc
     pageSize: (LIBRARY_PAGE_SIZES as readonly number[]).includes(requestedSize)
       ? requestedSize
       : LIBRARY_PAGE_SIZE,
+    artist: section === "tracks" ? searchParams.get("artist") || "" : "",
   };
 };
 
@@ -127,6 +128,7 @@ type LibraryViewRequest = {
   pageSize?: number;
   query?: string;
   genre?: string;
+  artist?: string;
   sort?: string;
   direction?: string;
 };
@@ -140,6 +142,7 @@ const fetchLibraryPages = async (
     pageSize: listPageSize = LIBRARY_PAGE_SIZE,
     query,
     genre,
+    artist,
     sort,
     direction,
   }: LibraryViewRequest,
@@ -208,6 +211,7 @@ const fetchLibraryPages = async (
       pageSize: listPageSize,
       query,
       genre,
+      artistId: artist || undefined,
       sort,
       direction,
       // Albums and artists omit the param, so the server shows what can be
@@ -229,7 +233,7 @@ export type LibraryViewData = {
 };
 
 const finishLibraryView = (
-  { query, genre }: Pick<LibraryViewRequest, "query" | "genre">,
+  { query, genre, artist }: Pick<LibraryViewRequest, "query" | "genre" | "artist">,
   { nextData, pageResults, library, favoriteIds }: Required<Omit<LibraryViewData, "isPreview">>,
 ): LibraryViewData => {
   const usePreview =
@@ -237,6 +241,7 @@ const finishLibraryView = (
     pageResults.every((page) => Number(page?.total || 0) === 0) &&
     !query &&
     !genre &&
+    !artist &&
     library.artists.length === 0 &&
     library.albums.length === 0 &&
     library.tracks.length === 0;
@@ -258,6 +263,7 @@ export function libraryViewQueryOptions({
   pageSize = LIBRARY_PAGE_SIZE,
   query = "",
   genre = "",
+  artist = "",
   sort = "name",
   direction = "asc",
 }: {
@@ -269,13 +275,14 @@ export function libraryViewQueryOptions({
   pageSize?: number;
   query?: string;
   genre?: string;
+  artist?: string;
   sort?: string;
   direction?: string;
 } = {}) {
   const view =
     albumId || artistId
       ? { preview, albumId: albumId || null, artistId: albumId ? null : artistId || null }
-      : { preview, section, pageIndex, pageSize, query, genre, sort, direction };
+      : { preview, section, pageIndex, pageSize, query, genre, artist, sort, direction };
   return queryOptions({
     queryKey: queryKeys.libraryView(view),
     enabled: !preview,

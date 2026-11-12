@@ -67,8 +67,7 @@ interface PlaylistTracksProps {
   refresh: () => Promise<void>;
   staticPlaylists: StaticPlaylist[];
   fetchStatus: () => Promise<unknown>;
-  activityHint?: string | null;
-  emptyMessage: string;
+  emptyMessage?: string;
   showTrackAvailability?: boolean;
   recordHistory?: boolean;
 }
@@ -82,7 +81,6 @@ export function PlaylistTracks({
   refresh,
   staticPlaylists,
   fetchStatus,
-  activityHint = null,
   emptyMessage,
   showTrackAvailability = false,
   recordHistory = true,
@@ -453,7 +451,6 @@ export function PlaylistTracks({
           label: entry.name || "Playlist",
           recordHistory,
         }}
-        activityHint={activityHint}
         emptyMessage={emptyMessage}
         allowBulkEdit={!isFlow}
         bulkActionLoading={bulkActionLoading}

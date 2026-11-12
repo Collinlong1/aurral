@@ -24,9 +24,11 @@ import {
 import {
   getLibraryScanStatus,
   getScheduledLibraryScanJobId,
+  scheduleLibraryItemScan,
   scheduleLibraryScan,
 } from "../../../services/libraryScanWorker.ts";
 import { asAppError } from "../../../../lib/errors.ts";
+import { getLibraryArtistPlays } from "../../../services/artistListening.ts";
 import { toPublicLibrary, toPublicLibraryPage } from "../../../services/publicLibrary.ts";
 
 export function resolveAvailableOnly(queryValue: unknown) {
@@ -55,7 +57,12 @@ async function sendLibraryArtwork(c: Context<AppEnv>, kind: LibraryArtworkKind, 
   );
 }
 
-const refreshInput = v.object({ mode: v.optional(v.picklist(["quick", "full"])) });
+const libraryItemId = v.pipe(v.number(), v.integer(), v.minValue(1));
+const refreshInput = v.object({
+  mode: v.optional(v.picklist(["quick", "full"])),
+  albumId: v.optional(libraryItemId),
+  artistId: v.optional(libraryItemId),
+});
 
 const pageQuery = v.object({
   kind: v.optional(v.string()),
@@ -129,8 +136,19 @@ export default new Hono<AppEnv>()
   .basePath("/library")
   .get("/albums/:albumId/cover", (c) => sendLibraryArtwork(c, "album", c.req.param("albumId")))
   .get("/artists/:artistId/cover", (c) => sendLibraryArtwork(c, "artist", c.req.param("artistId")))
+  .get("/artists/:artistId/plays", requireAuth, noCache, (c) => {
+    const plays = getLibraryArtistPlays(c.var.user.id, Number(c.req.param("artistId")));
+    if (plays === null) return c.json({ error: "Artist not found" }, 404);
+    return c.json({ plays }, 200);
+  })
   .post("/refresh", requireAuth, validate("json", refreshInput), (c) => {
-    const jobId = scheduleLibraryScan({ force: c.req.valid("json").mode === "full" });
+    const { mode, albumId, artistId } = c.req.valid("json");
+    const jobId = albumId
+      ? scheduleLibraryItemScan({ albumId })
+      : artistId
+        ? scheduleLibraryItemScan({ artistId })
+        : scheduleLibraryScan({ force: mode === "full" });
+    if (jobId === null) return c.json({ error: "No files to rescan" }, 404);
     return c.json({ queued: true, jobId, status: getLibraryScanStatus(jobId) }, 202);
   })
   .get("/refresh", requireAuth, noCache, (c) => {

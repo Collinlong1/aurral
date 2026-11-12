@@ -12,6 +12,7 @@ import {
   listenbrainzTopRecordingsSchema,
 } from "../apiClients/listenbrainz.ts";
 import { lenient, lenientCount, lenientText } from "../integrationData.ts";
+import { dbOps } from "../../db/helpers/index.ts";
 import { guessArtistMbid } from "../artistMatch.ts";
 import { mapWithConcurrency } from "../discovery/helpers.ts";
 import { getArtistByMbid } from "../providers/brainzmashProvider.ts";
@@ -29,6 +30,9 @@ const RESOLVE_CONCURRENCY = 4;
 const TRENDING_ARTIST_COUNT = 100;
 const TRENDING_RECORDING_COUNT = 500;
 const SITEWIDE_STATS_TIMEOUT_MS = 20000;
+const SIMILAR_ARTISTS_FRESH_MS = 24 * 60 * 60 * 1000;
+const SIMILAR_ARTISTS_STALE_MS = 7 * 24 * 60 * 60 * 1000;
+const ARTIST_TAGS_FRESH_MS = 7 * 24 * 60 * 60 * 1000;
 
 const tagSchema = v.fallback(v.looseObject({ tag: lenientText, count: lenientCount }), {});
 const similarArtistsSchema = lenient(
@@ -55,6 +59,64 @@ const artistTagsSchema = lenient(
     ),
   ),
 );
+
+const fetchSimilarArtistRows = async (cacheKey: string, mbid: string) => {
+  const rows = v.parse(
+    similarArtistsSchema,
+    await listenbrainzRequest(
+      "/similar-artists/json",
+      { artist_mbids: mbid, algorithm: LISTENBRAINZ_EXPLORER_SIMILARITY_ALGORITHM },
+      { baseUrl: LISTENBRAINZ_LABS_API },
+    ),
+  );
+  const now = Date.now();
+  await dbOps.setMetadataResponseAsync(cacheKey, {
+    value: rows,
+    freshUntil: now + SIMILAR_ARTISTS_FRESH_MS,
+    staleUntil: now + SIMILAR_ARTISTS_STALE_MS,
+  });
+  return rows;
+};
+
+const getSimilarArtistRows = async (mbid: string) => {
+  const cacheKey = `listenbrainz:similar-artists:${mbid}`;
+  const stored = await dbOps.getMetadataResponseAsync(cacheKey);
+  if (!stored) return fetchSimilarArtistRows(cacheKey, mbid);
+  const rows = v.safeParse(similarArtistsSchema, stored.value);
+  if (!rows.success) return fetchSimilarArtistRows(cacheKey, mbid);
+  if (stored.freshUntil < Date.now()) {
+    void fetchSimilarArtistRows(cacheKey, mbid).catch(() => {});
+  }
+  return rows.output;
+};
+
+const fetchArtistTags = async (mbids: string[], health?: SourceHealth) => {
+  const fetched = new Map<string, ReturnType<typeof toTagList>>();
+  for (let index = 0; index < mbids.length; index += ARTIST_METADATA_BATCH_SIZE) {
+    const batch = mbids.slice(index, index + ARTIST_METADATA_BATCH_SIZE);
+    try {
+      const rows = v.parse(
+        artistTagsSchema,
+        await listenbrainzRequest("/1/metadata/artist/", {
+          artist_mbids: batch.join(","),
+          inc: "tag",
+        }),
+      );
+      recordHealth(health, true);
+      const found = new Map(
+        (Array.isArray(rows) ? rows : []).map((row) => [
+          normalizeMbid(row?.artist_mbid || row?.mbid),
+          toTagList(row?.tag?.artist),
+        ]),
+      );
+      for (const mbid of batch) fetched.set(mbid, found.get(mbid) ?? []);
+    } catch {
+      recordHealth(health, false);
+    }
+  }
+  if (fetched.size) dbOps.saveListenbrainzArtistTags(fetched, Date.now());
+  return fetched;
+};
 
 type TagSearchArtist = Awaited<ReturnType<typeof musicbrainzSearchArtistsByTag>>["artists"][number];
 
@@ -131,14 +193,7 @@ export const listenbrainzSource = {
     const mbid = await resolveArtistMbid(artist);
     if (mbid) {
       try {
-        const rows = v.parse(
-          similarArtistsSchema,
-          await listenbrainzRequest(
-            "/similar-artists/json",
-            { artist_mbids: mbid, algorithm: LISTENBRAINZ_EXPLORER_SIMILARITY_ALGORITHM },
-            { baseUrl: LISTENBRAINZ_LABS_API },
-          ),
-        );
+        const rows = await getSimilarArtistRows(mbid);
         recordHealth(health, true);
         const similar = (Array.isArray(rows) ? rows : []).filter((row) => {
           const similarMbid = normalizeMbid(row?.artist_mbid);
@@ -162,27 +217,16 @@ export const listenbrainzSource = {
 
   async getArtistTagLists(artists: MusicArtistRef[], { health }: { health?: SourceHealth } = {}) {
     const mbids = await mapWithConcurrency(artists, RESOLVE_CONCURRENCY, resolveArtistMbid);
-    const unique = [...new Set(mbids.filter(Boolean))];
-    const tagsByMbid = new Map<string, ReturnType<typeof toTagList>>();
-    for (let index = 0; index < unique.length; index += ARTIST_METADATA_BATCH_SIZE) {
-      try {
-        const rows = v.parse(
-          artistTagsSchema,
-          await listenbrainzRequest("/1/metadata/artist/", {
-            artist_mbids: unique.slice(index, index + ARTIST_METADATA_BATCH_SIZE).join(","),
-            inc: "tag",
-          }),
-        );
-        recordHealth(health, true);
-        for (const row of Array.isArray(rows) ? rows : []) {
-          const mbid = normalizeMbid(row?.artist_mbid || row?.mbid);
-          if (mbid) tagsByMbid.set(mbid, toTagList(row?.tag?.artist));
-        }
-      } catch {
-        recordHealth(health, false);
-      }
-    }
-    return mbids.map((mbid) => (mbid && tagsByMbid.get(mbid)) || []);
+    const unique = [...new Set(mbids.flatMap((mbid) => (mbid ? [mbid] : [])))];
+    const stored = dbOps.getListenbrainzArtistTags(unique);
+    const freshAfter = Date.now() - ARTIST_TAGS_FRESH_MS;
+    const stale = unique.filter((mbid) => (stored.get(mbid)?.checkedAt ?? Infinity) < freshAfter);
+    if (stale.length) void fetchArtistTags(stale).catch(() => {});
+    const fetched = await fetchArtistTags(
+      unique.filter((mbid) => !stored.has(mbid)),
+      health,
+    );
+    return mbids.map((mbid) => (mbid && (fetched.get(mbid) ?? stored.get(mbid)?.tags)) || []);
   },
 
   async getArtistTopTracks(artist: MusicArtistRef, { limit = 25 }: { limit?: number } = {}) {

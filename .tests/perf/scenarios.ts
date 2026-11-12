@@ -1,3 +1,5 @@
+import { allReleaseTypes } from "../../frontend/src/pages/ArtistDetails/constants.ts";
+
 export type PerfContext = {
   artistId: number;
   albumId: number;
@@ -89,6 +91,7 @@ export const scenarios: Scenario[] = [
         sort: "plays",
         availableOnly: true,
       }),
+      `/api/library/artists/${artistId}/plays`,
     ],
   },
   {
@@ -100,8 +103,26 @@ export const scenarios: Scenario[] = [
   { name: "favorites", requests: () => ["/api/library/favorites"] },
   { name: "search", requests: () => ["/api/search/library?q=perf%20track%20001&limit=20"] },
   { name: "discover recently added", requests: () => ["/api/library/recent"] },
-  { name: "discover artist", requests: () => [`/api/artists/${DISCOVER_ARTIST}?mode=core`] },
+  {
+    name: "discover artist",
+    requests: () => [
+      `/api/artists/${DISCOVER_ARTIST}?${new URLSearchParams({ mode: "core", releaseTypes: allReleaseTypes.join(",") })}`,
+      `/api/artists/${DISCOVER_ARTIST}/cover`,
+      `/api/artists/${DISCOVER_ARTIST}/similar?limit=10`,
+      `/api/artists/${DISCOVER_ARTIST}/playlists`,
+      `/api/artists/${DISCOVER_ARTIST}/shows`,
+      `/api/artists/${DISCOVER_ARTIST}/listening?artistName=${encodeURIComponent("Perf Artist 00001")}`,
+      `/api/library/lookup/${DISCOVER_ARTIST}`,
+    ],
+  },
   { name: "discover album", requests: () => [`/api/artists/release-group/${DISCOVER_ALBUM}`] },
+  {
+    name: "discover album tracks",
+    requests: () => [
+      `/api/artists/release-group/${DISCOVER_ALBUM}/tracks`,
+      `/api/artists/release-group/${DISCOVER_ALBUM}/previews`,
+    ],
+  },
   { name: "discover search", requests: () => ["/api/search?q=perf&scope=artist"] },
   { name: "similar artists", requests: () => [`/api/artists/${SIMILAR_ARTIST}/similar`] },
   { name: "playlists", requests: () => ["/api/playlists/status"] },

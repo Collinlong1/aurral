@@ -1,9 +1,5 @@
 import { lastfmCache } from "./lastfm.ts";
-import {
-  listenbrainzCache,
-  listenbrainzDatesCache,
-  listenbrainzListensCache,
-} from "./listenbrainz.ts";
+import { clearListenbrainzStats, listenbrainzCache } from "./listenbrainz.ts";
 import { clearDeezerCaches } from "./deezer.ts";
 import {
   musicbrainzArtistNameCache,
@@ -22,8 +18,7 @@ export function clearApiCaches() {
   clearReleaseManifests();
   lastfmCache.flushAll();
   listenbrainzCache.flushAll();
-  listenbrainzDatesCache.flushAll();
-  listenbrainzListensCache.flushAll();
+  clearListenbrainzStats();
   clearDeezerCaches();
   musicbrainzArtistNameCache.flushAll();
   musicbrainzReleaseCreditsCache.flushAll();

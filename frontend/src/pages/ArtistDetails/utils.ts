@@ -1,6 +1,7 @@
 import { RELEASE_LIST_VIEW_MODE_KEY } from "./constants.ts";
 import { TAG_COLORS } from "../../utils/discoverUtils.ts";
 import { formatDate } from "../../utils/dateTime.ts";
+import { isNewRelease } from "../../../../lib/releaseDate.ts";
 import {
   releaseTypeOf,
   type LibraryAlbum as LibraryPageAlbum,
@@ -9,7 +10,7 @@ import { formatCompactNumber } from "../../utils/numberFormat.ts";
 import { resolveAuthenticatedApiAssetUrl } from "../../utils/api/core.ts";
 import type { ArtistDetailsResponse } from "../../utils/api/endpoints/artists.ts";
 import type { LegacyReleaseGroupSummary } from "../../../../backend/services/providers/brainzmashMappers.ts";
-import type { LibraryAlbumEntry, OwnedAlbum } from "./hooks/useArtistDetailsStream.ts";
+import type { LibraryAlbumEntry, OwnedAlbum } from "./hooks/useArtistDetails.ts";
 
 export type ReleaseListViewMode = "grid" | "list";
 
@@ -46,10 +47,6 @@ export interface PlayableTrack {
 export interface ArtistCoverImage {
   image: string | null;
   front?: boolean;
-  types?: string[];
-  coverType?: string;
-  kind?: string;
-  CoverType?: string;
 }
 
 export interface ReleaseLibraryInfo {
@@ -135,7 +132,8 @@ export const buildLibraryReleaseGroups = ({
 }: {
   releaseGroups: readonly ReleaseGroup[];
   ownedAlbums: readonly OwnedAlbum[];
-  libraryAlbums: readonly LibraryAlbumEntry[];
+  libraryAlbums: readonly (LibraryAlbum &
+    Pick<LibraryAlbumEntry, "albumName" | "releaseDate" | "statistics">)[];
   requestingAlbum: string | null;
 }) => {
   const byId = new Map(releaseGroups.map((releaseGroup) => [releaseGroup.id, releaseGroup]));
@@ -149,7 +147,7 @@ export const buildLibraryReleaseGroups = ({
     add(ownedAlbumKey(album), {
       title: album.title,
       "first-release-date": album.releaseDate ?? undefined,
-      coverUrl: resolveAuthenticatedApiAssetUrl(album.coverUrl),
+      coverUrl: album.coverUrl,
       libraryAlbumId: album.libraryId,
     });
   }
@@ -167,16 +165,6 @@ export const buildLibraryReleaseGroups = ({
   return [...entries.values()];
 };
 
-export const deduplicateAlbums = <T extends LibraryAlbum>(albums: T[]): T[] => {
-  const seen = new Map<string | number, boolean>();
-  return albums.filter((album) => {
-    const key = album.id || `${album.mbid}-${album.artistId}`;
-    if (seen.has(key)) return false;
-    seen.set(key, true);
-    return true;
-  });
-};
-
 const ownText = (table: Partial<Record<string, string>>, key: string) =>
   Object.hasOwn(table, key) ? table[key] : undefined;
 
@@ -191,6 +179,21 @@ const ARTIST_TYPE_LABELS = {
 
 export const getArtistType = (type: string | null | undefined) =>
   (type && ownText(ARTIST_TYPE_LABELS, type)) || type;
+
+export const buildArtistTags = (
+  artist: Partial<Pick<ArtistDetailsResponse, "genres" | "tags">>,
+) => {
+  const seen = new Set<string>();
+  const tags: { key: string; name: string }[] = [];
+  for (const item of [...(artist.genres ?? []), ...(artist.tags ?? [])]) {
+    const name = String(typeof item === "string" ? item : item?.name || "").trim();
+    const key = name.toLowerCase();
+    if (!name || seen.has(key)) continue;
+    seen.add(key);
+    tags.push({ key, name });
+  }
+  return tags;
+};
 
 export const buildTasteArtist = ({
   id,
@@ -215,69 +218,27 @@ export const getCoverImage = (coverImages: readonly ArtistCoverImage[] | null | 
   return front?.image || coverImages[0]?.image;
 };
 
-export const getReleaseGroupCoverUrl = (
-  releaseGroup: ReleaseGroup | null | undefined,
-  albumCovers: Record<string, string | undefined> = {},
-  {
-    artistFallback = "",
-    resolved = false,
-  }: { artistFallback?: string | null; resolved?: boolean } = {},
-) => {
-  if (!releaseGroup) return "";
-  const id = releaseGroup.id || releaseGroup.mbid || releaseGroup.foreignAlbumId;
-  const albumCover =
-    (id && albumCovers[id]) || releaseGroup.coverUrl || releaseGroup._coverUrl || "";
-  if (albumCover) return albumCover;
-  return resolved && artistFallback ? artistFallback : "";
-};
+export const getReleaseGroupCoverUrl = (releaseGroup: ReleaseGroup | null | undefined) =>
+  resolveAuthenticatedApiAssetUrl(releaseGroup?.coverUrl || releaseGroup?._coverUrl);
 
-const getImageKinds = (image: ArtistCoverImage | null | undefined) => {
-  const kinds = [
-    image?.coverType,
-    image?.kind,
-    image?.CoverType,
-    ...(Array.isArray(image?.types) ? image.types : []),
-  ];
-  return kinds.map((kind) =>
-    String(kind || "")
-      .trim()
-      .toLowerCase(),
-  );
-};
-
-const imageMatchesKinds = (
-  image: ArtistCoverImage | null | undefined,
-  kinds: readonly string[],
-) => {
-  const imageKinds = getImageKinds(image);
-  return imageKinds.some((kind) => kinds.includes(kind));
-};
-
-export const getArtistHeroImage = (coverImages: readonly ArtistCoverImage[] | null | undefined) => {
-  if (!coverImages?.length) return null;
-  const fanart = coverImages.find((image) =>
-    imageMatchesKinds(image, ["fanart", "background", "banner"]),
-  );
-  return fanart?.image || getCoverImage(coverImages);
-};
+const releaseDateOf = (releaseGroupOrAlbum: ReleaseGroup | null | undefined) =>
+  releaseGroupOrAlbum?.["first-release-date"] ||
+  releaseGroupOrAlbum?.releaseDate ||
+  releaseGroupOrAlbum?.firstReleaseDate ||
+  "";
 
 export const getReleaseYear = (releaseGroupOrAlbum: ReleaseGroup | null | undefined) => {
-  const value =
-    releaseGroupOrAlbum?.["first-release-date"] ||
-    releaseGroupOrAlbum?.releaseDate ||
-    releaseGroupOrAlbum?.firstReleaseDate ||
-    "";
-  const year = String(value || "").slice(0, 4);
+  const year = String(releaseDateOf(releaseGroupOrAlbum)).slice(0, 4);
   return /^\d{4}$/.test(year) ? year : "";
 };
 
+export const isNewReleaseGroup = (
+  releaseGroupOrAlbum: ReleaseGroup | null | undefined,
+  now = Date.now(),
+) => isNewRelease(releaseDateOf(releaseGroupOrAlbum), now);
+
 export const formatReleaseDate = (releaseGroupOrAlbum: ReleaseGroup | null | undefined) => {
-  const value =
-    releaseGroupOrAlbum?.["first-release-date"] ||
-    releaseGroupOrAlbum?.releaseDate ||
-    releaseGroupOrAlbum?.firstReleaseDate ||
-    "";
-  const raw = String(value || "").trim();
+  const raw = String(releaseDateOf(releaseGroupOrAlbum)).trim();
   if (!raw) return "";
   if (/^\d{4}$/.test(raw)) return raw;
   const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -493,7 +454,21 @@ export const sortReleaseGroupsByPopularity = <T extends ReleaseGroup>(releaseGro
 export const getPopularReleaseGroups = <T extends ReleaseGroup>(
   releaseGroups: T[] = [],
   limit = 6,
-) => sortReleaseGroupsByPopularity(releaseGroups).slice(0, limit);
+  now = Date.now(),
+) => {
+  const popular = sortReleaseGroupsByPopularity(releaseGroups);
+  const latest = popular
+    .filter((releaseGroup) => isNewReleaseGroup(releaseGroup, now))
+    .reduce<T | null>(
+      (newest, releaseGroup) =>
+        !newest || releaseDateOf(releaseGroup) > releaseDateOf(newest) ? releaseGroup : newest,
+      null,
+    );
+  return (latest ? [latest, ...popular.filter((item) => item !== latest)] : popular).slice(
+    0,
+    limit,
+  );
+};
 
 const isUnrequestedReleaseGroup = (
   getAlbumStatus: ReleaseGroupStatusLookup | undefined,

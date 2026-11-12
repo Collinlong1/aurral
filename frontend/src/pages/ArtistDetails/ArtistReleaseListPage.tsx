@@ -1,6 +1,4 @@
-import ArtworkImage from "../../components/ArtworkImage";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useInfiniteQuery } from "@tanstack/react-query";
 import { Link, useParams, useSearchParams } from "react-router";
 import { DotLoader } from "../../components/DotLoader";
 import { SkeletonReleaseCard, SkeletonStatus, SkeletonText } from "../../components/Skeletons";
@@ -21,36 +19,42 @@ import ReleaseWaitBadge from "../../components/ReleaseWaitBadge";
 import { useActiveDownloads } from "../../hooks/useActiveDownloads";
 import PillToggle from "../../components/PillToggle";
 import ReleaseStatusCheck from "./components/ReleaseStatusCheck";
+import { ArtistReleaseCard, ReleaseMeta } from "./components/ArtistReleaseCard";
 import { useAuth } from "../../contexts/AuthContext";
 import { useToast } from "../../contexts/ToastContext";
 import { useDocumentTitle } from "../../hooks/useDocumentTitle";
-import { useArtistDetailsStream } from "./hooks/useArtistDetailsStream";
+import { useArtistDetails } from "./hooks/useArtistDetails";
 import { useArtistRouteState } from "./hooks/useArtistRouteState.ts";
 import { useArtistDetailsLibrary } from "./hooks/useArtistDetailsLibrary";
+import { ReleaseCoverImage } from "../../components/ReleaseCoverImage";
 import { getReleaseGroupLink } from "../../utils/searchNavigation";
 import { OptionalLink } from "../../components/RouteLink";
 import {
   getCoverImage,
   getReleaseGroupCoverUrl,
   getReleaseMetric,
-  getReleaseYear,
   readReleaseListViewMode,
   writeReleaseListViewMode,
 } from "./utils";
-import { matchesReleaseGroupSearch, matchesReleaseGroupTab } from "./releaseFilters.ts";
+import {
+  isStudioRelease,
+  matchesReleaseGroupSearch,
+  matchesReleaseGroupTab,
+} from "./releaseFilters.ts";
 import type { LibraryReleaseGroup, ReleaseGroup, ReleaseListViewMode } from "./utils";
 import { albumPath } from "../../../../lib/albumPath.ts";
 import { getAlbumAddAction } from "../../utils/albumAddAction";
-import { parseResponse } from "hono/client";
 import { getReleaseGroupRatingsBatch } from "../../utils/api/endpoints/artists.ts";
-import { artistsClient } from "../../utils/api/clients/artists.ts";
-import { queryKeys } from "../../queryClient.ts";
 import TooltipButton from "../../components/TooltipButton";
 import Tooltip from "../../components/Tooltip";
-import { artworkHoverTint } from "../../utils/imageColors.ts";
 import StatePanel from "../../components/StatePanel";
+import Pagination from "../../components/Pagination";
+import { useClampPage, usePageParam } from "../../hooks/usePageParam.ts";
+import "./ArtistDetailsPage.css";
 
 const RELEASE_PAGE_SIZE = 24;
+
+type ReleaseGroupRatings = Awaited<ReturnType<typeof getReleaseGroupRatingsBatch>>["ratings"];
 
 const sortOptions = [
   { value: "date", label: "Date", defaultDirection: "desc" },
@@ -100,14 +104,14 @@ const sortReleaseGroups = <T extends ReleaseGroup>(
 function ArtistReleaseListPage({ mode = "releases" }) {
   const isAppearsOn = mode === "appearsOn";
   const { mbid } = useParams();
-  const { state, artistName: artistNameFromNav = "", initialLibraryHint } = useArtistRouteState();
+  const { state, artistName: artistNameFromNav = "", inLibrary } = useArtistRouteState();
   const { showSuccess, showError, showInfo } = useToast();
   const { isAlbumDownloading } = useActiveDownloads();
   const { hasPermission } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get("tab");
   const selectedTab = releaseTabs.find((tab) => tab.value === tabParam)?.value ?? "all";
-  const showLiveAlbums = searchParams.get("live") !== "0";
+  const otherReleasesParam = searchParams.get("other");
   const searchTerm = searchParams.get("q") ?? "";
   const sortParam = searchParams.get("sort");
   const sortOption = sortOptions.find((option) => option.value === sortParam) ?? sortOptions[0];
@@ -121,6 +125,7 @@ function ArtistReleaseListPage({ mode = "releases" }) {
     setSearchParams(
       (current) => {
         const next = new URLSearchParams(current);
+        next.delete("page");
         for (const [key, value] of Object.entries(changes)) {
           if (value) next.set(key, value);
           else next.delete(key);
@@ -131,39 +136,24 @@ function ArtistReleaseListPage({ mode = "releases" }) {
     );
   const [viewMode, setViewMode] = useState(() => readReleaseListViewMode());
   const [sortMenuOpen, setSortMenuOpen] = useState(false);
-  const [visibleCoverIds, setVisibleCoverIds] = useState<string[]>([]);
-  const [visibleReleaseCount, setVisibleReleaseCount] = useState(RELEASE_PAGE_SIZE);
+  const [pageIndex, setPageIndex] = usePageParam();
+  const [ratings, setRatings] = useState<ReleaseGroupRatings>({});
   const toolbarRef = useRef<HTMLDivElement>(null);
   const requestedRatingIdsRef = useRef(new Set<string>());
-  const appearsOnOffsetRef = useRef<{ mbid: string | null | undefined; offset: number | null }>({
-    mbid: null,
-    offset: null,
-  });
+  const fetchingAppearancesRef = useRef(false);
   const canAddAlbum = hasPermission("addAlbum");
 
-  const stream = useArtistDetailsStream(mbid, artistNameFromNav, {
-    visibleCoverIds,
-    initialLibraryHint,
-    appearsOnLimit: isAppearsOn ? RELEASE_PAGE_SIZE : null,
-  });
-
+  const details = useArtistDetails(mbid, artistNameFromNav, { inLibrary });
   const {
     artist,
-    setArtist,
-    libraryArtist,
-    setLibraryArtist,
-    libraryAlbums,
-    setLibraryAlbums,
-    ownedAlbums,
     error,
     loadingReleases,
     loadingAppearsOn,
-    existsInLibrary,
-    setExistsInLibrary,
-    albumCovers,
-    fulfilledCoverIds,
+    loadingLibrary,
     coverImages,
-  } = stream;
+    appearsOn,
+  } = details;
+  const loadingList = isAppearsOn ? loadingAppearsOn : loadingReleases;
   const artistCoverImage = getCoverImage(coverImages);
 
   const artistDisplayName = artist?.name || artistNameFromNav || "";
@@ -176,25 +166,33 @@ function ArtistReleaseListPage({ mode = "releases" }) {
   );
 
   const library = useArtistDetailsLibrary({
-    artist,
-    libraryArtist,
-    setLibraryArtist,
-    libraryAlbums,
-    setLibraryAlbums,
-    existsInLibrary,
-    setExistsInLibrary,
-    ownedAlbums,
+    ...details,
     showSuccess,
     showError,
     showInfo,
   });
 
   const releaseGroups = useMemo(
-    () => artist?.[isAppearsOn ? "appears-on-release-groups" : "release-groups"] || [],
-    [artist, isAppearsOn],
+    () =>
+      (artist?.[isAppearsOn ? "appears-on-release-groups" : "release-groups"] || []).map(
+        (releaseGroup) => {
+          const update = ratings[releaseGroup.id];
+          if (!update) return releaseGroup;
+          return {
+            ...releaseGroup,
+            rating: update.rating || releaseGroup.rating || null,
+            "first-release-date":
+              releaseGroup["first-release-date"] || update.firstReleaseDate || null,
+          };
+        },
+      ),
+    [artist, isAppearsOn, ratings],
   );
   const { libraryReleaseGroups } = library;
   const libraryTab = !isAppearsOn && selectedTab === "library";
+  const showOtherReleases = otherReleasesParam
+    ? otherReleasesParam === "1"
+    : isAppearsOn || (releaseGroups.length > 0 && !releaseGroups.some(isStudioRelease));
   const filteredReleaseGroups = useMemo(
     () =>
       sortReleaseGroups<LibraryReleaseGroup>(
@@ -203,7 +201,7 @@ function ArtistReleaseListPage({ mode = "releases" }) {
             matchesReleaseGroupTab(
               releaseGroup,
               libraryTab ? "all" : selectedTab,
-              showLiveAlbums,
+              libraryTab || showOtherReleases,
             ) && matchesReleaseGroupSearch(releaseGroup, searchTerm),
         ),
         sortKey,
@@ -215,95 +213,36 @@ function ArtistReleaseListPage({ mode = "releases" }) {
       releaseGroups,
       searchTerm,
       selectedTab,
-      showLiveAlbums,
+      showOtherReleases,
       sortDirection,
       sortKey,
     ],
   );
+  const pageCount = Math.ceil(filteredReleaseGroups.length / RELEASE_PAGE_SIZE);
   const renderedReleaseGroups = useMemo(
-    () => filteredReleaseGroups.slice(0, visibleReleaseCount),
-    [filteredReleaseGroups, visibleReleaseCount],
-  );
-  const initialAppearsOnOffset =
-    isAppearsOn && appearsOnOffsetRef.current.mbid === mbid
-      ? (appearsOnOffsetRef.current.offset ?? releaseGroups.length)
-      : releaseGroups.length;
-  useEffect(() => {
-    if (!isAppearsOn) {
-      appearsOnOffsetRef.current = { mbid: null, offset: null };
-      return;
-    }
-    if (appearsOnOffsetRef.current.mbid !== mbid) {
-      appearsOnOffsetRef.current = { mbid, offset: releaseGroups.length || null };
-      return;
-    }
-    if (appearsOnOffsetRef.current.offset == null && releaseGroups.length > 0) {
-      appearsOnOffsetRef.current.offset = releaseGroups.length;
-    }
-  }, [isAppearsOn, mbid, releaseGroups.length]);
-  const appearsOnQuery = useInfiniteQuery({
-    queryKey: queryKeys.artistAppearsOn(mbid),
-    enabled: false,
-    initialPageParam: initialAppearsOnOffset,
-    queryFn: ({ pageParam, signal }) =>
-      parseResponse(
-        artistsClient[":mbid"]["appears-on"].$post(
-          {
-            param: { mbid: encodeURIComponent(mbid ?? "") },
-            json: {
-              offset: pageParam,
-              limit: RELEASE_PAGE_SIZE,
-              excludeIds: releaseGroups.map((item) => item.id).filter(Boolean),
-            },
-          },
-          { init: { signal } },
-        ),
+    () =>
+      filteredReleaseGroups.slice(
+        (pageIndex - 1) * RELEASE_PAGE_SIZE,
+        pageIndex * RELEASE_PAGE_SIZE,
       ),
-    getNextPageParam: (lastPage, pages) => {
-      if (!lastPage?.hasMore || !lastPage?.items?.length) return undefined;
-      return (
-        initialAppearsOnOffset +
-        pages.reduce((count, page) => count + (page?.items?.length || 0), 0)
-      );
-    },
-    staleTime: 30_000,
-  });
-  useEffect(() => {
-    if (!isAppearsOn || loadingAppearsOn) return;
-    const cachedItems = appearsOnQuery.data?.pages?.flatMap((page) => page?.items || []) || [];
-    if (!cachedItems.length) return;
-    setArtist((previous) => {
-      if (!previous) return previous;
-      const existing = previous["appears-on-release-groups"] || [];
-      const byId = new Map(existing.map((item) => [item.id, item]));
-      let changed = false;
-      cachedItems.forEach((item) => {
-        if (!item?.id || byId.has(item.id)) return;
-        byId.set(item.id, item);
-        changed = true;
-      });
-      if (!changed) return previous;
-      return {
-        ...previous,
-        "appears-on-release-groups": [...byId.values()],
-      };
-    });
-  }, [appearsOnQuery.data, isAppearsOn, loadingAppearsOn, releaseGroups, setArtist]);
-  const hasMoreAppearances = isAppearsOn && (!appearsOnQuery.data || appearsOnQuery.hasNextPage);
-  const loadingMoreAppearances = appearsOnQuery.isFetchingNextPage;
+    [filteredReleaseGroups, pageIndex],
+  );
+  const hasMoreAppearances = isAppearsOn && appearsOn.hasNextPage;
+  const loadingMoreAppearances = appearsOn.isFetchingNextPage;
+  const listSettled = !loadingList && !(libraryTab && loadingLibrary);
+  const needsMoreAppearances =
+    hasMoreAppearances &&
+    !appearsOn.isFetchNextPageError &&
+    filteredReleaseGroups.length < pageIndex * RELEASE_PAGE_SIZE;
+  useClampPage(
+    pageIndex,
+    listSettled && !needsMoreAppearances && !loadingMoreAppearances
+      ? Math.max(pageCount, 1)
+      : undefined,
+    setPageIndex,
+  );
 
   useEffect(() => {
-    setVisibleCoverIds(
-      renderedReleaseGroups.flatMap((item) => (item.id && !item.libraryAlbumId ? [item.id] : [])),
-    );
-  }, [renderedReleaseGroups]);
-
-  useEffect(() => {
-    setVisibleReleaseCount(RELEASE_PAGE_SIZE);
-  }, [searchTerm, selectedTab, showLiveAlbums]);
-
-  useEffect(() => {
-    setVisibleReleaseCount(RELEASE_PAGE_SIZE);
     requestedRatingIdsRef.current = new Set();
   }, [isAppearsOn, mbid]);
 
@@ -318,24 +257,7 @@ function ArtistReleaseListPage({ mode = "releases" }) {
     let cancelled = false;
     getReleaseGroupRatingsBatch(ids)
       .then((data) => {
-        if (cancelled) return;
-        const ratings = data?.ratings || {};
-        setArtist((previous) => {
-          if (!previous) return previous;
-          return {
-            ...previous,
-            "release-groups": (previous["release-groups"] || []).map((releaseGroup) => {
-              const update = ratings[releaseGroup.id];
-              if (!update) return releaseGroup;
-              return {
-                ...releaseGroup,
-                rating: update.rating || releaseGroup.rating || null,
-                "first-release-date":
-                  releaseGroup["first-release-date"] || update.firstReleaseDate || null,
-              };
-            }),
-          };
-        });
+        if (!cancelled) setRatings((previous) => ({ ...previous, ...data?.ratings }));
       })
       .catch(() => {
         ids.forEach((id) => requestedRatingIdsRef.current.delete(id));
@@ -343,46 +265,31 @@ function ArtistReleaseListPage({ mode = "releases" }) {
     return () => {
       cancelled = true;
     };
-  }, [isAppearsOn, loadingReleases, renderedReleaseGroups, setArtist]);
+  }, [isAppearsOn, loadingReleases, renderedReleaseGroups]);
 
-  const loadNextPage = useCallback(async () => {
-    if (visibleReleaseCount < filteredReleaseGroups.length) {
-      setVisibleReleaseCount((current) => current + RELEASE_PAGE_SIZE);
-      return;
-    }
-    if (!isAppearsOn || !hasMoreAppearances || loadingMoreAppearances) return;
-    if (appearsOnOffsetRef.current.offset == null) {
-      appearsOnOffsetRef.current.offset = initialAppearsOnOffset;
-    }
+  const { fetchNextPage } = appearsOn;
+  const fetchMoreAppearances = useCallback(async () => {
+    if (fetchingAppearancesRef.current) return false;
+    fetchingAppearancesRef.current = true;
     try {
-      const result = await appearsOnQuery.fetchNextPage({ throwOnError: true });
-      const data = result.data?.pages?.at(-1);
-      const items = Array.isArray(data?.items) ? data.items : [];
-      if (items.length) {
-        setArtist((previous) => {
-          if (!previous) return previous;
-          const existing = previous["appears-on-release-groups"] || [];
-          const byId = new Map(existing.map((item) => [item.id, item]));
-          items.forEach((item) => byId.set(item.id, item));
-          return {
-            ...previous,
-            "appears-on-release-groups": [...byId.values()],
-          };
-        });
-        setVisibleReleaseCount((current) => current + items.length);
-      }
+      await fetchNextPage({ throwOnError: true });
+      return true;
     } catch {
-      return;
+      return false;
+    } finally {
+      fetchingAppearancesRef.current = false;
     }
+  }, [fetchNextPage]);
+
+  useEffect(() => {
+    if (!listSettled || !needsMoreAppearances || loadingMoreAppearances) return;
+    void fetchMoreAppearances();
   }, [
-    appearsOnQuery,
-    filteredReleaseGroups.length,
-    hasMoreAppearances,
-    initialAppearsOnOffset,
-    isAppearsOn,
+    fetchMoreAppearances,
+    listSettled,
     loadingMoreAppearances,
-    setArtist,
-    visibleReleaseCount,
+    needsMoreAppearances,
+    releaseGroups.length,
   ]);
 
   useEffect(() => {
@@ -402,6 +309,14 @@ function ArtistReleaseListPage({ mode = "releases" }) {
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [sortMenuOpen]);
+
+  const changePage = async (next: number) => {
+    if (hasMoreAppearances && filteredReleaseGroups.length < next * RELEASE_PAGE_SIZE) {
+      const loaded = await fetchMoreAppearances();
+      if (!loaded || filteredReleaseGroups.length < pageIndex * RELEASE_PAGE_SIZE) return;
+    }
+    setPageIndex(next);
+  };
 
   const handleViewModeChange = (next: ReleaseListViewMode) => {
     setViewMode(next);
@@ -444,34 +359,38 @@ function ArtistReleaseListPage({ mode = "releases" }) {
   const renderReleaseCard = (releaseGroup: LibraryReleaseGroup) => {
     const status = library.getAlbumStatus(releaseGroup.id);
     const metric = getReleaseMetric(releaseGroup);
-    const cover = getReleaseGroupCoverUrl(releaseGroup, albumCovers, {
-      artistFallback: artistCoverImage,
-      resolved: fulfilledCoverIds?.has(releaseGroup.id),
-    });
+    const cover = getReleaseGroupCoverUrl(releaseGroup);
     const isComplete = status?.status === "available" || status?.status === "added";
     const albumBusy =
       library.requestingAlbum === releaseGroup.id || isAlbumDownloading(releaseGroup.id);
     const releaseTypeLabel = getReleaseTypeLabel(releaseGroup);
     const artistCredit = isAppearsOn ? releaseGroup["artist-credit"]?.[0]?.name || "" : "";
-    const metaLabel = [getReleaseYear(releaseGroup), artistCredit || releaseTypeLabel]
-      .filter(Boolean)
-      .join(" · ");
+    const detail = artistCredit || releaseTypeLabel;
 
     if (viewMode === "list") {
       return (
         <div key={releaseGroup.id} className="artist-release-list-item">
           <div className="artist-media-cell artist-list-cover">
-            {cover ? (
-              <ArtworkImage src={cover} alt="" loading="lazy" />
-            ) : (
-              <div className="artist-media-placeholder">
-                <Music className="artist-icon-md" />
-              </div>
-            )}
+            <ReleaseCoverImage
+              src={cover}
+              fallback={artistCoverImage}
+              alt=""
+              loading="lazy"
+              placeholder={
+                <div className="artist-media-placeholder">
+                  <Music className="artist-icon-md" />
+                </div>
+              }
+            />
           </div>
-          <OptionalLink link={releaseLink(releaseGroup, cover)} className="artist-min-0 card-link">
+          <OptionalLink
+            link={releaseLink(releaseGroup, cover || artistCoverImage || "")}
+            className="artist-min-0 card-link"
+          >
             <h2 className="artist-release-card__title artist-truncate">{releaseGroup.title}</h2>
-            <p className="artist-release-card__meta artist-truncate">{metaLabel}</p>
+            <p className="artist-release-card__meta artist-truncate">
+              <ReleaseMeta releaseGroup={releaseGroup} detail={detail} />
+            </p>
           </OptionalLink>
           <div className="artist-row-actions">
             {metric.label && (
@@ -504,58 +423,28 @@ function ArtistReleaseListPage({ mode = "releases" }) {
     }
 
     return (
-      <article key={releaseGroup.id} className="artist-release-card" {...artworkHoverTint}>
-        <div className="artist-release-card__cover">
-          {cover ? (
-            <ArtworkImage src={cover} alt="" loading="lazy" decoding="async" />
-          ) : (
-            <div className="artist-release-card__placeholder">
-              <Music className="artist-icon-lg" />
-            </div>
-          )}
-          <div className="artist-release-card__action">
-            {isComplete ? (
-              <ReleaseStatusCheck partial={status?.partial} />
-            ) : status?.status === "waiting" ? (
-              <ReleaseWaitBadge releaseDate={releaseGroup["first-release-date"]} />
-            ) : canAddAlbum ? (
-              <div>
-                <AddActionButton
-                  {...getAlbumAddAction({ releaseDate: releaseGroup["first-release-date"] })}
-                  onAdd={() =>
-                    library.handleRequestAlbum(releaseGroup.id, releaseGroup.title ?? "")
-                  }
-                  isLoading={albumBusy}
-                  loadingLabel="Downloading"
-                  disabled={albumBusy}
-                />
-              </div>
-            ) : null}
-          </div>
-        </div>
-        <h2
-          className={`artist-release-card__title ${isAppearsOn ? "artist-clamp-2" : "artist-truncate"}`}
-        >
-          <OptionalLink link={releaseLink(releaseGroup, cover)} className="card-link">
-            <Tooltip content={releaseGroup.title}>
-              <span className="card-link__label">{releaseGroup.title}</span>
-            </Tooltip>
-          </OptionalLink>
-        </h2>
-        <p className="artist-release-card__meta artist-truncate">{metaLabel}</p>
-        {metric.label && (
-          <Tooltip content={metric.title}>
-            <p className="artist-release-card__metric">
-              <ReleaseMetric metric={metric} />
-            </p>
-          </Tooltip>
-        )}
-      </article>
+      <ArtistReleaseCard
+        key={releaseGroup.id}
+        releaseGroup={releaseGroup}
+        coverUrl={cover}
+        fallbackCoverUrl={artistCoverImage}
+        link={releaseLink(releaseGroup, cover || artistCoverImage || "")}
+        detail={detail}
+        status={status}
+        busy={albumBusy}
+        onDownload={
+          canAddAlbum
+            ? () => library.handleRequestAlbum(releaseGroup.id, releaseGroup.title ?? "")
+            : null
+        }
+        metric={metric}
+        headingLevel="h2"
+      />
     );
   };
 
   const noun = isAppearsOn ? "appearance" : "release";
-  const awaitingReleases = loadingReleases && renderedReleaseGroups.length === 0;
+  const awaitingReleases = loadingList && renderedReleaseGroups.length === 0;
   const selectedSort = sortOptions.find((option) => option.value === sortKey) || sortOptions[0];
   const SortDirectionIcon = sortDirection === "asc" ? ArrowUp : ArrowDown;
   const searchLabel = isAppearsOn ? "Search appearances" : "Search releases";
@@ -566,7 +455,7 @@ function ArtistReleaseListPage({ mode = "releases" }) {
         <div>
           <Link
             to={`/artist/${artist.id}`}
-            state={{ artistName: artist.name, inLibrary: existsInLibrary }}
+            state={{ artistName: artist.name, inLibrary: details.existsInLibrary }}
             className="artist-title-link"
           >
             <span>{artist.name}</span>
@@ -681,14 +570,16 @@ function ArtistReleaseListPage({ mode = "releases" }) {
               );
             })}
           </div>
-          <div className="artist-release-page__live-toggle">
-            <span>Live albums</span>
-            <PillToggle
-              checked={showLiveAlbums}
-              onChange={(event) => updateFilters({ live: event.target.checked ? null : "0" })}
-              aria-label="Show live albums"
-            />
-          </div>
+          {libraryTab ? null : (
+            <div className="artist-release-page__other-toggle">
+              <span>Live, remixes, and more</span>
+              <PillToggle
+                checked={showOtherReleases}
+                onChange={(event) => updateFilters({ other: event.target.checked ? "1" : "0" })}
+                aria-label="Show live albums, remixes, and other releases"
+              />
+            </div>
+          )}
         </div>
       </div>
 
@@ -699,7 +590,7 @@ function ArtistReleaseListPage({ mode = "releases" }) {
           <>
             {filteredReleaseGroups.length.toLocaleString()} {noun}
             {filteredReleaseGroups.length === 1 ? "" : "s"}
-            {loadingReleases ? (
+            {loadingList ? (
               <span className="artist-count__loading" role="status">
                 <DotLoader size="xs" label={null} />
                 {isAppearsOn ? "Loading appearances" : "Loading releases"}
@@ -722,19 +613,19 @@ function ArtistReleaseListPage({ mode = "releases" }) {
           {renderedReleaseGroups.map((releaseGroup) => renderReleaseCard(releaseGroup))}
         </div>
       )}
-      {visibleReleaseCount < filteredReleaseGroups.length || (isAppearsOn && hasMoreAppearances) ? (
-        <div className="artist-loading" aria-live="polite">
-          <button
-            type="button"
-            className="btn btn-surface"
-            onClick={loadNextPage}
-            disabled={loadingMoreAppearances}
-          >
-            {loadingMoreAppearances ? <DotLoader size="sm" label={null} /> : null}
-            Load more
-          </button>
+      {needsMoreAppearances || loadingMoreAppearances ? (
+        <div className="artist-loading">
+          <DotLoader size="sm" label="Loading appearances" />
         </div>
-      ) : null}
+      ) : (
+        <Pagination
+          page={pageIndex}
+          pageCount={pageCount}
+          hasMore={hasMoreAppearances}
+          label={`${isAppearsOn ? "Appearance" : "Release"} pages`}
+          onChange={(next) => void changePage(next)}
+        />
+      )}
     </div>
   );
 }

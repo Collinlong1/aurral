@@ -46,10 +46,40 @@ const dropLidarrMode: Migration = (db) => {
   `);
 };
 
+const storeListenbrainzReleaseGroups: Migration = (db) =>
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS listenbrainz_release_groups (
+      mbid TEXT PRIMARY KEY,
+      first_release_date TEXT,
+      dates_checked_at INTEGER,
+      listen_count INTEGER,
+      listener_count INTEGER,
+      popularity_checked_at INTEGER
+    );
+  `);
+
+const storeListenbrainzArtistTags: Migration = (db) =>
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS listenbrainz_artist_tags (
+      mbid TEXT PRIMARY KEY,
+      tags_json TEXT NOT NULL,
+      checked_at INTEGER NOT NULL
+    );
+  `);
+
+const indexPlaysByArtist: Migration = (db) =>
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_play_events_user_artist
+      ON play_events(user_id, artist COLLATE NOCASE);
+  `);
+
 export const migrations: Migration[] = [
   createAurral3Schema,
   indexFinishedDownloadNames,
   dropLidarrMode,
+  storeListenbrainzReleaseGroups,
+  storeListenbrainzArtistTags,
+  indexPlaysByArtist,
 ];
 
 export function migrate(db: Database.Database, steps: readonly Migration[] = migrations) {
