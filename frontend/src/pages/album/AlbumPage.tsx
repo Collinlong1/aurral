@@ -116,6 +116,9 @@ function ClassicalWorkHeading({ group }: { group: AlbumPresentationGroup }) {
         )}
         {total ? <span className="classical-presentation__work-time">{total}</span> : null}
       </span>
+      {group.detail ? (
+        <span className="classical-presentation__work-detail">{group.detail}</span>
+      ) : null}
       {group.missing.length ? (
         <span className="classical-presentation__work-detail">
           Missing {group.missing.map((movement) => movement.title).join(", ")}

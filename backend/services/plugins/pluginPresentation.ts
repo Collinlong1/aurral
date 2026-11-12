@@ -71,6 +71,8 @@ const albumPresentationSchema = v.nullable(
           items: v.pipe(v.array(queueItem), v.minLength(1), v.maxLength(500)),
           missing: v.pipe(v.array(movement), v.maxLength(200)),
           movementCount: v.pipe(v.number(), v.integer(), v.minValue(1)),
+          // A short note under the heading, such as why a block has no work page.
+          detail: v.optional(v.pipe(v.string(), v.trim(), v.maxLength(200))),
         }),
       ),
       v.maxLength(200),

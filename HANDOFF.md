@@ -1,3 +1,7 @@
+# Album presentation detail line
+
+Based on `6b7389c7`, for plugin manifest 1.0.14. Album-presentation groups accept an optional `detail` string, rendered as a muted line under the work heading. The plugin uses it for blocks of several tracks that are not matched to a work. Additive: older plugins omit it, older cores drop it. The plugin-host test asserts it passes through. Required checks, 28 plugin-host tests and the frontend build pass; no real-browser pass.
+
 # Work-row playback actions and full player titles
 
 Based on companion core `f3cea93c`. Album work rows keep native metadata/playlist actions, but their Play, Play next, Add to queue and radio actions now use the selected plugin item and work source. A shared queue converter retains item identity, native track/album references, stream path, segment bounds and relative duration. Album rows and resource-page playback both show the full work-and-part title in the player. No core API, schema or classical matching rule changes.

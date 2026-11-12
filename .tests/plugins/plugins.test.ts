@@ -683,7 +683,7 @@ test("album and track actions get the Library's album and tracks", async (t) => 
       albumPresentation: true,
     },
     `export default {
-      albumPresentation:()=>({version:1,albumId:${JSON.stringify(albumId)},supportsToggle:true,groups:[{id:'piece-2',workId:null,title:'Single Piece',composer:'Composer',items:[${itemOn("later", 2)}],missing:[],movementCount:1},{id:'realization-1',workId:'work-1',title:'Fixture Work',composer:'Composer',items:[${item}],missing:[],movementCount:2}]}),
+      albumPresentation:()=>({version:1,albumId:${JSON.stringify(albumId)},supportsToggle:true,groups:[{id:'piece-2',workId:null,title:'Single Piece',composer:'Composer',detail:'Not matched to a work',items:[${itemOn("later", 2)}],missing:[],movementCount:1},{id:'realization-1',workId:'work-1',title:'Fixture Work',composer:'Composer',items:[${item}],missing:[],movementCount:2}]}),
       pages:{read:(input)=>(${work}),mutate:()=>({ok:true})}
     }`,
   );
@@ -696,6 +696,7 @@ test("album and track actions get the Library's album and tracks", async (t) => 
         v.object({
           id: v.string(),
           href: v.nullable(v.string()),
+          detail: v.optional(v.string()),
           items: v.array(v.object({ streamPath: v.string() })),
         }),
       ),
@@ -708,6 +709,7 @@ test("album and track actions get the Library's album and tracks", async (t) => 
   );
   // A single piece has no work page to open.
   assert.equal(presentationBody.groups[1]?.href, null);
+  assert.equal(presentationBody.groups[1]?.detail, "Not matched to a work");
   const presentedGroup = presentationBody.groups.find((group) => group.id === "realization-1");
   assert.ok(presentedGroup);
   const [presentedItem] = presentedGroup.items;
