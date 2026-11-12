@@ -31,6 +31,8 @@ type Pending = {
   resolve: (value: unknown) => void;
   reject: (error: BrokenPlugin | PluginError) => void;
   timer: NodeJS.Timeout;
+  // Another call was in the plugin at some point while this one waited.
+  shared: boolean;
 };
 type Exports = string[];
 type Running = {
@@ -43,6 +45,9 @@ type Running = {
 };
 
 class BrokenPlugin extends Error {}
+// One process death fails every call waiting on it with the same error; it
+// is one failure, not one per call.
+const counted = new WeakSet<Error>();
 
 const childMessage = v.variant("type", [
   v.object({ type: v.literal("ready"), exports: v.array(v.string()) }),
@@ -208,20 +213,25 @@ async function send(plugin: InstalledPlugin, request: PluginRequest, timeoutMs: 
       throw new BrokenPlugin(`${PLUGIN_MAIN} doesn't export ${request.path}`);
     return await new Promise<unknown>((resolve, reject) => {
       const timer = setTimeout(() => {
+        const shared = state.pending.get(id)?.shared ?? false;
         state.pending.delete(id);
         const seconds = Math.round(timeoutMs / 1000);
-        // While another call (such as a long background action) is still
-        // running, a slow answer means the plugin is busy, not hung: fail only
-        // this call. Restarting would also kill the work in progress, and
-        // counting it would turn the plugin off after a few page views.
-        if (state.pending.size > 0) {
+        // While another call (such as a long background action) is running,
+        // or ran while this one waited behind it, a slow answer means the
+        // plugin is busy, not hung: fail only this call. Restarting would also
+        // kill the work in progress, and counting it would turn the plugin off
+        // after a few page views. A call that waited alone and timed out still
+        // restarts the process.
+        if (state.pending.size > 0 || shared) {
           reject(new PluginError(`was busy and didn't answer within ${seconds} seconds`));
           return;
         }
         reject(new BrokenPlugin(`didn't answer within ${seconds} seconds`));
         stopPlugin(plugin.id);
       }, timeoutMs);
-      state.pending.set(id, { resolve, reject, timer });
+      const shared = state.pending.size > 0;
+      for (const call of state.pending.values()) call.shared = true;
+      state.pending.set(id, { resolve, reject, timer, shared });
       state.child.send({ type: "call", id, ...request }, (error) => {
         if (!error) return;
         state.pending.delete(id);
@@ -243,6 +253,10 @@ function recordFailure(plugin: InstalledPlugin, error: unknown, countFailures: b
   });
   recordPluginError(plugin.id, message);
   if (!broken || !countFailures) return new PluginError(message);
+  if (error instanceof Error) {
+    if (counted.has(error)) return new PluginError(message);
+    counted.add(error);
+  }
   const count = countBrokenCall(plugin.id);
   if (count >= MAX_BROKEN_IN_A_ROW) {
     stopPlugin(plugin.id);

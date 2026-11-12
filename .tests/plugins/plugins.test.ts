@@ -233,6 +233,55 @@ test("a slow call while another is still running fails alone and keeps the work 
   );
 });
 
+test("a call that waited behind a long call is busy, not broken, even once that call has finished", async () => {
+  const { callPlugin } = await import("../../backend/services/plugins/pluginHost.ts");
+  // A scan's synchronous publish holds the plugin; the editor's page call
+  // queued behind it times out just after the scan answered.
+  await install(
+    "behind",
+    { actions: [{ id: "long", label: "Long", target: "album", background: true }] },
+    `const block = (ms) => { const end = Date.now() + ms; while (Date.now() < end); };
+     export default { actions: { long: () => { block(600); return { message: String(process.pid) }; } },
+       // Like opening a database: await I/O first, so the long call's answer
+       // reaches the host, then work synchronously.
+       test: async () => { await new Promise((r) => setTimeout(r, 30)); block(500); return { message: String(process.pid) }; } };`,
+  );
+  await turnOn("behind");
+  const plugin = activePlugin("behind")!;
+  const result = v.object({ message: v.string() });
+  const long = callPlugin(plugin, { path: "actions.long", input: {} }, result, 10_000);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  await assert.rejects(
+    callPlugin(plugin, { path: "test", input: {} }, result, 800),
+    /busy and didn't answer within 1 seconds/,
+  );
+  const pid = (await long).message;
+  // Same process: it was not restarted, and the plugin is still on.
+  assert.equal((await callPlugin(plugin, { path: "test", input: {} }, result, 5_000)).message, pid);
+  assert.equal(activePlugin("behind")?.enabled, true);
+});
+
+test("one crash with several calls waiting is one failure, not one per call", async () => {
+  const { callPlugin } = await import("../../backend/services/plugins/pluginHost.ts");
+  await install(
+    "crashy",
+    { actions: [{ id: "long", label: "Long", target: "album", background: true }] },
+    `export default { actions: { long: () => new Promise(() => setTimeout(() => process.exit(3), 300)) },
+       test: () => new Promise(() => {}) };`,
+  );
+  await turnOn("crashy");
+  const plugin = activePlugin("crashy")!;
+  const result = v.object({ message: v.string() });
+  const calls = [
+    callPlugin(plugin, { path: "actions.long", input: {} }, result, 10_000),
+    callPlugin(plugin, { path: "test", input: {} }, result, 10_000),
+    callPlugin(plugin, { path: "test", input: {} }, result, 10_000),
+  ];
+  for (const call of calls) await assert.rejects(call, /its process stopped with exit code 3/);
+  // Three calls failed together; before, that alone turned the plugin off.
+  assert.equal(activePlugin("crashy")?.enabled, true);
+});
+
 test("old plugins stay page-free and invalid page output fails with a bounded error", async () => {
   await install("legacy", {}, "export default {}");
   await turnOn("legacy");
