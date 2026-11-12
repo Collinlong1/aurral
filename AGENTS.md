@@ -1,9 +1,20 @@
 # Project instructions
 
-Current user explicitly authorized Phase 4 on November 10, 2026 (America/Chicago). Generic core hooks for Phase 4 grouping, bounded playback and work-page integration are complete for review; read HANDOFF.md and PHASE_4_REPORT.md first. Stop before later-release scope.
+Status, November 12, 2026 (America/Chicago): Phase 4 (authorized November 10) is complete for review, followed by the v0.1 bug-fix pass the user requested on November 11–12. Later-release scope (search/Discover, composer pages, the Scope v3 transition) is not authorized. Read HANDOFF.md first (newest entry on top), then PHASE_4_REPORT.md.
+
+Branches and sync:
+
+- `aurral-classical` is fork `main` plus the generic classical hooks. It last synced on November 12 with upstream lklynet/aurral through #1828 (core `55e7fa1`); the previous head is kept as `aurral-classical-backup-2026-11-12`.
+- Sync order is upstream → fork `main` → `aurral-classical`. Never merge upstream straight into the classical branch, and never merge classical work into `main`.
+- Fork `main` changes only to follow upstream, and only when the user asks. Upstream's pre-commit hook blocks commits on `main`: commit the sync on a short-lived branch, keep upstream as a merge parent (do not switch branches mid-merge; that drops it), then fast-forward `main`.
+- After a sync, rerun the companion plugin's Compose and Chromium workflow: its fixtures (`dev/seed.mjs`, `dev/smoke.mjs`) import core internals that upstream may move.
+
+Tooling: Node 26.12, pnpm 12.15. `pnpm check` must show zero type errors and stay at or below the unsafe-any baseline (1139 since the November 12 sync, inherited from upstream).
+
+Rules:
 
 - Work only in Collinlong1/Aurral-Classical-Plugin and Collinlong1/aurral. Upstream lklynet/aurral is read-only; no upstream writes, branches, PRs, reviews or comments.
-- Never modify/merge either main or discard external advances. Implement on the existing local aurral-classical branches; separate phase review snapshots preserve remote reviews. No automatic PR, merge, release or deployment.
+- Never merge classical work into either main or discard external advances. Fork main changes only to follow upstream, at the user's request. Implement on the aurral-classical branches; separate review snapshots preserve remote reviews. No automatic PR, merge, release or deployment.
 - No production credentials or server access. Tests use disposable synthetic fixtures and recorded provider data only.
 - No subagents unless explicitly authorized by the user.
 - Classical logic/storage stays in the plugin. Core hooks must stay generic, additive and capability checked. No plugin writes to core-owned tables.
