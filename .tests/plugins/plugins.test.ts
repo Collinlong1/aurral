@@ -694,7 +694,7 @@ test("album and track actions get the Library's album and tracks", async (t) => 
       albumPresentation: true,
     },
     `export default {
-      albumPresentation:()=>({version:1,albumId:${JSON.stringify(albumId)},supportsToggle:true,groups:[{id:'piece-2',workId:null,title:'Single Piece',composer:'Composer',detail:'Not matched to a work',items:[${itemOn("later", 2)}],missing:[],movementCount:1},{id:'realization-1',workId:'work-1',title:'Fixture Work',composer:'Composer',items:[${item}],missing:[],movementCount:2}]}),
+      albumPresentation:()=>({version:1,albumId:${JSON.stringify(albumId)},supportsToggle:true,groups:[{id:'piece-2',workId:null,title:'Single Piece',composer:'Composer',detail:'Not matched to a work',items:[${itemOn("later", 2)}],missing:[],movementCount:1},{id:'realization-1',workId:'work-1',title:'Fixture Work',composer:'Composer',items:[${item}],missing:[],movementCount:2},...Array.from({length:300},(_,i)=>({id:'box-'+i,workId:null,title:'Box piece '+i,composer:'Composer',items:[${itemOn("box", 2)}],missing:[],movementCount:1}))]}),
       pages:{read:(input)=>(${work}),mutate:()=>({ok:true})}
     }`,
   );
@@ -714,8 +714,10 @@ test("album and track actions get the Library's album and tracks", async (t) => 
     }),
     await presentation.json(),
   );
+  // A box set has far more pieces than a work has movements.
+  assert.equal(presentationBody.groups.length, 302);
   assert.deepEqual(
-    presentationBody.groups.map((group) => group.id),
+    presentationBody.groups.slice(0, 2).map((group) => group.id),
     ["realization-1", "piece-2"],
   );
   // A single piece has no work page to open.
@@ -758,6 +760,17 @@ test("album and track actions get the Library's album and tracks", async (t) => 
   assert.equal(
     await (await routes(owner).request(`/plugins/album-presentation/${album.id}`)).json(),
     null,
+  );
+  // A contribution that fails is reported, not shown as a plain album.
+  await install(
+    "stray",
+    { albumPresentation: true },
+    `export default { albumPresentation: () => ({version:1,albumId:${JSON.stringify(albumId)},supportsToggle:true,groups:[{id:'g',workId:null,title:'Stray',composer:'',items:[${itemOn("stray", 2).replace(`albumId:${JSON.stringify(albumId)}`, "albumId:'other'")}],missing:[],movementCount:1}]}) }`,
+  );
+  await turnOn("stray");
+  assert.equal(
+    (await routes(owner).request(`/plugins/album-presentation/${album.id}`)).status,
+    502,
   );
   assert.equal((await routes(owner).request("/plugins/views/resources/work/work-1")).status, 404);
 });

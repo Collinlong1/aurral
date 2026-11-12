@@ -844,6 +844,16 @@ function AlbumPage() {
           ))}
         </div>
       )}
+      {presentationQuery.isError && (
+        <StatePanel
+          role="alert"
+          icon={<AlertCircle />}
+          title="Couldn’t load works"
+          message="The tracks are below in album order."
+          onRetry={() => presentationQuery.refetch()}
+          retrying={presentationQuery.isFetching}
+        />
+      )}
       {presentation && presentationMode === "work" && (
         <TrackList
           label={`${title || "Album"} works`}

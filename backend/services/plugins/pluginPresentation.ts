@@ -5,6 +5,9 @@ import { callPlugin, PluginError } from "./pluginHost.ts";
 import { activePlugin, activePlugins, isCapabilityOn, pluginInput } from "./pluginStore.ts";
 import { PluginRequestError } from "./pluginService.ts";
 
+// Box sets run past a thousand tracks, often one piece per track, so an
+// album's groups and their items are bounded by album size, not work size.
+const ALBUM_TRACKS = 5000;
 const text = (max = 500) => v.pipe(v.string(), v.maxLength(max));
 const id = text(200);
 const queueItem = v.object({
@@ -68,14 +71,14 @@ const albumPresentationSchema = v.nullable(
           workId: v.nullable(id),
           title: text(),
           composer: text(),
-          items: v.pipe(v.array(queueItem), v.minLength(1), v.maxLength(500)),
+          items: v.pipe(v.array(queueItem), v.minLength(1), v.maxLength(ALBUM_TRACKS)),
           missing: v.pipe(v.array(movement), v.maxLength(200)),
           movementCount: v.pipe(v.number(), v.integer(), v.minValue(1)),
           // A short note under the heading, such as why a block has no work page.
           detail: v.optional(v.pipe(v.string(), v.trim(), v.maxLength(200))),
         }),
       ),
-      v.maxLength(200),
+      v.maxLength(ALBUM_TRACKS),
     ),
   }),
 );
@@ -91,10 +94,15 @@ function realUser(user: RequestUser) {
     throw new PluginRequestError(403, "A real user account is required");
 }
 
+type AlbumTarget = ReturnType<typeof albumTarget>;
+// Each album is read once per response, however many groups name it.
+type PlayableAlbums = Map<string, Set<number>>;
+const playableTracks = (album: AlbumTarget) =>
+  new Set(album.tracks.filter((track) => track.path).map((track) => Number(track.id)));
+
 function playableItems<
   Item extends { trackId: string; albumId: string; startMs: number; endMs: number | null },
->(items: Item[], expectedAlbumId?: string) {
-  const albums = new Map<string, ReturnType<typeof albumTarget>>();
+>(items: Item[], albums: PlayableAlbums, expectedAlbumId?: string) {
   return items.map((item) => {
     if (expectedAlbumId !== undefined && item.albumId !== expectedAlbumId)
       throw new PluginRequestError(502, "Plugin returned a track from another album");
@@ -103,16 +111,16 @@ function playableItems<
     const numericTrackId = Number(item.trackId);
     if (!Number.isSafeInteger(numericTrackId) || numericTrackId <= 0)
       throw new PluginRequestError(502, "Plugin returned an invalid library track reference");
-    let album = albums.get(item.albumId);
-    if (!album) {
+    let playable = albums.get(item.albumId);
+    if (!playable) {
       try {
-        album = albumTarget(item.albumId);
+        playable = playableTracks(albumTarget(item.albumId));
       } catch {
         throw new PluginRequestError(502, "Plugin returned an unavailable album reference");
       }
-      albums.set(item.albumId, album);
+      albums.set(item.albumId, playable);
     }
-    if (!album.tracks.some((track) => Number(track.id) === numericTrackId && track.path))
+    if (!playable.has(numericTrackId))
       throw new PluginRequestError(502, "Plugin returned a track outside its album");
     return {
       ...item,
@@ -122,17 +130,18 @@ function playableItems<
 }
 
 function hydrateWork(view: v.InferOutput<typeof workView>) {
+  const albums: PlayableAlbums = new Map();
   return {
     ...view,
     recordings: view.recordings.map((recording) => ({
       ...recording,
-      items: playableItems(recording.items),
+      items: playableItems(recording.items, albums),
     })),
   };
 }
 
-function bounded<T>(value: T) {
-  if (Buffer.byteLength(JSON.stringify(value)) > 512000)
+function bounded<T>(value: T, maxBytes = 512000) {
+  if (Buffer.byteLength(JSON.stringify(value)) > maxBytes)
     throw new PluginRequestError(502, "Plugin presentation is too large");
   return value;
 }
@@ -213,6 +222,7 @@ export async function mutatePluginResource(
 export async function pluginAlbumPresentation(user: RequestUser, albumId: string) {
   realUser(user);
   const album = albumTarget(albumId);
+  let failed = false;
   for (const plugin of activePlugins()) {
     if (!plugin.manifest.albumPresentation || !isCapabilityOn(plugin, "albumPresentation"))
       continue;
@@ -236,21 +246,29 @@ export async function pluginAlbumPresentation(user: RequestUser, albumId: string
       const position = new Map(album.tracks.map((track, index) => [String(track.id), index]));
       const firstPosition = (group: (typeof result.groups)[number]) =>
         Math.min(...group.items.map((item) => position.get(item.trackId) ?? Infinity));
-      return bounded({
-        pluginId: plugin.id,
-        ...result,
-        groups: result.groups
-          .map((group) => ({
-            ...group,
-            href: group.workId ? `/plugins/${plugin.id}/work/${group.workId}` : null,
-            items: playableItems(group.items, String(album.id)),
-          }))
-          .sort((a, b) => firstPosition(a) - firstPosition(b)),
-      });
+      const albums: PlayableAlbums = new Map([[String(album.id), playableTracks(album)]]);
+      return bounded(
+        {
+          pluginId: plugin.id,
+          ...result,
+          groups: result.groups
+            .map((group) => ({
+              ...group,
+              href: group.workId ? `/plugins/${plugin.id}/work/${group.workId}` : null,
+              items: playableItems(group.items, albums, String(album.id)),
+            }))
+            .sort((a, b) => firstPosition(a) - firstPosition(b)),
+        },
+        // About 400 bytes a track, for the largest box sets.
+        ALBUM_TRACKS * 1000,
+      );
     } catch {
-      // Album pages retain their stock presentation when an optional contribution fails.
+      failed = true;
     }
   }
+  // The album page keeps its track list either way; a failure says so, so
+  // the page can offer a retry instead of looking like a plain album.
+  if (failed) throw new PluginRequestError(502, "Plugin album presentation failed");
   return null;
 }
 
