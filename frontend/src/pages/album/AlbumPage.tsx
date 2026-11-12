@@ -87,6 +87,10 @@ type AlbumPresentationGroup = NonNullable<AlbumPresentation>["groups"][number];
 const itemDurationMs = (item: AlbumPresentationGroup["items"][number]) =>
   item.endMs != null ? item.endMs - item.startMs : item.durationMs;
 
+function playerTitle(group: AlbumPresentationGroup, item: AlbumPresentationGroup["items"][number]) {
+  return item.title.startsWith(group.title) ? item.title : `${group.title}: ${item.title}`;
+}
+
 // As Apple Music Classical heads a work: composer, then the work, then its
 // length when it spans several tracks. A single piece has no work page.
 function ClassicalWorkHeading({ group }: { group: AlbumPresentationGroup }) {
@@ -191,7 +195,9 @@ function AlbumPage() {
         normalizeStreamQueueTrack({
           id: item.id,
           trackId: item.trackId,
-          title: item.title,
+          // The player stands alone, so it names the work too: "24 Jazz
+          // Preludes, Op. 53: No. 11", as Apple Music titles the track.
+          title: playerTitle(group, item),
           artist: item.artist,
           album: item.album,
           durationMs: itemDurationMs(item),
@@ -548,7 +554,8 @@ function AlbumPage() {
         ...base,
         key: `${group.id}:${item.id}`,
         section: index === 0 ? <ClassicalWorkHeading group={group} /> : null,
-        number: index + 1,
+        // Apple Music Classical numbers parts by their titles ("I. Allegro"), not a column.
+        number: "",
         title: item.title,
         subtitle: item.performer || base?.subtitle,
         time: formatDuration(itemDurationMs(item)) || base?.time,
