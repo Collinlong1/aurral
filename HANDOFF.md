@@ -1,3 +1,7 @@
+# Synced with upstream through #1828 (November 12, 2026)
+
+Backup of the previous branch: `aurral-classical-backup-2026-11-12` (`b53b30f`). Fork `main` merged upstream lklynet/aurral through #1828 (`5a96ac5`); this branch then merged `main` (`e9093ce`). Upstream removed Lidarr mode and moved shared modules; classical keeps its revoked-grant permanent failure, local-file open check, acquisition identity, segment start and album presentation. Merge commit messages list each resolution. Node 26.12: `pnpm check` (0 type errors; unsafe-any 1139 = new baseline), 2,641 unit tests across 385 files (upstream deleted Lidarr-mode suites) and the frontend build pass. Not run: plugin repo suite against this core, Chromium editor/work-page checks, Compose restart/playback.
+
 # Album presentation detail line
 
 Based on `6b7389c7`, for plugin manifest 1.0.14. Album-presentation groups accept an optional `detail` string, rendered as a muted line under the work heading. The plugin uses it for blocks of several tracks that are not matched to a work. Additive: older plugins omit it, older cores drop it. The plugin-host test asserts it passes through. Required checks, 28 plugin-host tests and the frontend build pass; no real-browser pass.
