@@ -226,16 +226,22 @@ export async function pluginAlbumPresentation(user: RequestUser, albumId: string
         albumPresentationSchema,
         5000,
       );
-      if (result)
-        return bounded({
-          pluginId: plugin.id,
-          ...result,
-          groups: result.groups.map((group) => ({
+      if (!result) continue;
+      // album.tracks is in disc and track order; groups follow the album.
+      const position = new Map(album.tracks.map((track, index) => [String(track.id), index]));
+      const firstPosition = (group: (typeof result.groups)[number]) =>
+        Math.min(...group.items.map((item) => position.get(item.trackId) ?? Infinity));
+      return bounded({
+        pluginId: plugin.id,
+        ...result,
+        groups: result.groups
+          .map((group) => ({
             ...group,
             href: `/plugins/${plugin.id}/work/${group.workId}`,
             items: playableItems(group.items, String(album.id)),
-          })),
-        });
+          }))
+          .sort((a, b) => firstPosition(a) - firstPosition(b)),
+      });
     } catch {
       // Album pages retain their stock presentation when an optional contribution fails.
     }

@@ -618,9 +618,13 @@ test("album and track actions get the Library's album and tracks", async (t) => 
   });
   assert.equal((await runOn("album", { albumId: "missing" })).status, 404);
 
-  const firstTrack = String(trackIds[0]);
   const albumId = String(album.id);
+  const trackAt = (number: number) =>
+    String(library.tracks.find((track) => track.albums[0]?.trackNumber === number)?.id);
+  const firstTrack = trackAt(1);
   const item = `{id:'item-1',trackId:${JSON.stringify(firstTrack)},fileId:'file-1',albumId:${JSON.stringify(albumId)},title:'I. First',artist:'Glass Coast',album:'Lowlands',durationMs:1000,startMs:100,endMs:900}`;
+  const itemOn = (id: string, trackNumber: number) =>
+    `{id:'${id}',trackId:${JSON.stringify(trackAt(trackNumber))},fileId:'${id}-file',albumId:${JSON.stringify(albumId)},title:'${id}',artist:'Glass Coast',album:'Lowlands',durationMs:1000,startMs:0,endMs:null}`;
   const movement = `{id:'movement-1',title:'I. First',position:1}`;
   const work = `{version:1,work:{id:'work-1',title:'Fixture Work',nickname:'user-'+input.user.id,description:'',credits:[],movements:[${movement}],collections:[]},favourite:false,pickedRealizationId:null,pickScope:null,recordings:[{id:'realization-1',label:'Owned recording',recordingIds:['recording-1'],credits:[],items:[${item}],missing:[],complete:true}]}`;
   await install(
@@ -630,7 +634,7 @@ test("album and track actions get the Library's album and tracks", async (t) => 
       albumPresentation: true,
     },
     `export default {
-      albumPresentation:()=>({version:1,albumId:${JSON.stringify(albumId)},supportsToggle:true,groups:[{id:'realization-1',workId:'work-1',title:'Fixture Work',composer:'Composer',items:[${item}],missing:[],movementCount:2}]}),
+      albumPresentation:()=>({version:1,albumId:${JSON.stringify(albumId)},supportsToggle:true,groups:[{id:'realization-2',workId:'work-2',title:'Second Work',composer:'Composer',items:[${itemOn("later", 2)}],missing:[],movementCount:2},{id:'realization-1',workId:'work-1',title:'Fixture Work',composer:'Composer',items:[${item}],missing:[],movementCount:2}]}),
       pages:{read:(input)=>(${work}),mutate:()=>({ok:true})}
     }`,
   );
@@ -641,6 +645,7 @@ test("album and track actions get the Library's album and tracks", async (t) => 
     v.object({
       groups: v.array(
         v.object({
+          id: v.string(),
           href: v.string(),
           items: v.array(v.object({ streamPath: v.string() })),
         }),
@@ -648,7 +653,11 @@ test("album and track actions get the Library's album and tracks", async (t) => 
     }),
     await presentation.json(),
   );
-  const [presentedGroup] = presentationBody.groups;
+  assert.deepEqual(
+    presentationBody.groups.map((group) => group.id),
+    ["realization-1", "realization-2"],
+  );
+  const presentedGroup = presentationBody.groups.find((group) => group.id === "realization-1");
   assert.ok(presentedGroup);
   const [presentedItem] = presentedGroup.items;
   assert.ok(presentedItem);
