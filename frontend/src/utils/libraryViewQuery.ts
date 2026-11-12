@@ -22,6 +22,12 @@ import {
 } from "../navigation/libraryNavConfig";
 import { libraryPreviewData, libraryPreviewFavorites } from "./libraryPreviewData";
 import { queryKeys } from "../queryClient.ts";
+import {
+  isLibraryStatus,
+  LIBRARY_STATUSES,
+  type LibraryStatus,
+} from "../../../lib/libraryStatus.ts";
+import type { SelectOption } from "../components/Select.tsx";
 
 export const LIBRARY_PAGE_SIZE = 100;
 // Page sizes a Library list offers; the server serves at most 100 a page.
@@ -42,6 +48,17 @@ export const LIBRARY_SORT_OPTIONS: Partial<Record<LibraryViewId, (typeof NAME_SO
   "album-artists": [NAME_SORT, NEWEST_SORT],
   genres: [NAME_SORT],
 };
+
+export const LIBRARY_STATUS_LABELS = {
+  monitored: "Monitored",
+  unmonitored: "Not monitored",
+  missing: "Missing tracks",
+} satisfies Record<LibraryStatus, string>;
+
+export const LIBRARY_STATUS_OPTIONS: SelectOption<"" | LibraryStatus>[] = [
+  { value: "", label: "All statuses" },
+  ...LIBRARY_STATUSES.map((value) => ({ value, label: LIBRARY_STATUS_LABELS[value] })),
+];
 
 const HOME_RAIL_SIZE = 20;
 const ARTIST_TOP_TRACKS = 10;
@@ -64,10 +81,14 @@ export const HOME_ALBUM_RAILS = [
   path?: string;
 }[];
 
+export const librarySectionHasStatus = (section: LibraryViewId) =>
+  section === "albums" || libraryTabForSection(section) === "artists";
+
 export const libraryListParams = (section: LibraryViewId, searchParams: URLSearchParams) => {
   const requestedSort = searchParams.get("sort");
   const requestedPage = Number(searchParams.get("page"));
   const requestedSize = Number(searchParams.get("size"));
+  const requestedStatus = searchParams.get("status");
   return {
     sort: (LIBRARY_SORT_OPTIONS[section] || []).some((option) => option.value === requestedSort)
       ? requestedSort!
@@ -78,6 +99,8 @@ export const libraryListParams = (section: LibraryViewId, searchParams: URLSearc
       ? requestedSize
       : LIBRARY_PAGE_SIZE,
     artist: section === "tracks" ? searchParams.get("artist") || "" : "",
+    status:
+      librarySectionHasStatus(section) && isLibraryStatus(requestedStatus) ? requestedStatus : null,
   };
 };
 
@@ -128,6 +151,7 @@ type LibraryViewRequest = {
   pageSize?: number;
   query?: string;
   genre?: string;
+  status?: LibraryStatus | null;
   artist?: string;
   sort?: string;
   direction?: string;
@@ -142,6 +166,7 @@ const fetchLibraryPages = async (
     pageSize: listPageSize = LIBRARY_PAGE_SIZE,
     query,
     genre,
+    status,
     artist,
     sort,
     direction,
@@ -211,6 +236,7 @@ const fetchLibraryPages = async (
       pageSize: listPageSize,
       query,
       genre,
+      status,
       artistId: artist || undefined,
       sort,
       direction,
@@ -233,7 +259,12 @@ export type LibraryViewData = {
 };
 
 const finishLibraryView = (
-  { query, genre, artist }: Pick<LibraryViewRequest, "query" | "genre" | "artist">,
+  {
+    query,
+    genre,
+    status,
+    artist,
+  }: Pick<LibraryViewRequest, "query" | "genre" | "status" | "artist">,
   { nextData, pageResults, library, favoriteIds }: Required<Omit<LibraryViewData, "isPreview">>,
 ): LibraryViewData => {
   const usePreview =
@@ -241,6 +272,7 @@ const finishLibraryView = (
     pageResults.every((page) => Number(page?.total || 0) === 0) &&
     !query &&
     !genre &&
+    !status &&
     !artist &&
     library.artists.length === 0 &&
     library.albums.length === 0 &&
@@ -263,6 +295,7 @@ export function libraryViewQueryOptions({
   pageSize = LIBRARY_PAGE_SIZE,
   query = "",
   genre = "",
+  status = null,
   artist = "",
   sort = "name",
   direction = "asc",
@@ -275,6 +308,7 @@ export function libraryViewQueryOptions({
   pageSize?: number;
   query?: string;
   genre?: string;
+  status?: LibraryStatus | null;
   artist?: string;
   sort?: string;
   direction?: string;
@@ -282,7 +316,7 @@ export function libraryViewQueryOptions({
   const view =
     albumId || artistId
       ? { preview, albumId: albumId || null, artistId: albumId ? null : artistId || null }
-      : { preview, section, pageIndex, pageSize, query, genre, artist, sort, direction };
+      : { preview, section, pageIndex, pageSize, query, genre, status, artist, sort, direction };
   return queryOptions({
     queryKey: queryKeys.libraryView(view),
     enabled: !preview,

@@ -14,7 +14,7 @@ import {
 } from "../helpers/backendTestHarness.ts";
 import { listen, signedInAs } from "../helpers/honoApp.ts";
 import { requireFixture } from "../playlists/fixtures.ts";
-import { startWorkerForQueuedWork } from "../download/fixtures.ts";
+import { startWorkerForQueuedWork, usenetCandidate, usenetRelease } from "../download/fixtures.ts";
 
 const [
   isolatedState,
@@ -81,9 +81,10 @@ async function verifiedGrab(ids: string[]) {
   const jobId = requireFixture(ids[0]);
   return {
     jobId,
+    phase: "finalize",
     albumGrab: true,
     albumGroupJobIds: ids,
-    source: "slskd",
+    source: "slskd" as const,
     playlistId: "library",
     releaseMbid: (await resolveReleaseManifest(getJob(jobId)))?.releaseMbid ?? null,
     candidate: { releaseVerified: true, raw: { user: "peer", files: [] } },
@@ -608,7 +609,7 @@ test("the web activity cache notices job changes committed by another process", 
     import { createRequire } from 'node:module';
     const Database = createRequire(import.meta.url)('better-sqlite3');
     const db = new Database(process.argv[1]);
-    db.prepare("UPDATE download_jobs SET status = 'done', completed_at = ? WHERE id = ?").run(Date.now(), process.argv[2]);
+    db.prepare("UPDATE download_jobs SET status = 'done', final_path = '/library/Song.flac', completed_at = ? WHERE id = ?").run(Date.now(), process.argv[2]);
     db.close();
   `;
   const previousMode = process.env.NODE_ENV;
@@ -1188,7 +1189,22 @@ test("an album asks for its most common edition and a shorter download leaves it
   assert.equal(grab.releaseMbid, "deluxe");
   const shorter = [await writeSong(2, 1), await writeSong(3, 2)];
   await finishAlbumGrab(
-    { ...grab, source: "usenet", candidate: { raw: { release: { guid: "shorter" } } } },
+    {
+      ...grab,
+      source: "usenet" as const,
+      candidate: usenetCandidate({
+        raw: {
+          release: usenetRelease({
+            guid: "shorter",
+            title: "",
+            downloadUrl: "",
+            indexerId: 1,
+            size: 0,
+            categories: [],
+          }),
+        },
+      }),
+    },
     { filePaths: shorter, source: "usenet" },
   );
   assert.deepEqual(

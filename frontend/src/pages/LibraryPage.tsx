@@ -62,7 +62,10 @@ import {
   LIBRARY_PAGE_SIZE,
   LIBRARY_PAGE_SIZES,
   LIBRARY_SORT_OPTIONS,
+  LIBRARY_STATUS_LABELS,
+  LIBRARY_STATUS_OPTIONS,
   libraryListParams,
+  librarySectionHasStatus,
   libraryTabForSection,
   pageSizeParams,
   libraryViewQueryOptions,
@@ -164,7 +167,8 @@ function LibraryPage() {
   const [query, setQuery] = useState(urlQuery);
   const queryTimerRef = useRef<number | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState<boolean | null>(null);
+  const filterButtonRef = useRef<HTMLButtonElement>(null);
   const [refreshing, setRefreshing] = useState(false);
   const refreshAttemptRef = useRef(0);
   const [mbidArtist, setMbidArtist] = useState<LibraryArtist | null | undefined>(null);
@@ -298,6 +302,7 @@ function LibraryPage() {
     pageIndex,
     pageSize: listPageSize,
     artist: selectedArtist,
+    status: selectedStatus,
   } = libraryListParams(section, searchParams);
   const viewMode = searchParams.get("view") === "list" ? "list" : "grid";
   const normalizedQuery = query.trim() ? urlQuery.trim().toLocaleLowerCase() : "";
@@ -341,7 +346,7 @@ function LibraryPage() {
 
   useEffect(() => {
     setSearchOpen(false);
-    setFiltersOpen(false);
+    setFiltersOpen(null);
   }, [section]);
 
   const setPageIndex = (nextPage: number) =>
@@ -357,6 +362,7 @@ function LibraryPage() {
         pageSize: listPageSize,
         query: normalizedQuery,
         genre: selectedGenre,
+        status: selectedStatus,
         artist: selectedArtist,
         sort: sortMode,
         direction: sortDirection,
@@ -370,6 +376,7 @@ function LibraryPage() {
       section,
       selectedArtist,
       selectedGenre,
+      selectedStatus,
       sortDirection,
       sortMode,
     ],
@@ -1374,7 +1381,14 @@ function LibraryPage() {
       : activeCount;
   const showToolbar = section !== "home";
   const isSearchVisible = searchOpen || Boolean(query);
-  const hasActiveFilters = Boolean(selectedGenre || selectedArtist);
+  const hasActiveFilters = Boolean(selectedGenre || selectedArtist || selectedStatus);
+  const filtersVisible =
+    section !== "genres" && (filtersOpen ?? Boolean(selectedGenre || selectedStatus));
+  const appliedFilters = [
+    selectedGenre,
+    selectedStatus && LIBRARY_STATUS_LABELS[selectedStatus],
+    filterArtistName,
+  ].filter(Boolean);
 
   return (
     <div className="library-page native-library-page">
@@ -1501,11 +1515,17 @@ function LibraryPage() {
               )}
               {section !== "genres" && (
                 <TooltipButton
+                  ref={filterButtonRef}
                   className={`native-library-icon-button${hasActiveFilters ? " is-active" : ""}`}
-                  onClick={() => setFiltersOpen((value) => !value)}
+                  onClick={() => setFiltersOpen(!filtersVisible)}
                   label="Filters"
-                  aria-label="Filter library"
-                  aria-pressed={filtersOpen}
+                  aria-label={
+                    appliedFilters.length
+                      ? `Filter library, ${appliedFilters.join(", ")} applied`
+                      : "Filter library"
+                  }
+                  aria-expanded={filtersVisible}
+                  aria-controls="library-filters"
                 >
                   <ListFilter aria-hidden="true" />
                 </TooltipButton>
@@ -1535,26 +1555,37 @@ function LibraryPage() {
                 </div>
               )}
             </div>
-            {filtersOpen && section !== "genres" && (
-              <div className="native-library-filter-panel">
-                <label>
-                  <span>Genre</span>
+            {filtersVisible && (
+              <div id="library-filters" className="native-library-filter-panel">
+                <Select
+                  className="native-library-filter-genre"
+                  value={selectedGenre}
+                  onChange={updateGenreFilter}
+                  aria-label="Filter by genre"
+                  options={[
+                    { value: "", label: "All genres" },
+                    ...genreStats.map((genre) => ({ value: genre.name, label: genre.name })),
+                  ]}
+                />
+                {librarySectionHasStatus(section) && (
                   <Select
-                    className=""
-                    value={selectedGenre}
-                    onChange={updateGenreFilter}
-                    aria-label="Filter by genre"
-                    options={[
-                      { value: "", label: "All genres" },
-                      ...genreStats.map((genre) => ({ value: genre.name, label: genre.name })),
-                    ]}
+                    className="native-library-filter-status"
+                    value={selectedStatus ?? ""}
+                    onChange={(status) => updateViewParams({ status, page: null })}
+                    aria-label={tab === "artists" ? "Filter artists by status" : "Filter by status"}
+                    options={LIBRARY_STATUS_OPTIONS}
                   />
-                </label>
+                )}
                 {hasActiveFilters && (
                   <button
                     type="button"
                     className="native-library-filter-reset"
-                    onClick={() => updateViewParams({ genre: null, artist: null, page: null })}
+                    aria-label="Clear library filters"
+                    onClick={() => {
+                      updateViewParams({ genre: null, artist: null, status: null, page: null });
+                      setFiltersOpen(true);
+                      filterButtonRef.current?.focus();
+                    }}
                   >
                     <X aria-hidden="true" />
                     Clear
