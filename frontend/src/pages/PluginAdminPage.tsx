@@ -212,7 +212,10 @@ function FormSection({
     Object.fromEntries(section.fields.map((field) => [field.key, field.valueLabel ?? ""])),
   );
   const dirty = JSON.stringify(values) !== JSON.stringify(base);
-  useEffect(() => onDirty(dirty), [dirty, onDirty]);
+  useEffect(() => {
+    onDirty(dirty);
+    return () => onDirty(false);
+  }, [dirty, onDirty]);
   const formId = useId();
   const set = (key: string, value: FieldValue) =>
     setValues((current) => ({ ...current, [key]: value }));
@@ -795,7 +798,12 @@ export default function PluginAdminPage({
                 {view.sections.map((section) => {
                   if (section.type === "form")
                     return (
-                      <Group key={`${section.id}:${data.revision}`} title={section.title}>
+                      // Entries share section ids such as "details", so the key names
+                      // what the form edits; otherwise one entry's edits carry into the next.
+                      <Group
+                        key={`${section.id}:${data.revision}:${section.command}:${JSON.stringify(section.arguments)}`}
+                        title={section.title}
+                      >
                         <FormSection
                           section={section}
                           disabled={busy || fetching}
