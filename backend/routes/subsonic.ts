@@ -5,7 +5,7 @@ import * as v from "valibot";
 
 import { APP_NAME, APP_VERSION } from "../config/constants.ts";
 import { getSettingsEncryptionKey } from "../db/helpers/settings.ts";
-import { hasPermission, resolveSubsonicTokenUser, resolveUser } from "../middleware/auth.ts";
+import { hasPermission, resolveSubsonicTokenUser, resolveUser } from "../services/auth.ts";
 import { getPlayQueue, getPlayQueueByIndex, savePlayQueue } from "../services/playQueueService.ts";
 import { streamSubsonicAudio } from "../services/subsonicTranscodeService.ts";
 import type { AppEnv } from "../middleware/requestUser.ts";
@@ -13,6 +13,7 @@ import { getLyricsBySongId } from "../services/lyricsService.ts";
 import { sendAudioFile } from "../services/audioFileStream.ts";
 import { sendFile } from "../services/fileResponses.ts";
 import { sendViaNode } from "./shared/sendViaNode.ts";
+import { sendImageFile } from "./shared/sendImageFile.ts";
 import {
   findUniqueLibrarySong,
   getAlbum,
@@ -52,7 +53,7 @@ import {
   getLibraryScanStatus,
   getScheduledLibraryScanJobId,
 } from "../services/libraryScanWorker.ts";
-import { recordPlayEvent } from "../services/playEventService.ts";
+import { recordPlayEvent, sendNowPlaying } from "../services/playEventService.ts";
 import { logger } from "../services/logger.ts";
 import { asAppError } from "../../lib/errors.ts";
 
@@ -219,7 +220,6 @@ const failedResponse = (format: SubsonicFormat, ...[code, message, helpUrl]: Sub
   renderResponse(format, "failed", { code, message, helpUrl });
 
 const PLAYLIST_EDIT_ERROR_CODES: Partial<Record<string, number>> = {
-  STATIC_PLAYLIST_NAME_CONFLICT: 50,
   SUBSONIC_PLAYLIST_READ_ONLY: 50,
   SUBSONIC_PLAYLIST_ENTRY_NOT_FOUND: 70,
 };
@@ -482,22 +482,27 @@ async function handleSubsonicRequest(c: Context<AppEnv>, requestedMethod: string
     const submission = !["false", "0", "no"].includes(
       getParameter(params, "submission").toLowerCase(),
     );
-    if (submission) {
-      ids.forEach((id, index) => {
-        const song = getSong(id, user);
-        if (!song) return;
+    ids.forEach((id, index) => {
+      const song = getSong(id, user);
+      if (!song) return;
+      const track = {
+        trackId: song.id,
+        title: song.title,
+        artist: song.artist,
+        album: song.album,
+        albumId: song.albumId,
+        durationMs: Number(song.duration || 0) * 1000,
+      };
+      if (submission) {
         recordPlayEvent(user.id, {
-          trackId: song.id,
-          title: song.title,
-          artist: song.artist,
-          album: song.album,
-          albumId: song.albumId,
-          durationMs: Number(song.duration || 0) * 1000,
+          ...track,
           playedAt: times[index] || undefined,
           source: "subsonic",
         });
-      });
-    }
+      } else {
+        void sendNowPlaying(user.id, track);
+      }
+    });
     return ok();
   }
   if (method === "getlicense") {
@@ -847,10 +852,11 @@ async function handleSubsonicRequest(c: Context<AppEnv>, requestedMethod: string
     return sent || notFound(c, "Track file missing");
   }
   if (method === "getcoverart") {
+    const size = Number(getParameter(params, "size"));
     const customArtwork = resolveCustomArtwork(getParameter(params, "id"), user);
     if (customArtwork) {
       c.header("Cache-Control", "private, max-age=31536000, immutable");
-      const sent = await sendViaNode(c, sendFile, customArtwork.filePath, {
+      const sent = await sendImageFile(c, customArtwork.filePath, size, {
         contentType: customArtwork.contentType,
         dotfiles: "deny",
       });
@@ -864,13 +870,13 @@ async function handleSubsonicRequest(c: Context<AppEnv>, requestedMethod: string
           ? "private, max-age=31536000, immutable"
           : "private, max-age=86400",
       );
-      const sent = await sendViaNode(c, sendFile, playlistArtwork.safePath);
+      const sent = await sendImageFile(c, playlistArtwork.safePath, size);
       return sent || notFound(c, "Cover art not found");
     }
     const libraryArtwork = await resolveLibraryArtwork(getParameter(params, "id"));
     if (libraryArtwork) {
       c.header("Cache-Control", "private, max-age=86400");
-      const sent = await sendViaNode(c, sendFile, libraryArtwork.filePath, {
+      const sent = await sendImageFile(c, libraryArtwork.filePath, size, {
         contentType: libraryArtwork.contentType,
         dotfiles: "deny",
       });

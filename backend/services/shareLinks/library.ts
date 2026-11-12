@@ -59,8 +59,7 @@ const compareText = (left: string | null | undefined, right: string | null | und
 function playlistFilePaths(playlist: StaticPlaylist) {
   const paths: (string | null)[] = playlist.tracks.map(() => null);
   for (const { job, trackIndex } of playlistJobEntries(playlist)) {
-    if (trackIndex >= 0 && job.status === "done" && job.finalPath)
-      paths[trackIndex] = job.finalPath;
+    if (trackIndex >= 0 && job.status === "done") paths[trackIndex] = job.finalPath;
   }
   return paths;
 }
@@ -108,7 +107,7 @@ function shareTracks(library: ReturnType<typeof loadLibrary>, preferredPaths = n
         );
         const file =
           files.find((entry) => entry.albumId === album.id && preferredPaths.has(entry.path)) ??
-          selectCanonicalFile(files, album.id, album.managedBy);
+          selectCanonicalFile(files, album.id, album.managed);
         if (!track || !file) return null;
         return {
           albumId: album.id,

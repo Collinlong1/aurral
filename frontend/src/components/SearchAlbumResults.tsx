@@ -1,16 +1,14 @@
-import ArtworkImage from "./ArtworkImage";
-import { useState } from "react";
+import { ReleaseCoverImage } from "./ReleaseCoverImage";
 import { Music } from "./icons";
 import SearchLibraryCheck from "./SearchLibraryCheck";
-import AddActionButton, { type LibraryDestination } from "./AddActionButton";
+import AddActionButton from "./AddActionButton";
 import ReleaseWaitBadge from "./ReleaseWaitBadge";
-import { isAwaitingRelease } from "../utils/aurralAlbumStatus.ts";
+import { isAwaitingRelease } from "../utils/albumStatus.ts";
 import { useActiveDownloads } from "../hooks/useActiveDownloads";
 import { getAlbumAddAction, isAlbumCompleteInLibrary } from "../utils/albumAddAction";
 import { getReleaseNavigationTarget } from "../utils/searchNavigation";
 import { OptionalLink } from "./RouteLink";
 import Tooltip from "./Tooltip";
-import type { SearchImageMap } from "./SearchMixedResultList";
 import { artworkHoverTint } from "../utils/imageColors.ts";
 
 export type SearchAlbum = {
@@ -23,19 +21,15 @@ export type SearchAlbum = {
   releaseDate?: string | null;
   primaryType?: string | null;
   secondaryTypes?: string[] | null;
-  ownerConflict?: { message: string } | null;
-  managedBy?: string | null;
   monitored?: boolean;
   trackFileCount?: number;
 };
 
 type SearchAlbumResultsProps = {
   albums: SearchAlbum[];
-  albumCovers: SearchImageMap;
   canAddAlbum: boolean;
   pendingAlbumIds: Record<string, boolean | undefined>;
-  onAlbumAction: (album: SearchAlbum, managedBy: string) => void;
-  libraryDestination: LibraryDestination;
+  onAlbumAction: (album: SearchAlbum) => void;
   viewMode?: "grid" | "list";
 };
 
@@ -63,40 +57,16 @@ function getReleaseTypeLabel(album: SearchAlbum) {
   return types.length ? types.join(" · ") : null;
 }
 
-function AlbumCover({ src, alt }: { src?: string | null; alt: string }) {
-  const [failed, setFailed] = useState(false);
-
-  if (!src || failed) {
-    return (
-      <div className="artist-release-card__placeholder">
-        <Music className="artist-icon-lg" aria-hidden="true" />
-      </div>
-    );
-  }
-
-  return (
-    <ArtworkImage
-      src={src}
-      alt={alt}
-      loading="lazy"
-      decoding="async"
-      onError={() => setFailed(true)}
-    />
-  );
-}
-
 function AlbumAction({
   album,
   isPending,
   canAddAlbum,
   onAlbumAction,
-  libraryDestination,
 }: {
   album: SearchAlbum;
   isPending: boolean;
   canAddAlbum: boolean;
   onAlbumAction: SearchAlbumResultsProps["onAlbumAction"];
-  libraryDestination: LibraryDestination;
 }) {
   const { isAlbumDownloading } = useActiveDownloads();
   const downloading = isPending || isAlbumDownloading(album.id);
@@ -120,9 +90,8 @@ function AlbumAction({
 
   return (
     <AddActionButton
-      {...getAlbumAddAction(album, libraryDestination)}
-      ownerConflict={album.ownerConflict}
-      onAdd={(managedBy) => onAlbumAction(album, managedBy)}
+      {...getAlbumAddAction(album)}
+      onAdd={() => onAlbumAction(album)}
       isLoading={downloading}
       loadingLabel="Downloading"
       disabled={actionDisabled}
@@ -132,11 +101,9 @@ function AlbumAction({
 
 function SearchAlbumResults({
   albums,
-  albumCovers,
   canAddAlbum,
   pendingAlbumIds,
   onAlbumAction,
-  libraryDestination,
   viewMode = "grid",
 }: SearchAlbumResultsProps) {
   const albumLink = (album: SearchAlbum) => {
@@ -158,7 +125,6 @@ function SearchAlbumResults({
 
   const renderAlbum = (album: SearchAlbum) => {
     const isPending = !!pendingAlbumIds[album.id];
-    const coverSrc = albumCovers[album.id] || album.coverUrl;
     const releaseYear = getReleaseYear(album.releaseDate);
     const releaseTypeLabel = getReleaseTypeLabel(album);
     const releaseMeta = [releaseYear, releaseTypeLabel].filter(Boolean).join(" · ");
@@ -174,13 +140,15 @@ function SearchAlbumResults({
             aria-label={`Open ${album.title}`}
           >
             <div className="artist-media-cell artist-list-cover">
-              {coverSrc ? (
-                <ArtworkImage src={coverSrc} alt="" loading="lazy" decoding="async" />
-              ) : (
-                <div className="artist-media-placeholder">
-                  <Music className="artist-icon-md" aria-hidden="true" />
-                </div>
-              )}
+              <ReleaseCoverImage
+                src={album.coverUrl}
+                alt=""
+                placeholder={
+                  <div className="artist-media-placeholder">
+                    <Music className="artist-icon-md" aria-hidden="true" />
+                  </div>
+                }
+              />
             </div>
           </OptionalLink>
           <div className="artist-min-0">
@@ -205,7 +173,6 @@ function SearchAlbumResults({
               isPending={isPending}
               canAddAlbum={canAddAlbum}
               onAlbumAction={onAlbumAction}
-              libraryDestination={libraryDestination}
             />
           </div>
         </article>
@@ -224,13 +191,15 @@ function SearchAlbumResults({
             className="artist-release-card__cover search-album-results__cover-link"
             aria-label={`Open ${album.title}`}
           >
-            {coverSrc ? (
-              <AlbumCover src={coverSrc} alt="" />
-            ) : (
-              <div className="artist-release-card__placeholder">
-                <Music className="artist-icon-lg" aria-hidden="true" />
-              </div>
-            )}
+            <ReleaseCoverImage
+              src={album.coverUrl}
+              alt=""
+              placeholder={
+                <div className="artist-release-card__placeholder">
+                  <Music className="artist-icon-lg" aria-hidden="true" />
+                </div>
+              }
+            />
           </OptionalLink>
           <div className="artist-release-card__action">
             <AlbumAction
@@ -238,7 +207,6 @@ function SearchAlbumResults({
               isPending={isPending}
               canAddAlbum={canAddAlbum}
               onAlbumAction={onAlbumAction}
-              libraryDestination={libraryDestination}
             />
           </div>
         </div>

@@ -8,43 +8,32 @@ import {
   resetDatabase,
 } from "../helpers/backendTestHarness.ts";
 
-const [isolatedState, { db }, historyModule] = await setupIsolatedBackend(
-  "aurral-history",
-  () => import("../../backend/config/db-sqlite.ts"),
-  () => import("../../backend/services/aurralHistoryService.ts"),
-);
+const [isolatedState, { db }, historyModule, { getAurralHistoryRequests, toHistoryRequestItem }] =
+  await setupIsolatedBackend(
+    "aurral-history",
+    () => import("../../backend/config/db-sqlite.ts"),
+    () => import("../../backend/services/aurralHistoryService.ts"),
+    () => import("../../backend/services/aurralHistoryRequests.ts"),
+  );
 
 const {
   upsertAurralHistory,
-  getAurralHistoryRequests,
   recordTrackJobBlocked,
   recordTrackJobDownloading,
   recordTrackJobSearching,
   recordTrackJobCompleted,
   recordTrackJobQueued,
-  toHistoryRequestItem,
 } = historyModule;
 const { downloadTracker } = await import("../../backend/services/downloadJobs/downloadTracker.ts");
 const { upsertLibraryArtist, upsertLibraryAlbum, upsertLibraryTrack, linkLibraryAlbumTrack } =
   await import("../../backend/services/libraryMediaStore.ts");
 const { insertJob } = await import("../helpers/jobs.ts");
 const { dbOps } = await import("../../backend/db/helpers/index.ts");
-const { lidarrClient } = await import("../../backend/services/lidarrClient.ts");
 
 beforeEach(() => {
   resetDatabase(db);
   db.prepare("DELETE FROM aurral_history").run();
   downloadTracker.clearAll();
-});
-
-test("activity reads stay local when Lidarr is disabled", async () => {
-  vi.spyOn(lidarrClient, "isConfigured").mockImplementation(() => false);
-  const request = vi.spyOn(lidarrClient, "request").mockImplementation(async () => {
-    throw new Error("disabled activity reads must not call Lidarr");
-  });
-
-  assert.deepEqual(await getAurralHistoryRequests(lidarrClient), []);
-  assert.equal(request.mock.calls.length, 0);
 });
 
 afterAll(async () => {
@@ -283,6 +272,34 @@ test("queued library track jobs appear in activity immediately", async () => {
   assert.equal(entry?.source, "unknown");
 });
 
+test("an album request's queued tracks show as that album before its release attempt starts", async () => {
+  const albumMbid = "b2222222-2222-4222-8222-222222222202";
+  const queue = (trackName: string, trackNumber: number, extra = {}) =>
+    downloadTracker.addJob(
+      {
+        artistName: "Artist",
+        trackName,
+        albumName: "Album",
+        albumMbid,
+        trackNumber,
+        requestGroupId: "album-request",
+        ...extra,
+      },
+      "library",
+    );
+  const second = queue("Two", 2);
+  const first = queue("One", 1);
+  const alone = queue("Elsewhere", 1, { requestGroupId: "track-request" });
+
+  const entries = await getAurralHistoryRequests();
+  const grab = entries.find((item) => item.jobId === first)?.albumGrab;
+  assert.equal(grab?.phase, "queued");
+  assert.deepEqual(grab?.memberJobIds.toSorted(), [first, second].toSorted());
+  assert.equal(entries.find((item) => item.jobId === second)?.albumGrab?.id, grab?.id);
+  assert.equal(entries.find((item) => item.jobId === second)?.trackNumber, 2);
+  assert.equal(entries.find((item) => item.jobId === alone)?.albumGrab, undefined);
+});
+
 test("queued album track jobs open their album, and other library jobs have no link", async () => {
   const albumMbid = "b2222222-2222-4222-8222-222222222201";
   const artist = upsertLibraryArtist({
@@ -335,7 +352,7 @@ test("queued album track jobs open their album, and other library jobs have no l
   );
 
   const { finalizeQualityUpgradeFailure } =
-    await import("../../backend/services/qualityProfileService.ts");
+    await import("../../backend/services/qualityUpgradeOutcome.ts");
   await finalizeQualityUpgradeFailure(
     {
       ...requireFixture(downloadTracker.getJob(withAlbum)),
@@ -368,7 +385,7 @@ test("a quality upgrade stays marked as one from queued to its result", async ()
   assert.equal(await upgradeOf(otherId), null);
 
   const { finalizeQualityUpgradeFailure } =
-    await import("../../backend/services/qualityProfileService.ts");
+    await import("../../backend/services/qualityUpgradeOutcome.ts");
   await finalizeQualityUpgradeFailure(upgradeJob, "No better file");
   assert.deepEqual(await upgradeOf(upgradeId), { fromQuality: "MP3 320" });
 });
@@ -616,7 +633,6 @@ test("cancelled album track downloads show as cancelled, never as failed", async
       artistName: "Artist",
       trackName: "Cancelled Song",
       albumName: "Album",
-      managedBy: "aurral",
       requestGroupId: "cancelled-history-group",
     },
     "library",
@@ -652,121 +668,6 @@ test("cancelled album track downloads show as cancelled, never as failed", async
   assert.equal(entry?.statusLabel, "Cancelled");
   assert.equal(entry?.inQueue, false);
   assert.equal(downloadTracker.getJob(jobId)?.status, "cancelled");
-});
-
-const lidarrWithAlbum = (getAlbum: typeof lidarrClient.getAlbum) => {
-  vi.spyOn(lidarrClient, "isConfigured").mockReturnValue(true);
-  vi.spyOn(lidarrClient, "getQueue").mockResolvedValue([]);
-  vi.spyOn(lidarrClient, "getHistory").mockResolvedValue([]);
-  vi.spyOn(lidarrClient, "request").mockResolvedValue([]);
-  vi.spyOn(lidarrClient, "getAlbum").mockImplementation(getAlbum);
-  return lidarrClient;
-};
-
-test("a request for an album since deleted from Lidarr leaves the activity feed", async (t: import("vite-plus/test").TestContext) => {
-  t.onTestFinished(() => {
-    db.prepare("DELETE FROM aurral_history").run();
-  });
-  historyModule.recordAlbumRequested({
-    albumId: "5151",
-    albumName: "Deleted Album",
-    artistName: "Artist",
-    searching: true,
-  });
-
-  // lidarrClient.getAlbum resolves null when Lidarr answers 404.
-  const entries = await getAurralHistoryRequests(lidarrWithAlbum(async () => null));
-
-  assert.equal(
-    entries.find((item) => item.albumName === "Deleted Album"),
-    undefined,
-  );
-});
-
-test("a request survives Lidarr being unreachable", async (t: import("vite-plus/test").TestContext) => {
-  t.onTestFinished(() => {
-    db.prepare("DELETE FROM aurral_history").run();
-  });
-  historyModule.recordAlbumRequested({
-    albumId: "5252",
-    albumName: "Kept Album",
-    artistName: "Artist",
-    searching: true,
-  });
-
-  const entries = await getAurralHistoryRequests(
-    lidarrWithAlbum(async () => {
-      throw new Error("connect ECONNREFUSED");
-    }),
-  );
-
-  assert.notEqual(
-    entries.find((item) => item.albumName === "Kept Album"),
-    undefined,
-  );
-});
-
-test("a request without its Lidarr album ID finds it among its artist's albums, never the whole library", async (t: import("vite-plus/test").TestContext) => {
-  t.onTestFinished(() => {
-    db.prepare("DELETE FROM aurral_history").run();
-  });
-  const lookups: string[] = [];
-  const lidarrStub = lidarrWithAlbum(async (id) => {
-    lookups.push(String(id));
-    return { id: Number(id), foreignAlbumId: "found", statistics: { trackFileCount: 0 } };
-  });
-  vi.spyOn(lidarrStub, "getArtistByMbid").mockImplementation(async (mbid) =>
-    mbid === "artist-mbid" ? { id: 9, artistName: "Artist", foreignArtistId: mbid } : null,
-  );
-  const albumLists: unknown[] = [];
-  vi.spyOn(lidarrStub, "getAllAlbums").mockImplementation(async (options) => {
-    albumLists.push(options.artistIds);
-    return [
-      { id: 6161, foreignAlbumId: "other", title: "Other Album" },
-      { id: 6262, foreignAlbumId: "found", title: "Found Album" },
-    ];
-  });
-  historyModule.recordAlbumRequested({
-    albumName: "Found Album",
-    artistName: "Artist",
-    artistMbid: "artist-mbid",
-    searching: true,
-  });
-
-  await getAurralHistoryRequests(lidarrStub);
-
-  assert.deepEqual(albumLists, [[9]]);
-  assert.deepEqual(lookups, ["6262"]);
-});
-
-test("Aurral album requests are not checked against Lidarr by library album ID", async () => {
-  const lidarrAlbumLookups: string[] = [];
-  const lidarrStub = lidarrWithAlbum(async (id) => {
-    lidarrAlbumLookups.push(String(id));
-    return { id: Number(id), foreignAlbumId: String(id), statistics: { trackFileCount: 0 } };
-  });
-  historyModule.recordAlbumRequested({
-    albumId: "4242",
-    albumName: "Aurral Owned Album",
-    artistName: "Artist",
-    managedBy: "aurral",
-    searching: true,
-  });
-  historyModule.recordAlbumRequested({
-    albumId: "4343",
-    albumName: "Lidarr Album",
-    artistName: "Artist",
-    searching: true,
-  });
-
-  const entries = await getAurralHistoryRequests(lidarrStub);
-
-  assert.deepEqual(lidarrAlbumLookups, ["4343"]);
-  const aurralEntry = entries.find((item) => item.albumName === "Aurral Owned Album");
-  assert.notEqual(aurralEntry?.status, "failed");
-  assert.doesNotMatch(aurralEntry?.title || "", /Lidarr/);
-  assert.equal(aurralEntry?.source, "aurral");
-  assert.equal(entries.find((item) => item.albumName === "Lidarr Album")?.source, "lidarr");
 });
 
 test("a history entry kind named like an Object method falls back to the Aurral source", () => {

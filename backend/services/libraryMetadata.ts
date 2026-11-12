@@ -14,15 +14,10 @@ const libraryImageSchema = v.looseObject({
   CoverType: nullableText,
 });
 
-export type LibraryArtistImage = v.InferOutput<typeof libraryImageSchema>;
-
 const libraryMetadataSchema = v.looseObject({
   id: lenient(v.nullable(v.union([v.string(), v.number()]))),
   artistId: lenient(v.nullable(v.union([v.string(), v.number()]))),
   monitored: lenient(v.nullable(v.boolean())),
-  monitor: nullableText,
-  monitorOption: nullableText,
-  addOptions: lenient(v.nullable(v.looseObject({ monitor: nullableText }))),
   foreignArtistId: nullableText,
   foreignAlbumId: nullableText,
   foreignRecordingId: nullableText,

@@ -1,3 +1,4 @@
+import "../offline-guard.ts";
 import { mkdir, mkdtemp, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { dirname, join } from "path";
@@ -43,7 +44,6 @@ const RESET_TABLES = [
   "metadata_response_cache",
   "metadata_request_state",
   "artist_overrides",
-  "lidarr_artist_id_map",
   "library_file_operation_items",
   "library_file_operations",
   "library_media_files",

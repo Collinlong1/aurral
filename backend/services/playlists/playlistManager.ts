@@ -22,7 +22,7 @@ import {
 import { AURRAL_FLOWS_DIR, PLAYLIST_FILES_DIR, resolveDownloadRoot } from "../downloadPaths.ts";
 import { scheduleLibraryScan } from "../libraryScanWorker.ts";
 import { withLock } from "../jobs/queue.ts";
-import { enqueueSystemTask } from "../jobs/queues.ts";
+import { enqueueSystemTask } from "../jobs/systemTasks.ts";
 import { getDownloadClient } from "../download/downloadClientSettings.ts";
 import { collectPlaylistFileTracks } from "./playlistFileTracks.ts";
 import {
@@ -175,7 +175,7 @@ export class PlaylistManager {
   }
 
   scheduleScanLibrary(force = false) {
-    return scheduleLibraryScan({ force, includeLidarr: false });
+    return scheduleLibraryScan({ force, includeReadOnly: false });
   }
 
   _rememberArtwork(playlistId: string, state: PlaylistArtworkState) {

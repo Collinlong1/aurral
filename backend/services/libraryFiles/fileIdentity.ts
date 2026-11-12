@@ -9,11 +9,7 @@ import {
   buildMetadataRecord,
   scanMusicRoot,
 } from "../libraryFileScanner.ts";
-import {
-  activeLidarrRoots,
-  createLibraryScanExclusion,
-  readOnlyFolderPaths,
-} from "../libraryFolders.ts";
+import { createLibraryScanExclusion, readOnlyFolderPaths } from "../libraryFolders.ts";
 import {
   findLibraryAlbumByArtistTitle,
   findLibraryAlbumByReleaseMbid,
@@ -27,10 +23,7 @@ import {
 function jobMetadata(filePath: string) {
   const job = downloadTracker
     .getAll()
-    .find(
-      (entry) =>
-        entry.status === "done" && entry.finalPath && path.resolve(entry.finalPath) === filePath,
-    );
+    .find((entry) => entry.status === "done" && path.resolve(entry.finalPath) === filePath);
   return job
     ? {
         artistName: job.artistName,
@@ -89,7 +82,6 @@ export async function adoptLibraryFileIdentity(
     metadataEnricher: () => enrichment,
     isExcluded: createLibraryScanExclusion("aurral", {
       downloadRoot: root,
-      lidarrRoots: activeLidarrRoots(null),
       readOnlyRoots: readOnlyFolderPaths(),
     }),
   });

@@ -1,3 +1,5 @@
+import { isRecord } from "../../lib/isRecord.ts";
+import type { PipelinePayload } from "./downloadPipeline.ts";
 import path from "node:path";
 import { isNzbSource } from "./usenetClientCommon.ts";
 import {
@@ -106,9 +108,6 @@ export function deniedAlbumSources(jobs: JobFields<"deniedRemoteSources">[], sou
 
 // Blocks the attempted release for every track it did not fill, so neither
 // the next album attempt nor a per-track search takes it again.
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null;
-
 export function blockAlbumGrabSource(payload: AlbumGrabPayload, jobs: DownloadJob[]) {
   const candidate = getPayloadCandidate(payload);
   const raw = isRecord(candidate?.raw) ? candidate.raw : null;
@@ -155,7 +154,10 @@ function regroupAlbumGrab<Payload extends AlbumGrabPayload>(
 
 // Tries the next ranked folder or release for the tracks an attempt left
 // unfilled.
-export function continueAlbumGrab(payload: AlbumGrabPayload, resetFields = {}) {
+export function continueAlbumGrab<Payload extends AlbumGrabPayload>(
+  payload: Payload,
+  resetFields = {},
+) {
   const remaining = albumGrabJobs(payload);
   if (remaining.length === 0 || !hasNextCandidate(payload)) return null;
   return buildNextCandidatePayload(regroupAlbumGrab(payload, remaining), resetFields);
@@ -163,10 +165,7 @@ export function continueAlbumGrab(payload: AlbumGrabPayload, resetFields = {}) {
 
 // After the last release of a source, the next album source in configured
 // order searches for the tracks still unfilled before any track search.
-export async function nextAlbumSource<Payload extends AlbumGrabPayload>(
-  payload: Payload,
-  reason = NO_RELEASE_FILLED_REASON,
-) {
+export async function nextAlbumSource(payload: PipelinePayload, reason = NO_RELEASE_FILLED_REASON) {
   const remaining = albumGrabJobs(payload);
   if (remaining.length === 0) return null;
   const { buildNextSourcePayload } = await import("./downloadPipeline.ts");
@@ -174,8 +173,6 @@ export async function nextAlbumSource<Payload extends AlbumGrabPayload>(
   return next ? regroupAlbumGrab(next, remaining) : null;
 }
 
-// The worker stops when it runs out of work while an album holds its
-// tracks, so the tracks an album gives back need it started again.
 function giveBack(
   payload: AlbumGrabPayload,
   jobs: DownloadJob[],
@@ -191,9 +188,6 @@ function giveBack(
   }
   if (!released) return;
   recordAlbumGrabPhase(payload, reason || "Album attempt ended; searching for missing tracks");
-  void import("./downloadJobs/mutationGuards.ts")
-    .then(({ wakeDownloadWorker }) => wakeDownloadWorker())
-    .catch(() => {});
 }
 
 // The attempt tried its release for these tracks, so each searches for
@@ -258,18 +252,22 @@ export function fallbackAlbumGrabToTracks<Payload extends AlbumGrabPayload>(
   };
 }
 
-export async function finishAlbumGrab(
-  payload: AlbumGrabPayload,
+export async function finishAlbumGrab<Payload extends PipelinePayload>(
+  payload: Payload,
   {
     filePaths,
+    inPlace = false,
     source,
     album = null,
     resetFields = {},
+    onImported,
   }: {
     filePaths?: string[];
+    inPlace?: boolean;
     source: string;
     album?: string | null;
     resetFields?: Record<string, unknown>;
+    onImported?: () => void;
   },
 ) {
   const jobs = albumGrabJobs(payload);
@@ -285,7 +283,7 @@ export async function finishAlbumGrab(
     filePaths,
     source,
     manifest,
-    verified: getPayloadCandidate(payload)?.releaseVerified === true,
+    verified: getPayloadCandidate<AlbumGrabCandidate>(payload)?.releaseVerified === true,
   });
   if (assigned.rejected.length > 0) {
     logger.info(source, "Album files failed verification", {
@@ -320,20 +318,25 @@ export async function finishAlbumGrab(
         : job;
       const finalPath = path.join(destination, buildTrackFileName(placed, ext));
       const committed = await withPipelineCommitLock(peerPayload, async () => {
-        const committedFinalPath = await commitDownloadedFile(match.filePath, finalPath);
-        await writeImportedFileMetadata(committedFinalPath, buildResolvedJobTrack(placed), {
-          source,
-          jobId: job.id,
-        });
+        const committedFinalPath = inPlace
+          ? match.filePath
+          : await commitDownloadedFile(match.filePath, finalPath);
+        if (!inPlace)
+          await writeImportedFileMetadata(committedFinalPath, buildResolvedJobTrack(placed), {
+            source,
+            jobId: job.id,
+          });
         return finalizePipelineJobSuccess({
           downloadTracker,
           job,
           committedFinalPath,
+          inPlace,
           album,
           quality: match.validation.quality,
         });
       });
       if (committed.cancelled) continue;
+      onImported?.();
       if (job.status === "done")
         recordAlbumTrackState(job, source === "soulseek" ? "slskd" : source);
     } catch (error) {

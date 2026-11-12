@@ -1,26 +1,15 @@
 import { Hono, type Context } from "hono";
 import { createFactory } from "hono/factory";
 import * as v from "valibot";
-import { isAuthRequiredByConfig } from "../../../middleware/auth.ts";
+import { isAuthRequiredByConfig } from "../../../services/auth.ts";
 import { noCache } from "../../../middleware/cacheHeaders.ts";
 import { requireAuth, requireUserAccount } from "../../../middleware/guards.ts";
 import type { AppEnv } from "../../../middleware/requestUser.ts";
 import { validate } from "../../../middleware/validate.ts";
 import { sendFile } from "../../../services/fileResponses.ts";
-import {
-  buildLibraryArtworkUrl,
-  getLibraryArtwork,
-  getLibraryArtworkVersions,
-  type LibraryArtworkKind,
-} from "../../../services/libraryArtwork.ts";
+import { getLibraryArtwork, type LibraryArtworkKind } from "../../../services/libraryArtwork.ts";
 import { sendViaNode } from "../../shared/sendViaNode.ts";
 import {
-  buildCustomArtworkUrl,
-  getCustomArtworkMap,
-} from "../../../services/customArtworkService.ts";
-import {
-  type getLibrary,
-  type LibraryArtist,
   getLibraryFavoriteTargetKeys,
   getLibraryPage,
   LIBRARY_VIEW,
@@ -35,152 +24,19 @@ import {
 import {
   getLibraryScanStatus,
   getScheduledLibraryScanJobId,
+  scheduleLibraryItemScan,
   scheduleLibraryScan,
 } from "../../../services/libraryScanWorker.ts";
 import { asAppError } from "../../../../lib/errors.ts";
-
-const isFilesystemPathKey = (key: string) => key.toLowerCase().endsWith("path");
-
-type FilesystemPathless<T> = T extends readonly (infer U)[]
-  ? FilesystemPathless<U>[]
-  : T extends object
-    ? {
-        [
-          K in keyof T as K extends string ? (Lowercase<K> extends `${string}path` ? never : K) : K
-        ]: FilesystemPathless<T[K]>;
-      }
-    : T;
-
-export function stripFilesystemPaths<T>(value: T): FilesystemPathless<T>;
-export function stripFilesystemPaths(value: unknown): unknown {
-  if (Array.isArray(value))
-    return value.map((item: unknown): unknown => stripFilesystemPaths(item));
-  if (!value || typeof value !== "object") return value;
-  return Object.fromEntries(
-    Object.entries(value)
-      .filter(([key]) => !isFilesystemPathKey(key))
-      .map(([key, entry]) => [key, stripFilesystemPaths(entry)]),
-  );
-}
+import { LIBRARY_STATUSES } from "../../../../lib/libraryStatus.ts";
+import { getLibraryArtistPlays } from "../../../services/artistListening.ts";
+import { toPublicLibrary, toPublicLibraryPage } from "../../../services/publicLibrary.ts";
 
 export function resolveAvailableOnly(queryValue: unknown) {
   if (queryValue === "true") return true;
   if (queryValue === "false") return false;
   return LIBRARY_VIEW;
 }
-
-const publicEntity = <T extends { identityKey: string }>(
-  kind: string,
-  entity: T,
-  favoriteKeys: Set<string> | null,
-): T & { userFavorite?: boolean } =>
-  favoriteKeys
-    ? { ...entity, userFavorite: favoriteKeys.has(`${kind}:${entity.identityKey}`) }
-    : { ...entity };
-
-const summaryMetadata = <M extends Record<string, unknown>>(metadata: M | null) => {
-  if (!metadata) return null;
-  const { trackList, tags, ...rest } = metadata;
-  if (!tags || typeof tags !== "object") return rest;
-  return {
-    ...rest,
-    tags: {
-      ...("genre" in tags && { genre: tags.genre }),
-      ...("releasetype" in tags && { releasetype: tags.releasetype }),
-    },
-  };
-};
-
-const publicAlbum = (
-  album: LibraryCollections["albums"][number],
-  favoriteKeys: Set<string> | null,
-  customArtwork: number | undefined,
-  artworkVersion: string | undefined,
-) => {
-  const defaultCoverUrl = buildLibraryArtworkUrl("album", album.id, artworkVersion);
-  const customArtworkUrl = customArtwork
-    ? buildCustomArtworkUrl("album", album.id, customArtwork)
-    : null;
-  return {
-    ...album,
-    metadata: summaryMetadata(album.metadata),
-    coverUrl: customArtworkUrl ?? defaultCoverUrl,
-    ...(customArtworkUrl && { defaultCoverUrl, customArtworkUrl }),
-    ...(favoriteKeys && { userFavorite: favoriteKeys.has(`album:${album.identityKey}`) }),
-  };
-};
-
-export function buildPublicLibrary(
-  library: LibraryCollections,
-  favoriteKeys: Set<string> | null = null,
-) {
-  const albumArtwork = getCustomArtworkMap(
-    "album",
-    library.albums.map((album) => album.id),
-  );
-  const trackArtwork = getCustomArtworkMap(
-    "track",
-    library.tracks.map((track) => track.id),
-  );
-  const albumVersions = getLibraryArtworkVersions(
-    "album",
-    library.albums.map((album) => album.id),
-  );
-  const artistVersions = getLibraryArtworkVersions(
-    "artist",
-    library.artists.map((artist) => artist.id),
-  );
-  return {
-    artists: library.artists.map((artist) => ({
-      ...publicEntity("artist", artist, favoriteKeys),
-      metadata: summaryMetadata(artist.metadata),
-      coverUrl: buildLibraryArtworkUrl("artist", artist.id, artistVersions.get(String(artist.id))),
-    })),
-    albums: library.albums.map((album) =>
-      publicAlbum(
-        album,
-        favoriteKeys,
-        albumArtwork.get(String(album.id)),
-        albumVersions.get(String(album.id)),
-      ),
-    ),
-    tracks: library.tracks.map((track) => {
-      const item = publicEntity("song", track, favoriteKeys);
-      const customArtwork = trackArtwork.get(String(track.id));
-      return customArtwork
-        ? {
-            ...item,
-            artworkUrl: buildCustomArtworkUrl("track", track.id, customArtwork),
-            customArtworkUrl: buildCustomArtworkUrl("track", track.id, customArtwork),
-          }
-        : item;
-    }),
-  };
-}
-
-function toPublicLibrary(library: LibraryCollections, favoriteKeys: Set<string> | null = null) {
-  return stripFilesystemPaths(buildPublicLibrary(library, favoriteKeys));
-}
-
-export function toPublicLibraryPage(page: LibraryPage, favoriteKeys: Set<string> | null = null) {
-  const collections = toPublicLibrary(page, favoriteKeys);
-  const stripped = stripFilesystemPaths(page);
-  switch (stripped.kind) {
-    case "artists":
-      return { ...stripped, ...collections, items: collections.artists };
-    case "albums":
-      return { ...stripped, ...collections, items: collections.albums };
-    case "tracks":
-      return { ...stripped, ...collections, items: collections.tracks };
-    case "genres":
-      return { ...stripped, ...collections, items: stripped.items };
-  }
-}
-
-type LibraryCollections = Pick<ReturnType<typeof getLibrary>, "albums" | "tracks"> & {
-  artists: LibraryArtist[];
-};
-type LibraryPage = ReturnType<typeof getLibraryPage>;
 
 async function sendLibraryArtwork(c: Context<AppEnv>, kind: LibraryArtworkKind, id: string) {
   if (!c.var.user && isAuthRequiredByConfig()) return c.json({ error: "Unauthorized" }, 401);
@@ -202,7 +58,12 @@ async function sendLibraryArtwork(c: Context<AppEnv>, kind: LibraryArtworkKind, 
   );
 }
 
-const refreshInput = v.object({ mode: v.optional(v.picklist(["quick", "full"])) });
+const libraryItemId = v.pipe(v.number(), v.integer(), v.minValue(1));
+const refreshInput = v.object({
+  mode: v.optional(v.picklist(["quick", "full"])),
+  albumId: v.optional(libraryItemId),
+  artistId: v.optional(libraryItemId),
+});
 
 const pageQuery = v.object({
   kind: v.optional(v.string()),
@@ -212,6 +73,7 @@ const pageQuery = v.object({
   availableOnly: v.optional(v.string()),
   query: v.optional(v.string()),
   genre: v.optional(v.string()),
+  status: v.optional(v.picklist(LIBRARY_STATUSES)),
   sort: v.optional(v.string()),
   direction: v.optional(v.string()),
   artistId: v.optional(v.string()),
@@ -249,6 +111,7 @@ const libraryPage = factory.createHandlers(noCache, validate("query", pageQuery)
         pageSize,
         query: query.query,
         genre: query.genre,
+        status: query.status,
         sort: query.sort,
         direction: query.direction,
         artistId: query.artistId,
@@ -276,8 +139,19 @@ export default new Hono<AppEnv>()
   .basePath("/library")
   .get("/albums/:albumId/cover", (c) => sendLibraryArtwork(c, "album", c.req.param("albumId")))
   .get("/artists/:artistId/cover", (c) => sendLibraryArtwork(c, "artist", c.req.param("artistId")))
+  .get("/artists/:artistId/plays", requireAuth, noCache, (c) => {
+    const plays = getLibraryArtistPlays(c.var.user.id, Number(c.req.param("artistId")));
+    if (plays === null) return c.json({ error: "Artist not found" }, 404);
+    return c.json({ plays }, 200);
+  })
   .post("/refresh", requireAuth, validate("json", refreshInput), (c) => {
-    const jobId = scheduleLibraryScan({ force: c.req.valid("json").mode === "full" });
+    const { mode, albumId, artistId } = c.req.valid("json");
+    const jobId = albumId
+      ? scheduleLibraryItemScan({ albumId })
+      : artistId
+        ? scheduleLibraryItemScan({ artistId })
+        : scheduleLibraryScan({ force: mode === "full" });
+    if (jobId === null) return c.json({ error: "No files to rescan" }, 404);
     return c.json({ queued: true, jobId, status: getLibraryScanStatus(jobId) }, 202);
   })
   .get("/refresh", requireAuth, noCache, (c) => {
@@ -338,5 +212,3 @@ export default new Hono<AppEnv>()
       return c.json({ restoredIds: favorites.map((entry) => entry.id) }, 200);
     },
   );
-
-export { toPublicLibrary };

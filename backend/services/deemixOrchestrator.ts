@@ -1,7 +1,7 @@
 import type { PipelinePayload } from "./downloadPipeline.ts";
 import path from "path";
 import fs from "fs/promises";
-import { downloadTracker, type HeldForReviewDraft } from "./downloadJobs/downloadTracker.ts";
+import { downloadTracker, type PipelineStep } from "./downloadJobs/downloadTracker.ts";
 import { getDownloadClient } from "./download/downloadClientSettings.ts";
 import { logger, safeLogDiagnostic } from "./logger.ts";
 import {
@@ -26,7 +26,7 @@ import {
   writeAudioMetadata,
 } from "./downloadUtils.ts";
 import { deferForInactiveOwner } from "./downloadJobs/playlistOwnerStatus.ts";
-import { getQualityProfile } from "./qualityProfileService.ts";
+import { getQualityProfile } from "./qualityProfile.ts";
 import { isQualityUpgrade } from "./qualityProfileModel.ts";
 import { deemixQueueIds, readDeemixAlbumQueue, type DeemixClient } from "./deemixClient.ts";
 import {
@@ -50,6 +50,11 @@ import {
   isPipelinePayloadActive,
   withPipelineCommitLock,
 } from "./downloadJobs/downloadCancellation.ts";
+import {
+  recordTrackJobDownloading,
+  recordTrackJobMoving,
+  recordTrackJobSearching,
+} from "./aurralHistoryService.ts";
 
 const SEARCH_LIMIT = 10;
 const MAX_ALBUM_CANDIDATES = 3;
@@ -92,22 +97,10 @@ type DeemixCandidate = {
   candidate?: unknown;
 };
 
-type DeemixPayload = {
-  jobId: string;
-  phase: "search" | "download" | "poll" | "finalize";
-  source?: string;
-  albumGrab?: boolean;
-  albumGroupJobIds?: string[];
-  downloadAttemptId?: string | null;
-  heldForReview?: HeldForReviewDraft;
-  track?: Parameters<typeof attemptTrackRequest>[2];
-  upgradeForJobId?: string | null;
-  manualReplacementSearch?: boolean;
-  manualSelection?: boolean;
-  destination?: string | null;
+type DeemixPayload = PipelineStep & {
+  source: "deemix";
   candidates?: DeemixCandidate[];
   candidate?: DeemixCandidate | null;
-  candidateIndex?: number;
   queueUuid?: string | null;
   queueUuids?: string[] | null;
   pollAttempts?: number;
@@ -327,7 +320,7 @@ async function searchDeemixAlbum(
   const kind = wanted.size < manifest.tracks.length ? "tracks" : "album";
   return {
     ...payload,
-    source: "deemix",
+    source: "deemix" as const,
     phase: "download",
     candidateIndex: 0,
     candidates: ranked.map(({ album, picked }) => ({
@@ -358,14 +351,7 @@ async function handleDeemixSearch(payload: DeemixPayload, helpers: DeemixHelpers
     downloadSource: "deemix",
     downloadClient: "deemix",
   });
-  import("./aurralHistoryService.ts")
-    .then(({ recordTrackJobSearching }) => recordTrackJobSearching(job))
-    .catch((err) => {
-      logger.warn("deemix", "Could not record search history", {
-        jobId: job.id,
-        reason: safeLogDiagnostic(err),
-      });
-    });
+  recordTrackJobSearching(job);
 
   const release = await attemptRelease(payload, job);
   const resolvedTrack = {
@@ -431,7 +417,7 @@ async function handleDeemixSearch(payload: DeemixPayload, helpers: DeemixHelpers
   return {
     ...payload,
     phase: "download",
-    source: "deemix",
+    source: "deemix" as const,
     candidates,
     candidateIndex: 0,
     resolvedTrack,
@@ -487,7 +473,7 @@ async function queueReleaseTracks(
   return {
     ...payload,
     phase: "poll",
-    source: "deemix",
+    source: "deemix" as const,
     candidate,
     queueUuid: null,
     queueUuids: queued,
@@ -555,14 +541,7 @@ async function handleDeemixDownload(payload: DeemixPayload, helpers: DeemixHelpe
   if (!url) {
     return helpers.failOrTryNextSource(payload, job, "No deemix track URL available");
   }
-  import("./aurralHistoryService.ts")
-    .then(({ recordTrackJobDownloading }) => recordTrackJobDownloading(job))
-    .catch((err) => {
-      logger.warn("deemix", "Could not record download history", {
-        jobId: job.id,
-        reason: safeLogDiagnostic(err),
-      });
-    });
+  recordTrackJobDownloading(job);
 
   const client = getDeemixClient();
   let submission;
@@ -600,7 +579,7 @@ async function handleDeemixDownload(payload: DeemixPayload, helpers: DeemixHelpe
   return {
     ...payload,
     phase: "poll",
-    source: "deemix",
+    source: "deemix" as const,
     candidate,
     candidateIndex: index,
     queueUuid,
@@ -779,14 +758,7 @@ async function handleDeemixFinalize(payload: DeemixPayload, helpers: DeemixHelpe
   const finalPath = path.join(finalDir, finalName);
   const committed = await withPipelineCommitLock(payload, async () => {
     await writeAudioMetadata(filePath, resolvedTrack);
-    import("./aurralHistoryService.ts")
-      .then(({ recordTrackJobMoving }) => recordTrackJobMoving(job))
-      .catch((err) => {
-        logger.warn("deemix", "Could not record file move history", {
-          jobId: job.id,
-          reason: safeLogDiagnostic(err),
-        });
-      });
+    recordTrackJobMoving(job);
     const committedFinalPath = await commitDownloadedFile(filePath, finalPath, {
       reuseExisting: !payload.upgradeForJobId,
     });

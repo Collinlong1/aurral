@@ -27,7 +27,7 @@ const [
   () => import("../../backend/services/downloadJobs/downloadTracker.ts"),
   () => import("../../backend/services/manualMissingSearchService.ts"),
   () => import("../../backend/services/downloadPipeline.ts"),
-  () => import("../../backend/services/qualityProfileService.ts"),
+  () => import("../../backend/services/qualityProfile.ts"),
   () => import("../../backend/services/downloadPipelineWorker.ts"),
   () => import("../../backend/services/trackMatching/postDownloadValidator.ts"),
 );
@@ -49,15 +49,19 @@ test("manual search exposes opaque result ids and binds the selection to its use
     id: "provider-secret-id",
     title: "A Song",
     artist: "An Artist",
+    album: "An Album",
+    albumId: "album-1",
+    albumUrl: "https://provider.invalid/album",
     url: "https://provider.invalid/credential-bearing-result",
     durationSec: 180,
+    readable: true,
   };
   const response = searchService.storeManualMissingSearch({
     jobId: "job-1",
     actorId: "user-1",
     sourceOption: { id: "deemix", label: "deemix", source: "deemix" },
     query: "An Artist A Song",
-    rawResults: [raw],
+    found: [{ raw, selection: { source: "deemix", candidate: { raw } } }],
   });
 
   assert.equal(response.results.length, 1);
@@ -149,7 +153,7 @@ test("failed manual queue handoff keeps the job failed and available to retry", 
   tracker.setFailed(jobId, "Automatic search found nothing");
 
   const queued = tracker.enqueueManualSelection(jobId, {
-    source: "deemix",
+    source: "deemix" as const,
     candidate: { raw: { id: "chosen" } },
   });
 
@@ -166,7 +170,6 @@ test("manual replacement queues the exact candidate without changing the current
     {
       artistName: "An Artist",
       trackName: "Current Song",
-      managedBy: "aurral",
     },
     "replacement-test",
   );
@@ -176,7 +179,7 @@ test("manual replacement queues the exact candidate without changing the current
 
   assert.equal(
     tracker.enqueueManualReplacementSelection(sourceJobId, {
-      source: "deemix",
+      source: "deemix" as const,
       candidate,
     }),
     true,
@@ -212,7 +215,6 @@ test("failed manual replacement handoff leaves the current track intact", () => 
     {
       artistName: "An Artist",
       trackName: "Current Song",
-      managedBy: "aurral",
     },
     "replacement-test",
   );
@@ -221,7 +223,7 @@ test("failed manual replacement handoff leaves the current track intact", () => 
 
   assert.equal(
     tracker.enqueueManualReplacementSelection(sourceJobId, {
-      source: "deemix",
+      source: "deemix" as const,
       candidate: { raw: { id: "chosen-replacement" } },
     }),
     false,
@@ -236,8 +238,10 @@ test("failed manual replacement handoff leaves the current track intact", () => 
 test("manual pipeline failures cannot fall back to another source", () => {
   const next = orchestrator.buildNextSourcePayload(
     {
+      jobId: "job-1",
+      phase: "download",
       manualSelection: true,
-      source: "deemix",
+      source: "deemix" as const,
       allowedSources: ["deemix"],
     },
     "deemix",
@@ -251,7 +255,12 @@ test("unexpected manual download errors fail once instead of entering worker ret
     failedPayload: import("../../backend/services/downloadPipeline.ts").PipelinePayload;
     message: string;
   }[] = [];
-  const payload = { phase: "search", jobId: "job-1", source: "ytdlp", manualSelection: true };
+  const payload = {
+    phase: "search",
+    jobId: "job-1",
+    source: "ytdlp" as const,
+    manualSelection: true,
+  };
   await orchestratorWorker.processPipelineJob(payload, {
     processPipelinePayload: async () => {
       throw new Error("selected result failed");
@@ -312,7 +321,7 @@ test("manual selection trusts the chosen track identity after technical audio ch
     request: { artistName: "Expected Artist", trackName: "Expected Song", durationMs: 240000 },
     candidate: { raw: { id: "manually-selected" } },
     filePath: "selected.mp3",
-    source: "deemix",
+    source: "deemix" as const,
     options: { manualSelection: true, parseFile: async () => parsed },
   });
   assert.equal(validation.valid, true);
@@ -322,7 +331,7 @@ test("manual selection trusts the chosen track identity after technical audio ch
   const unreadable = await postDownloadValidator.validateDownloadedTrackFile({
     request: { artistName: "Expected Artist", trackName: "Expected Song" },
     filePath: "broken.mp3",
-    source: "deemix",
+    source: "deemix" as const,
     options: {
       manualSelection: true,
       parseFile: async () => {
@@ -362,7 +371,7 @@ test("manual Usenet releases choose the requested file without rejecting the sel
     request: { artistName: "Expected Artist", trackName: "Expected Song", trackNumber: 2 },
     filePaths: [...parsedByPath.keys()],
     candidate: { raw: { release: { title: "Selected Album" } } },
-    source: "usenet",
+    source: "usenet" as const,
     options: {
       manualSelection: true,
       parseFile: parseFrom(parsedByPath),
@@ -393,7 +402,7 @@ test("manual Usenet file selection prefers title evidence over a coincidental tr
     request: { artistName: "Expected Artist", trackName: "Expected Song", trackNumber: 2 },
     filePaths: [...parsedByPath.keys()],
     candidate: { raw: { release: { title: "Selected Album" } } },
-    source: "usenet",
+    source: "usenet" as const,
     options: {
       manualSelection: true,
       parseFile: parseFrom(parsedByPath),
@@ -425,7 +434,7 @@ test("manual Usenet release fails when none of its files match the requested tit
     request: { artistName: "Expected Artist", trackName: "Expected Song", trackNumber: 2 },
     filePaths: [...parsedByPath.keys()],
     candidate: { raw: { release: { title: "Selected Album" } } },
-    source: "usenet",
+    source: "usenet" as const,
     options: {
       manualSelection: true,
       parseFile: parseFrom(parsedByPath),

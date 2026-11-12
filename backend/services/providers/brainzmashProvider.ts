@@ -8,9 +8,8 @@ import { APP_NAME, APP_VERSION, DEFAULT_METADATA_BASE_URL } from "../../config/c
 import {
   getNormalizedText,
   rankAlbumCandidates,
-  runningOrder,
   scoreTextMatch,
-  withPressingDurations,
+  selectAlbumRelease,
 } from "./brainzmashRanking.ts";
 import {
   albumSchema,
@@ -24,7 +23,7 @@ import {
   type NormalizedArtist,
   type NormalizedRelease,
 } from "./brainzmashMappers.ts";
-import { selectBestAlbumImage } from "../imageService.ts";
+import { selectBestAlbumImage } from "../imageRanking.ts";
 import {
   coreAlbumTitle,
   isSilenceTrack,
@@ -312,6 +311,18 @@ function readStoredMetadata<Schema extends v.GenericSchema>(
   return null;
 }
 
+const persistedMetadataReads = new Map<string, ReturnType<typeof dbOps.getMetadataResponseAsync>>();
+
+const readPersistedEntryOnce = (cacheKey: string) => {
+  const running = persistedMetadataReads.get(cacheKey);
+  if (running) return running;
+  const read = dbOps
+    .getMetadataResponseAsync(cacheKey)
+    .finally(() => persistedMetadataReads.delete(cacheKey));
+  persistedMetadataReads.set(cacheKey, read);
+  return read;
+};
+
 async function readCachedMetadata<Schema extends v.GenericSchema>(
   cacheKey: string,
   schema: Schema,
@@ -328,7 +339,9 @@ async function readCachedMetadata<Schema extends v.GenericSchema>(
     const persisted = readStoredMetadata(
       cacheKey,
       schema,
-      await dbOps.getMetadataResponseAsync(cacheKey),
+      await (persistent
+        ? dbOps.getMetadataResponseAsync(cacheKey)
+        : readPersistedEntryOnce(cacheKey)),
     );
     const current = readHot();
     if (!persisted) {
@@ -618,75 +631,6 @@ function applyReleaseTypeFilter<T extends { type: string; secondaryTypes?: strin
     if (normalizedSet.has(album.type)) return true;
     return (album.secondaryTypes || []).some((entry) => normalizedSet.has(entry));
   });
-}
-
-function tally<T, K>(releases: T[], key: (release: T) => K) {
-  const counts = new Map<K, number>();
-  for (const release of releases) counts.set(key(release), (counts.get(key(release)) || 0) + 1);
-  return counts;
-}
-
-// The album is the official tracklist most of its releases share: pressings
-// of the standard edition far outnumber deluxe editions and box sets, which
-// can run to 90 tracks, and misprints that swap tracks. A tie goes to the
-// shorter tracklist, since a deluxe edition pressed as often as the standard
-// one is still the deluxe edition, and among its releases a single disc,
-// numbered like CD and digital copies, comes first. The expanded edition is the longest one
-// that keeps every standard track and is at most twice as long, which leaves
-// out box sets.
-export function selectAlbumRelease(
-  album: { releases?: NormalizedRelease[] } | null | undefined,
-  { edition = "standard" }: { edition?: string | null } = {},
-) {
-  const releases = Array.isArray(album?.releases) ? album.releases : [];
-  const withTracks = releases.filter(
-    (release) => Array.isArray(release?.tracks) && release.tracks.length > 0,
-  );
-  const official = withTracks.filter(
-    (release) => String(release?.status || "").toLowerCase() === "official",
-  );
-  const pool = official.length > 0 ? official : withTracks;
-  const [mostCommon] = [...tally(pool, (release) => release.tracks.length)].sort(
-    ([leftCount, left], [rightCount, right]) => right - left || leftCount - rightCount,
-  );
-  if (!mostCommon) return releases[0] || null;
-  const [trackCount] = mostCommon;
-  const standard = chooseTracklist(pool, trackCount);
-  if (edition !== "expanded") return standard;
-  const keepsStandardTracks = (release: NormalizedRelease) => {
-    const unmatched = [...release.tracks];
-    return standard.tracks.every((track) => {
-      const index = unmatched.findIndex((candidate) =>
-        track.recordingId && candidate.recordingId
-          ? candidate.recordingId === track.recordingId
-          : getNormalizedText(candidate.title) === getNormalizedText(track.title),
-      );
-      if (index === -1) return false;
-      unmatched.splice(index, 1);
-      return true;
-    });
-  };
-  const longer = pool.filter(
-    (release) =>
-      release.tracks.length > trackCount &&
-      release.tracks.length <= trackCount * 2 &&
-      keepsStandardTracks(release),
-  );
-  if (longer.length === 0) return standard;
-  return chooseTracklist(longer, Math.max(...longer.map((release) => release.tracks.length)));
-}
-
-function chooseTracklist(pool: NormalizedRelease[], trackCount: number) {
-  const sameCount = pool.filter((release) => release.tracks.length === trackCount);
-  const orders = new Map(sameCount.map((release) => [release, runningOrder(release)] as const));
-  const orderCounts = tally(sameCount, (release) => orders.get(release));
-  const discs = (release: NormalizedRelease) =>
-    new Set(release.tracks.map((track) => track.mediumNumber || 1)).size;
-  const chosen = sameCount.reduce((best, release) => {
-    const commoner = orderCounts.get(orders.get(release))! - orderCounts.get(orders.get(best))!;
-    return commoner > 0 || (commoner === 0 && discs(release) < discs(best)) ? release : best;
-  });
-  return withPressingDurations(sameCount, chosen);
 }
 
 export async function getArtistByMbid(mbid: string, { signal }: MetadataRequestOptions = {}) {
@@ -1055,11 +999,6 @@ export async function listArtistAlbums(
     artistName: artist.name,
     artistId: artist.id,
   }));
-}
-
-export async function getArtistGenres(artistMbid: string) {
-  const artist = await getArtistByMbid(artistMbid);
-  return artist.genres || [];
 }
 
 export async function getArtistNameByMbid(

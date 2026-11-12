@@ -5,9 +5,8 @@ import fs from "fs/promises";
 import {
   downloadTracker,
   type DownloadJob,
-  type HeldForReviewDraft,
   type JobFields,
-  type PipelinePayload as TrackerPayload,
+  type PipelineStep,
 } from "./downloadJobs/downloadTracker.ts";
 import { prowlarrClient } from "./prowlarrClient.ts";
 import { getDownloadClient, getUsenetClient } from "./download/downloadClientSettings.ts";
@@ -45,12 +44,17 @@ import {
   isPipelinePayloadActive,
   withPipelineCommitLock,
 } from "./downloadJobs/downloadCancellation.ts";
-import { getQualityProfile } from "./qualityProfileService.ts";
+import { getQualityProfile } from "./qualityProfile.ts";
 import { orderAdvertisedQualityCandidates } from "./qualityProfileModel.ts";
 import { albumGrabJobs, deniedAlbumSources, finishAlbumGrab } from "./albumGrab.ts";
 import { attemptTrackRequest } from "./releaseManifest.ts";
 import { attemptRelease } from "./releaseResolver.ts";
 import { getSourceLabel } from "./downloadSourceService.ts";
+import {
+  recordTrackJobDownloading,
+  recordTrackJobMoving,
+  recordTrackJobSearching,
+} from "./aurralHistoryService.ts";
 
 const searchResults = createSearchResultCache<UsenetRelease>();
 const MIN_USENET_CANDIDATES = 2;
@@ -92,8 +96,10 @@ type UsenetJob = Pick<DownloadJob, "id"> &
 
 type RankedRelease = ReturnType<typeof rankUsenetReleases>[number];
 
-type UsenetCandidate = Pick<RankedRelease, "raw" | "score" | "scores" | "resolvedAlbumName"> & {
-  releaseAdmissible: boolean;
+type UsenetCandidate = Partial<Pick<RankedRelease, "scores" | "resolvedAlbumName">> & {
+  raw: Pick<RankedRelease["raw"], "release"> & Partial<Omit<RankedRelease["raw"], "release">>;
+  score: number;
+  releaseAdmissible?: boolean;
   releaseVerified?: boolean;
 };
 
@@ -111,18 +117,8 @@ type ValidationOptions = { manualSelection?: boolean; release?: ReleaseManifestO
 
 type UsenetRemoveOptions = { deleteFiles?: boolean; historyItem?: UsenetHistoryItem | null };
 
-interface UsenetPayload extends Omit<TrackerPayload, "candidates"> {
-  jobId: string;
-  phase: string;
-  source?: string | null;
-  albumGrab?: boolean;
-  releaseMbid?: string | null;
-  track?: Parameters<typeof attemptTrackRequest>[2];
-  destination?: string | null;
-  upgradeForJobId?: string | null;
-  upgrade?: boolean;
-  manualSelection?: boolean;
-  manualDownloadClient?: string | null;
+interface UsenetPayload extends PipelineStep {
+  source: NzbSourceId;
   downloadClient?: string | null;
   nzbId?: NzbId | null;
   nzbGrabs?: number;
@@ -130,12 +126,10 @@ interface UsenetPayload extends Omit<TrackerPayload, "candidates"> {
   searchQueryIndex?: number;
   searchError?: string | null;
   candidates?: UsenetCandidate[];
-  candidateIndex?: number;
   pollAttempts?: number;
   missingPolls?: number;
   unreadPolls?: number;
   history?: UsenetHistoryItem | null;
-  heldForReview?: HeldForReviewDraft | null;
   downloadedPath?: string | null;
 }
 
@@ -523,11 +517,7 @@ async function handleUsenetSearch(payload: UsenetPayload, helpers: PipelineHelpe
     downloadTracker.updateDownloadMetadata(job.id, {
       downloadSource: source,
     });
-    import("./aurralHistoryService.ts")
-      .then(({ recordTrackJobSearching }) => recordTrackJobSearching(job))
-      .catch((err) => {
-        console.warn(err);
-      });
+    recordTrackJobSearching(job);
   }
 
   const release = await attemptRelease(payload, job);
@@ -642,11 +632,7 @@ async function handleUsenetDownload(payload: UsenetPayload, helpers: PipelineHel
   if (!candidate || !release?.downloadUrl) {
     return helpers.failOrTryNextSource(payload, job, "No Usenet release URL available");
   }
-  import("./aurralHistoryService.ts")
-    .then(({ recordTrackJobDownloading }) => recordTrackJobDownloading(job))
-    .catch((err) => {
-      console.warn(err);
-    });
+  recordTrackJobDownloading(job);
 
   const source = nzbSource(payload);
   const tidarr = source === "tidarr";
@@ -756,10 +742,21 @@ async function handleUsenetDownload(payload: UsenetPayload, helpers: PipelineHel
   return pollPayload(submission.result.nzbId);
 }
 
-async function handleUsenetPoll(payload: UsenetPayload, helpers: PipelineHelpers) {
+// A song that finished, failed, or went away while its release downloaded
+// no longer needs the download, so it leaves the client with its files. A
+// dropped album grab is settled by the pipeline, which returns its tracks.
+async function releaseUnneededDownload(payload: UsenetPayload) {
   const job = downloadTracker.getJob(payload.jobId);
+  if (job && job.status !== "failed" && job.status !== "done") return job;
+  if (payload.nzbId != null && payload.albumGrab !== true) {
+    await removeUsenetItem(payload, payload.jobId, { deleteFiles: true });
+  }
+  return null;
+}
+
+async function handleUsenetPoll(payload: UsenetPayload, helpers: PipelineHelpers) {
+  const job = await releaseUnneededDownload(payload);
   if (!job) return null;
-  if (job.status === "failed" || job.status === "done") return null;
   const pollAttempts = Number(payload.pollAttempts || 0) + 1;
   const client = getUsenetClient(payload.downloadClient || payload.manualDownloadClient);
   let historyItem: UsenetHistoryItem | null | undefined;
@@ -835,9 +832,8 @@ async function handleUsenetPoll(payload: UsenetPayload, helpers: PipelineHelpers
 }
 
 async function handleUsenetFinalize(payload: UsenetPayload, helpers: PipelineHelpers) {
-  const job = downloadTracker.getJob(payload.jobId);
+  const job = await releaseUnneededDownload(payload);
   if (!job) return null;
-  if (job.status === "failed" || job.status === "done") return null;
   const candidate = getPayloadCandidate(payload);
   const client = getUsenetClient(payload.downloadClient || payload.manualDownloadClient);
   const historyItem = payload.history || (await client.getHistoryItem(payload.nzbId));
@@ -912,11 +908,7 @@ async function handleUsenetFinalize(payload: UsenetPayload, helpers: PipelineHel
   const inactiveOwner = deferForInactiveOwner(payload, job);
   if (inactiveOwner) return inactiveOwner;
   const committed = await withPipelineCommitLock(payload, async () => {
-    import("./aurralHistoryService.ts")
-      .then(({ recordTrackJobMoving }) => recordTrackJobMoving(job))
-      .catch((err) => {
-        console.warn(err);
-      });
+    recordTrackJobMoving(job);
     const preserveSource = hasOtherNzbConsumers(client.key, payload.nzbId, job.id);
     // Once the last consumer commits, no later job may attach to a source
     // that this operation is about to move away.

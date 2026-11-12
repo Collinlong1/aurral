@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { onTestFinished } from "vite-plus/test";
 import type { DownloadTracker } from "../../backend/services/downloadJobs/downloadTracker.ts";
+import type { PipelinePayload } from "../../backend/services/downloadPipeline.ts";
 import type { getDownloadClient } from "../../backend/services/download/downloadClientSettings.ts";
 
 export function createTrackedJob(
@@ -9,6 +11,16 @@ export function createTrackedJob(
   const id = tracker.addJob(...args);
   assert.ok(id, "Expected the fixture to create a download job");
   return id;
+}
+
+// Unit tests drive the worker by hand. This applies the download process's
+// rule, where queued work starts the worker, for one test.
+export function startWorkerForQueuedWork(
+  tracker: Pick<DownloadTracker, "onPendingWork">,
+  startWorkerIfPending: () => unknown,
+) {
+  tracker.onPendingWork(startWorkerIfPending);
+  onTestFinished(() => tracker.onPendingWork(null));
 }
 
 export function trackedJob(
@@ -142,4 +154,24 @@ export function usenetRelease(release: {
     protocol: "usenet" as const,
     ...release,
   };
+}
+
+export function isStepFrom<Source extends PipelinePayload["source"]>(
+  payload: PipelinePayload | null | undefined,
+  source: Source,
+): payload is PipelinePayload & { source: Source } {
+  return payload?.source === source;
+}
+
+export function sourceless(payload: PipelinePayload | null | undefined) {
+  assert.ok(payload && !payload.source, "Expected a step no source has taken yet");
+  return payload;
+}
+
+export function stepFrom<Source extends PipelinePayload["source"]>(
+  payload: PipelinePayload | null | undefined,
+  source: Source,
+) {
+  assert.ok(isStepFrom(payload, source), `Expected a ${source} step`);
+  return payload;
 }

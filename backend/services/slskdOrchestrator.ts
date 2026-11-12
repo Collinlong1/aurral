@@ -1,3 +1,4 @@
+import type { PipelinePayload } from "./downloadPipeline.ts";
 import path from "path";
 import { asAppError } from "../../lib/errors.ts";
 import fs from "fs/promises";
@@ -7,8 +8,8 @@ import { getDownloadClient } from "./download/downloadClientSettings.ts";
 import { logger, safeLogDiagnostic } from "./logger.ts";
 import {
   downloadTracker,
-  type HeldForReviewDraft,
   type JobFields,
+  type PipelineStep,
 } from "./downloadJobs/downloadTracker.ts";
 import {
   buildAlbumSearchTiers,
@@ -74,10 +75,15 @@ import {
 import { deferForInactiveOwner } from "./downloadJobs/playlistOwnerStatus.ts";
 import { createSearchResultCache } from "./downloadJobs/searchResultCache.ts";
 import createCache from "./apiClients/simpleCache.ts";
-import type { DownloadTrackFields } from "./downloadUtils.ts";
 import type { SoulseekSearchItem, TrackSearchContext } from "./downloadJobs/trackSearchQueries.ts";
 import type { SearchTrackRequest } from "./trackMatching/trackIdentity.ts";
-import type { HistoryJob } from "./aurralHistoryService.ts";
+import {
+  recordTrackJobMoving,
+  recordTrackJobWaiting,
+  recordTrackJobSearching,
+  recordTrackJobDownloading,
+  type HistoryJob,
+} from "./aurralHistoryService.ts";
 
 type SlskdBatch = { transfers?: SlskdTransfer[]; localFilename?: string };
 type SlskdTransferRef = { id?: string | null; username?: string | null } | null | undefined;
@@ -92,18 +98,15 @@ type SlskdCandidate = {
     files?: SlskdAlbumFile[];
   };
   resolvedAlbumName?: string | null;
+  releaseVerified?: boolean;
   evaluation?: { decision?: string | null };
   candidate?: unknown;
 };
 
-type SlskdPayload = {
-  jobId: string;
-  playlistId?: string | null;
-  phase: string;
-  track?: DownloadTrackFields;
-  albumGrab?: boolean;
+type SlskdPayload = PipelineStep & {
+  source: "slskd";
   albumTransfers?: (SlskdTransfer | null)[] | null;
-  searchQueries?: string[];
+  searchQueries?: string[] | null;
   acquisitionIdentity?: AcquisitionIdentity;
   searchQueryIndex?: number;
   searchIds?: string[];
@@ -112,7 +115,6 @@ type SlskdPayload = {
   soulseekLoggedOutSince?: number | null;
   candidates?: SlskdCandidate[];
   candidate?: SlskdCandidate | null;
-  candidateIndex?: number;
   candidateRetryCounts?: Record<number, number>;
   pollAttempts?: number;
   delaySeconds?: number;
@@ -123,11 +125,6 @@ type SlskdPayload = {
   tailSince?: number | null;
   batch?: SlskdBatch | null;
   batchId?: string | null;
-  destination?: string | null;
-  heldForReview?: HeldForReviewDraft;
-  upgradeForJobId?: string | null;
-  upgrade?: boolean;
-  manualSelection?: boolean;
 };
 
 type SlskdJob = HistoryJob &
@@ -142,7 +139,7 @@ type SlskdHelpers = {
     job: SlskdJob,
     message: string,
     logDetails?: object,
-  ) => Promise<SlskdPayload | null>;
+  ) => Promise<PipelinePayload | null>;
 };
 
 type SearchStepFields = {
@@ -180,7 +177,7 @@ type PayloadOutcomeDetails = {
   validation?: unknown;
 };
 
-import { getQualityProfile } from "./qualityProfileService.ts";
+import { getQualityProfile } from "./qualityProfile.ts";
 import {
   getAdvertisedQualityRank,
   getQualityTier,
@@ -791,18 +788,6 @@ function retrySameCandidateOrNext(
   return null;
 }
 
-function recordTrackJobHistory(
-  job: SlskdJob,
-  record: (history: typeof import("./aurralHistoryService.ts")) => unknown,
-) {
-  import("./aurralHistoryService.ts").then(record).catch((err: unknown) => {
-    logger.warn("slskd", "Failed to record track job activity", {
-      jobId: job.id,
-      error: asAppError(err)?.message || String(err),
-    });
-  });
-}
-
 async function isLoggedOut(options?: { force?: boolean }) {
   const status = await slskdClient.testConnection(options);
   return status?.ok === true && status.connected !== true;
@@ -847,12 +832,7 @@ function waitForSoulseekLogin(
       phase: payload.phase,
       reason: detail,
     });
-    recordTrackJobHistory(job, (history) =>
-      history.recordTrackJobWaiting(
-        job,
-        `${SOULSEEK_LOGGED_OUT_MESSAGE}. Aurral continues when it logs in.`,
-      ),
-    );
+    recordTrackJobWaiting(job, `${SOULSEEK_LOGGED_OUT_MESSAGE}. Aurral continues when it logs in.`);
   }
   return {
     ...payload,
@@ -1033,14 +1013,14 @@ async function handleSearch(payload: SlskdPayload, helpers: SlskdHelpers) {
   if (await isStillLoggedOut(payload)) return waitForSoulseekLogin(payload, job, helpers);
   if (payload.soulseekLoggedOutSince) {
     payload = { ...payload, soulseekLoggedOutSince: null };
-    recordTrackJobHistory(job, (history) => history.recordTrackJobSearching(job));
+    recordTrackJobSearching(job);
   }
   if (!payload.searchQueries) {
     downloadTracker.setDownloading(job.id);
     downloadTracker.updateDownloadMetadata(job.id, {
       downloadSource: "slskd",
     });
-    recordTrackJobHistory(job, (history) => history.recordTrackJobSearching(job));
+    recordTrackJobSearching(job);
   }
   const release = await attemptRelease(payload, job);
   const resolvedTrack = attemptTrackRequest(job, release, payload.track);
@@ -1112,7 +1092,7 @@ async function handleSearch(payload: SlskdPayload, helpers: SlskdHelpers) {
       ...payload,
       ...SEARCH_RESET,
       phase: "download",
-      source: "slskd",
+      source: "slskd" as const,
       searchId,
       searchIds: [...new Set(searchIds)],
       candidateIndex: 0,
@@ -1218,7 +1198,7 @@ async function handleDownload(payload: SlskdPayload, helpers: SlskdHelpers) {
   if (job.status === "failed" || job.status === "done") return null;
   if (await isStillLoggedOut(payload)) return waitForSoulseekLogin(payload, job, helpers);
   if (payload.soulseekLoggedOutSince) payload = { ...payload, soulseekLoggedOutSince: null };
-  recordTrackJobHistory(job, (history) => history.recordTrackJobDownloading(job));
+  recordTrackJobDownloading(job);
   const candidates = Array.isArray(payload.candidates) ? payload.candidates : [];
   const index = Number(payload.candidateIndex || 0);
   const candidate = candidates[index];
@@ -1748,14 +1728,7 @@ async function handleFinalize(payload: SlskdPayload, helpers: SlskdHelpers) {
   const inactiveOwner = deferForInactiveOwner(payload, job);
   if (inactiveOwner) return inactiveOwner;
   const committed = await withPipelineCommitLock(payload, async () => {
-    import("./aurralHistoryService.ts")
-      .then(({ recordTrackJobMoving }) => recordTrackJobMoving(job))
-      .catch((err: unknown) => {
-        logger.warn("slskd", "Failed to record track job moving", {
-          jobId: job.id,
-          error: asAppError(err)?.message || String(err),
-        });
-      });
+    recordTrackJobMoving(job);
     const committedFinalPath = await commitDownloadedFile(sourcePath, finalPath);
     await writeImportedFileMetadata(committedFinalPath, resolvedTrack, {
       source: "slskd",
@@ -1792,7 +1765,7 @@ async function handleFinalize(payload: SlskdPayload, helpers: SlskdHelpers) {
   return committed.result;
 }
 
-export async function discardSlskdSearch(payload: SlskdPayload) {
+export async function discardSlskdSearch(payload: Pick<SlskdPayload, "jobId" | "activeSearch">) {
   if (!payload.activeSearch?.id || !slskdClient.isConfigured()) return;
   searchMonitors.delete(payload.activeSearch.id);
   await stopSearch(payload.activeSearch.id);

@@ -2,7 +2,7 @@ import { createHmac, timingSafeEqual, randomUUID } from "node:crypto";
 import * as v from "valibot";
 import { userOps } from "../../db/helpers/index.ts";
 import { getSettingsEncryptionKey } from "../../db/helpers/settings.ts";
-import { buildPermissions } from "../../middleware/auth.ts";
+import { buildPermissions } from "../auth.ts";
 import { activePlugin, isCapabilityOn, pluginForApiKey } from "./pluginStore.ts";
 import { flowPlaylistConfig } from "../playlists/flowPlaylistConfig.ts";
 import { playlistOperationQueue } from "../playlists/playlistOperationQueue.ts";

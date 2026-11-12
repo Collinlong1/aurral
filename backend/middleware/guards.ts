@@ -10,7 +10,7 @@ import {
   isRecentlyAuthenticated,
   resolveRequestUser,
   resolveTokenUser,
-} from "./auth.ts";
+} from "../services/auth.ts";
 import type { AppEnv, RequestUser } from "./requestUser.ts";
 
 type SignedIn = AppEnv & { Variables: { user: RequestUser } };
@@ -98,7 +98,6 @@ const isOpen = (method: string, path: string) =>
 const tokenPaths = [
   /^\/api\/library\/stream\/[^/]+\/[^/]+$/i,
   /^\/api\/library\/file-stream\/[^/]+\/[^/]+$/i,
-  /^\/api\/artists\/[a-f0-9-]{36}\/stream$/i,
   /^\/api\/playlists\/stream\/[^/]+$/i,
   /^\/api\/playlists\/staging-stream\/[^/]+$/i,
 ];
@@ -108,6 +107,7 @@ const tokenArtworkPaths = [
   /^\/api\/library\/artwork\/(?:album|track)\/[^/]+$/i,
   /^\/api\/playlists\/artwork\/[^/]+(?:\/preview)?$/i,
   /^\/api\/playlists\/track-artwork\/[^/]+$/i,
+  /^\/api\/playlists\/flow-templates\/[^/]+\/cover$/i,
   /^\/api\/discover\/playlists\/(?:mix|discovery)\/[^/]+\/cover$/i,
   /^\/api\/artists\/release-group\/[a-f0-9-]{36}\/cover\/image$/i,
   /^\/api\/artists\/[a-f0-9-]{36}\/image$/i,

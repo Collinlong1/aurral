@@ -93,7 +93,7 @@ export function getCapabilities(source?: string): SourceCapabilities {
   );
 }
 
-function cleanText(value: unknown) {
+export function cleanText(value: unknown) {
   return String(value ?? "").trim() || null;
 }
 
@@ -269,8 +269,8 @@ function readQuality(raw: RawCandidate, capabilities: Partial<SourceCapabilities
 }
 
 export function normalizeCandidate<Raw extends RawCandidate = RawCandidate>(
-  source?: string,
-  raw: Partial<Raw> = {},
+  source: string | undefined,
+  raw: Raw,
   options: NormalizeOptions = {},
 ) {
   const capabilities = options.capabilities || getCapabilities(source);

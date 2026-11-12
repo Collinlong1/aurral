@@ -26,7 +26,7 @@ test("the range names the items a page shows", () => {
 });
 
 test("a new page size keeps the first item of the current page in view", async () => {
-  const { pageSizeParams } = await import("../../frontend/src/pages/libraryViewQuery.ts");
+  const { pageSizeParams } = await import("../../frontend/src/utils/libraryViewQuery.ts");
   // Items 201–300 at 100 a page; at 25 a page item 201 is on page 9.
   assert.deepEqual(pageSizeParams(3, 100, 25), { size: 25, page: 9 });
   // Back to the default size drops both from the address.

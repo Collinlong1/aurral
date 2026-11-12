@@ -1,16 +1,17 @@
-import { hasPermission } from "../middleware/auth.ts";
+import { hasPermission } from "./auth.ts";
 import type { RequestUser } from "../middleware/requestUser.ts";
 import createCache from "./apiClients/simpleCache.ts";
 import { searchDeezerTracks } from "./apiClients/deezer.ts";
 import { searchDeezerPlaylists } from "./importLists/deezerPlaylists.ts";
 import { flowPlaylistConfig, type StaticPlaylist } from "./playlists/flowPlaylistConfig.ts";
 import { buildCustomArtworkUrl, getCustomArtworkMap } from "./customArtworkService.ts";
-import { selectBestArtistImage } from "./imageService.ts";
+import { selectBestArtistImage } from "./imageRanking.ts";
 import { buildLibraryArtworkUrl, getLibraryArtworkVersions } from "./libraryArtwork.ts";
 import { getLibraryArtistMbids, getLibrarySearchPage } from "./libraryQueryService.ts";
 import { logger, safeLogDiagnostic } from "./logger.ts";
 import { searchAlbums, searchArtists } from "./providers/brainzmashProvider.ts";
 import { parsePositiveInt } from "./searchService.ts";
+import { withCoverUrls } from "./releaseGroupCoverService.ts";
 import {
   MATCH,
   albumSearchTexts,
@@ -331,10 +332,11 @@ function withLibraryArtists(catalog: Catalog, limit: number): Catalog {
   });
   const mark = <T extends UnifiedSearchItem | null>(item: T): T =>
     item?.type === "artist" && owned.has(item.id) ? { ...item, inLibrary: true } : item;
+  const [top = null] = catalog.top?.type === "album" ? withCoverUrls([catalog.top]) : [catalog.top];
   return {
-    top: mark(catalog.top),
+    top: mark(top),
     artists: artists.map(mark),
-    albums: catalog.albums.slice(0, limit),
+    albums: withCoverUrls(catalog.albums.slice(0, limit)),
     tracks: catalog.tracks.slice(0, limit),
   };
 }

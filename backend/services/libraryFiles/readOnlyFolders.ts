@@ -3,19 +3,9 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { db } from "../../config/db-sqlite.ts";
 import { resolveDownloadRoot } from "../downloadPaths.ts";
-import { enqueueSystemTask } from "../jobs/queues.ts";
-import { lidarrClient } from "../lidarrClient.ts";
-import {
-  activeLidarrRoots,
-  isPathWithin,
-  readOnlyFolderPaths,
-  saveReadOnlyFolderPaths,
-} from "../libraryFolders.ts";
-import {
-  getLibraryScanStatus,
-  getScheduledLibraryScanJobId,
-  scheduleLibraryScan,
-} from "../libraryScanWorker.ts";
+import { enqueueSystemTask } from "../jobs/systemTasks.ts";
+import { isPathWithin, readOnlyFolderPaths, saveReadOnlyFolderPaths } from "../libraryFolders.ts";
+import { isLibraryScanActive, scheduleLibraryScan } from "../libraryScanWorker.ts";
 
 export class ReadOnlyFolderError extends Error {
   declare code: "READ_ONLY_FOLDER_INVALID";
@@ -72,7 +62,7 @@ const countTracksStmt = db
   )
   .pluck();
 
-async function describeFolder(folder: string, lidarrRoots: string[]) {
+async function describeFolder(folder: string, libraryFolder: string) {
   const prefix = folder.endsWith(path.sep) ? folder : `${folder}${path.sep}`;
   const readable = await fs.access(folder, fsConstants.R_OK | fsConstants.X_OK).then(
     () => true,
@@ -81,22 +71,16 @@ async function describeFolder(folder: string, lidarrRoots: string[]) {
   return {
     path: folder,
     readable,
+    insideLibraryFolder: isPathWithin(libraryFolder, folder),
     tracks: countTracksStmt.get(folder, prefix.length, prefix)!,
-    lidarrRoot: lidarrRoots.find((root) => isPathWithin(root, folder)) || null,
   };
 }
 
-function isLibraryScanActive() {
-  const jobId = getScheduledLibraryScanJobId();
-  const status = jobId == null ? null : getLibraryScanStatus(jobId)?.status;
-  return status === "queued" || status === "running";
-}
-
 export async function describeReadOnlyFolders() {
-  const lidarrRoots = activeLidarrRoots(lidarrClient);
+  const libraryFolder = resolveDownloadRoot();
   return {
     folders: await Promise.all(
-      readOnlyFolderPaths().map((folder) => describeFolder(folder, lidarrRoots)),
+      readOnlyFolderPaths().map((folder) => describeFolder(folder, libraryFolder)),
     ),
     scanning: isLibraryScanActive(),
   };
@@ -104,7 +88,7 @@ export async function describeReadOnlyFolders() {
 
 async function applyFolderChange(folders: string[]) {
   saveReadOnlyFolderPaths(folders);
-  scheduleLibraryScan({ includeLidarr: true });
+  scheduleLibraryScan({ includeReadOnly: true });
   const { refreshLibraryFileWatcher } = await import("../libraryFileWatcher.ts");
   await refreshLibraryFileWatcher();
 }

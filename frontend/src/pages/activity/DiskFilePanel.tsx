@@ -10,7 +10,7 @@ import "./DiskFilePanel.css";
 const diskFiles = playlistJobsClient.jobs[":jobId"]["disk-files"];
 
 // Browses the folders Aurral can read for an audio file, or takes a typed
-// path, such as one Lidarr uses. The parent imports the chosen file.
+// path, such as one another app uses. The parent imports the chosen file.
 export function DiskFilePanel({
   jobId,
   selectedPath,
@@ -73,8 +73,8 @@ export function DiskFilePanel({
           </button>
         </div>
         <p className="disk-file-panel__hint">
-          Paste a path as Aurral or Lidarr sees it, or choose a file below. Aurral copies it into
-          the Library and leaves the original where it is.
+          Paste a path as Aurral or a download client sees it, or choose a file below. Aurral copies
+          it into the Library and leaves the original where it is.
         </p>
       </form>
 

@@ -33,7 +33,7 @@ const [
   flowTemplatesModule,
   { FlowTrackSource },
   libraryStore,
-  { getBrowsePlaylist },
+  { getArtistPlaylists, getBrowsePlaylist },
 ] = await setupIsolatedBackend(
   "editorial-playlists",
   () => import("../../backend/config/db-sqlite.ts"),
@@ -71,6 +71,7 @@ const summary = (id: number, title: string, curator: string = "Rod - Deezer Rock
   id,
   title,
   nb_tracks: 50,
+  picture_big: `https://img/${id}-500.jpg`,
   picture_xl: `https://img/${id}.jpg`,
   user: { name: curator },
 });
@@ -124,6 +125,7 @@ const rockEssentials = (
       title: "Rock Essentials",
       description: "The rock songs everyone should know.",
       nb_tracks: tracks.length,
+      picture_big: "https://cdn-images.dzcdn.net/rock-500.jpg",
       picture_xl: "https://cdn-images.dzcdn.net/rock.jpg",
       creator: { name: "Rod - Deezer Rock Editor" },
     },
@@ -189,6 +191,7 @@ test("adding a Deezer playlist creates one synced library playlist with its trac
   assert.equal(playlist.importSource?.externalId, "1306931615");
   assert.equal(playlist.importSource?.syncEnabled, true);
   assert.equal(playlist.importSource?.keepRemovedTracks, true);
+  assert.equal(playlist.importSource?.artworkUrl, "https://cdn-images.dzcdn.net/rock.jpg");
 
   const again = await addEditorialPlaylistToLibrary(OWNER, "1306931615");
   assert.equal(again.alreadyAdded, true);
@@ -486,10 +489,43 @@ test("For you matches Deezer editor playlists to the user's top genres and tags"
 
   assert.deepEqual(searches.sort(), ["post-punk", "shoegaze"]);
   assert.deepEqual(
-    forYou.map((playlist) => playlist.name),
-    ["Shoegaze Essentials", "Dream Pop & Shoegaze"],
+    forYou.map((playlist) => [playlist.name, playlist.artworkUrl]),
+    [
+      ["Shoegaze Essentials", "https://img/10-500.jpg"],
+      ["Dream Pop & Shoegaze", "https://img/12-500.jpg"],
+    ],
   );
   assert.ok(categories.length > 0);
+});
+
+test("an artist's playlists put the artist's own first, then Deezer editors, then everyone else", async (t: import("vite-plus/test").TestContext) => {
+  const requests = stubDeezer(t, {
+    "/artist/399/playlists": {
+      body: {
+        data: [
+          summary(20, "my radiohead mix", "someone"),
+          summary(21, "90s Alternative", "Georges - Deezer Alternative Editor"),
+          summary(22, "100% Radiohead", "Deezer Artist Editor"),
+          summary(23, "Rock Essentials"),
+        ],
+      },
+    },
+  });
+
+  const playlists = await getArtistPlaylists("399");
+
+  assert.deepEqual(
+    playlists.map((playlist) => [playlist.provider, playlist.name]),
+    [
+      ["deezer", "100% Radiohead"],
+      ["deezer", "90s Alternative"],
+      ["deezer", "Rock Essentials"],
+      ["deezer", "my radiohead mix"],
+    ],
+  );
+  await getArtistPlaylists("399");
+  assert.deepEqual(requests, ["/artist/399/playlists?limit=20"]);
+  assert.deepEqual(await getArtistPlaylists("400"), []);
 });
 
 test("an album link without a Deezer album ID still finds the album", async () => {
@@ -506,6 +542,49 @@ test("an album link without a Deezer album ID still finds the album", async () =
     }),
     { artistMbid, albumMbid },
   );
+});
+
+test("a song on another artist's soundtrack opens the soundtrack", async () => {
+  const artistMbid = "00000000-0000-4000-8000-000000000001";
+  const soundtrack = "00000000-0000-4000-8000-000000000003";
+  const ownSingle = "00000000-0000-4000-8000-000000000004";
+  const release = (id: string, title: string, credit: string) => ({
+    id: `${id}-release`,
+    date: "2026-11-20",
+    "artist-credit": [{ name: credit, artist: { id: credit === "Tove Lo" ? artistMbid : id } }],
+    "release-group": { id, title },
+  });
+  const searches: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = new URL(String(input));
+    if (url.pathname === "/search/artist") {
+      return Response.json([{ id: artistMbid, artistname: "Tove Lo", genres: [], images: [] }]);
+    }
+    if (url.pathname !== "/ws/2/recording") return Response.json([]);
+    searches.push(url.searchParams.get("query") ?? "");
+    return Response.json({
+      recordings: [
+        {
+          title: "Blood In Your Eyes",
+          releases: [
+            release(ownSingle, "Blood In Your Eyes", "Tove Lo"),
+            release(soundtrack, "Grand Theft Auto VI: The Album", "Grand Theft Auto VI"),
+          ],
+        },
+      ],
+    });
+  });
+
+  assert.deepEqual(
+    await resolveEditorialTrackLinks({
+      artistName: "Tove Lo",
+      albumName: "Grand Theft Auto VI: The Album",
+      deezerAlbumId: "1119883012",
+      trackName: "Blood In Your Eyes",
+    }),
+    { artistMbid, albumMbid: soundtrack },
+  );
+  assert.deepEqual(searches, [`recording:"Blood In Your Eyes" AND arid:${artistMbid}`]);
 });
 
 test("flow templates keep their recipe and need history for Listening History", () => {

@@ -1,0 +1,152 @@
+import type { MonitoringRules } from "./monitoringRules.ts";
+import { getApiErrorBody, getApiErrorMessage } from "./api/errors.ts";
+import { asApiError } from "./api/core.ts";
+import { shouldPollAlbumStatus, type AlbumStatus } from "./albumStatus.ts";
+import { describeDownloadCount, plural } from "./monitoringRules.ts";
+
+export interface MonitoringPlan {
+  queued?: boolean;
+  releaseGroupIds?: string[];
+  topTracks?: unknown[];
+  skipped?: { reason: string }[];
+  topTracksError?: string | null;
+}
+
+interface MonitoringState {
+  monitored?: boolean;
+  rules?: MonitoringRules | null;
+}
+
+export interface AlbumMonitoredRef {
+  managed?: boolean;
+  monitored?: boolean | null;
+  monitorMode?: string | null;
+  metadata?: { monitored?: boolean | null } | null;
+  releaseGroupMbid?: string | null;
+  mbid?: string | null;
+}
+
+interface MonitoringResult {
+  monitored?: boolean;
+  cancelledJobIds?: string[];
+  cleanupFailed?: boolean;
+}
+
+const SKIPPED_DETAILS: { reason: string; text: (count: number) => string }[] = [
+  { reason: "complete", text: (count) => `${count} already in your library` },
+  {
+    reason: "covered",
+    text: (count) =>
+      `${count} skipped because another release has ${count === 1 ? "its" : "their"} songs`,
+  },
+  {
+    reason: "excluded",
+    text: (count) => `${count} skipped because you removed ${count === 1 ? "it" : "them"}`,
+  },
+  {
+    reason: "unmonitored",
+    text: (count) => `${count} skipped because you unmonitored ${count === 1 ? "it" : "them"}`,
+  },
+  { reason: "metadata_unavailable", text: (count) => `${count} could not be checked` },
+];
+
+const summaryHeadline = (plan: MonitoringPlan, { monitored, rules }: MonitoringState = {}) => {
+  if (monitored === false) return "Monitoring turned off";
+  const downloads = describeDownloadCount({
+    releases: plan.releaseGroupIds?.length || 0,
+    tracks: plan.topTracks?.length || 0,
+  });
+  if (plan.queued && downloads) return `Queued ${downloads} for download`;
+  if (rules?.newReleases) return "Watching for new releases";
+  return "Nothing new to download";
+};
+
+export const summarizeMonitoring = (
+  monitoring: MonitoringPlan | null | undefined,
+  state: MonitoringState = {},
+) => {
+  const plan: MonitoringPlan = monitoring || {};
+  const counts = new Map<string, number>();
+  for (const entry of plan.skipped || []) {
+    counts.set(entry.reason, (counts.get(entry.reason) || 0) + 1);
+  }
+  const details = SKIPPED_DETAILS.filter(({ reason }) => counts.has(reason)).map(
+    ({ reason, text }) => text(counts.get(reason)!),
+  );
+  const knownReasons = new Set(SKIPPED_DETAILS.map(({ reason }) => reason));
+  const otherCount = [...counts]
+    .filter(([reason]) => !knownReasons.has(reason))
+    .reduce((total, [, count]) => total + count, 0);
+  if (otherCount > 0) details.push(`${otherCount} skipped`);
+  if (plan.topTracksError) details.push(plan.topTracksError.replace(/\.$/, ""));
+  const headline = summaryHeadline(plan, state);
+  return { headline, details, message: [headline, ...details].join(". ") };
+};
+
+const METADATA_UNAVAILABLE_MESSAGE =
+  "Couldn't load this artist's releases from the metadata service, so monitoring was not changed. Try again in a moment.";
+
+export const describeMonitoringError = (
+  error: unknown,
+  fallback = "Failed to update artist monitoring",
+) => {
+  if (
+    asApiError(error)?.response?.status === 503 &&
+    getApiErrorBody(error)?.code === "metadata_unavailable"
+  ) {
+    return METADATA_UNAVAILABLE_MESSAGE;
+  }
+  return getApiErrorMessage(error, fallback);
+};
+
+export const getAlbumMonitoredState = (album: AlbumMonitoredRef | null) => {
+  if (!album?.managed) return null;
+  const monitored = album!.monitored ?? album!.metadata?.monitored;
+  return monitored === true && album!.monitorMode !== "unmonitored";
+};
+
+export const getMonitoringMenuAction = ({
+  monitored,
+  hasMissing,
+}: {
+  monitored?: boolean | null;
+  hasMissing?: boolean | null;
+}) => {
+  if (monitored) return "stop";
+  return hasMissing ? null : "monitor";
+};
+
+export const canDownloadAlbum = (
+  album: AlbumMonitoredRef,
+  { hasMissingTracks }: { hasMissingTracks: boolean },
+) =>
+  getAlbumMonitoredState(album) === false &&
+  hasMissingTracks &&
+  Boolean(album.releaseGroupMbid || album.mbid);
+
+export const shouldConfirmUnmonitor = (status: AlbumStatus | null | undefined) =>
+  status == null || shouldPollAlbumStatus(status);
+
+const describeMonitoringResult = (result: MonitoringResult | null | undefined, subject: string) => {
+  if (result?.monitored !== false) return { message: `${subject} monitored`, warning: false };
+  const cancelled = result.cancelledJobIds?.length || 0;
+  if (result.cleanupFailed) {
+    return {
+      message: `${subject} unmonitored. Cancelled ${plural(cancelled, "download")}, but the download client may still hold the work.`,
+      warning: true,
+    };
+  }
+  if (cancelled > 0) {
+    return {
+      message: `${subject} unmonitored. Cancelled ${plural(cancelled, "download")}.`,
+      warning: false,
+    };
+  }
+  return { message: `${subject} unmonitored`, warning: false };
+};
+
+export const describeAlbumMonitoringResult = (result: MonitoringResult | null | undefined) =>
+  describeMonitoringResult(result, "Album");
+
+export const describeTrackMonitoringResult = (result: MonitoringResult | null | undefined) =>
+  describeMonitoringResult(result, "Track");

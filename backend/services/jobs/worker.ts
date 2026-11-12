@@ -1,6 +1,6 @@
 import * as v from "valibot";
 import { asAppError } from "../../../lib/errors.ts";
-import { getDatabaseDataVersion } from "../../config/db-sqlite.ts";
+import { getDatabaseDataVersion, loadDownloadFolderPath } from "../../config/db-sqlite.ts";
 import { cpuMs, trackWork } from "../eventLoopWatch.ts";
 import { logger, withLogContext } from "../logger.ts";
 import { onQueueWake, ownsQueueHere, type ClaimedJob, type Queue } from "./queue.ts";
@@ -54,10 +54,6 @@ const HEAVY_JOB_CPU_MS = 10_000;
 
 export function jobInterruption(message = "Background job interrupted") {
   return Object.assign(new Error(message), { code: INTERRUPTED });
-}
-
-export function isJobInterruption(error: unknown) {
-  return asAppError(error)?.code === INTERRUPTED;
 }
 
 export function isShuttingDown() {
@@ -114,11 +110,7 @@ async function reloadChangedCaches() {
   const version = getDatabaseDataVersion();
   if (version === lastDataVersion) return;
   lastDataVersion = version;
-  const [{ dbOps }, { invalidateFlowPlaylistConfigCache }] = await Promise.all([
-    import("../../db/helpers/index.ts"),
-    import("../playlists/flowPlaylistConfig.ts"),
-  ]);
-  dbOps.invalidateSettingsCache();
+  const { invalidateFlowPlaylistConfigCache } = await import("../playlists/flowPlaylistConfig.ts");
   invalidateFlowPlaylistConfigCache();
   if (group.startsWith("discovery-") || group === "inbox") {
     const { reloadDiscoveryPersistedCache } = await import("../discovery/persistence.ts");
@@ -255,6 +247,7 @@ export function createJobWorker<Payload extends object>(
           if (!job.adjustAttempts(-1)) throw jobInterruption("Background job claim lost");
           waitingAttempt = true;
         }
+        if (process.env.AURRAL_BACKGROUND_WORKER_GROUP) loadDownloadFolderPath();
         resources.prepared = prepareJob
           ? await prepareJob(job.payload, job, { signal: controller.signal })
           : null;

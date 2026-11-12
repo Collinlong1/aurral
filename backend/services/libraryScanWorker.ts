@@ -3,12 +3,19 @@ import * as v from "valibot";
 import { asAppError } from "../../lib/errors.ts";
 import { db, dbHelpers } from "../config/db-sqlite.ts";
 import { dbOps } from "../db/helpers/index.ts";
+import {
+  isDownloadOwnerProcess,
+  requestDownloadOwner,
+} from "./downloadJobs/downloadOwnerClient.ts";
 import { parseJobPayload } from "./jobs/queue.ts";
 import { libraryScanQueue } from "./jobs/queues.ts";
 import { createJobWorker } from "./jobs/worker.ts";
 import { resolveLibraryScanChangedPaths, type LibraryScanRequest } from "./libraryScanRequest.ts";
-import type { SettingsRow } from "../db/rows.ts";
+import type { LibraryMediaFilesRow, SettingsRow } from "../db/rows.ts";
+import { resolveDownloadRoot } from "./downloadPaths.ts";
+import { readOnlyFolderPaths } from "./libraryFolders.ts";
 import { scheduleReleaseMetadataRefresh } from "./releaseMetadataSync.ts";
+import { logger, safeLogDiagnostic } from "./logger.ts";
 import { websocketService } from "./websocketService.ts";
 import { unknownList } from "../../lib/unknownList.ts";
 
@@ -20,7 +27,7 @@ const scanRegistryValueStmt = db.prepare<[string], Pick<SettingsRow, "value">>(
 
 export const scanRegistrySchema = v.looseObject({
   jobId: v.nullish(v.number()),
-  includeLidarr: v.optional(v.boolean()),
+  includeReadOnly: v.optional(v.boolean()),
   force: v.optional(v.boolean()),
   changedPaths: v.nullish(v.array(v.string())),
   inFlightActive: v.optional(v.boolean()),
@@ -66,7 +73,7 @@ function withoutScheduledScan(registry: ScanRegistry) {
   const nextRegistry: ScanRegistry = { ...registry };
   for (const key of [
     "jobId",
-    "includeLidarr",
+    "includeReadOnly",
     "force",
     "changedPaths",
     "inFlightActive",
@@ -98,14 +105,14 @@ function normalizeChangedPaths(paths: unknown) {
 
 export const libraryScanSchema = v.looseObject({
   force: v.optional(v.boolean()),
-  includeLidarr: v.optional(v.boolean()),
+  includeReadOnly: v.optional(v.boolean()),
   changedPaths: v.nullish(v.array(v.string())),
 });
 
 function readScanRequest(payload: unknown) {
   const request = v.is(libraryScanSchema, payload) ? payload : {};
   return {
-    includeLidarr: request.includeLidarr === true,
+    includeReadOnly: request.includeReadOnly === true,
     force: request.force === true,
     changedPaths: request.changedPaths ?? undefined,
   };
@@ -132,9 +139,17 @@ export function getScheduledLibraryScanJobId() {
   return normalizeJobId(getScanRegistry().jobId);
 }
 
-export function hasCompletedLibraryScan() {
+export function hasCompletedLibraryScan(
+  source: string | null = null,
+  rootPath: string | null = null,
+) {
   return Boolean(
-    db.prepare("SELECT 1 FROM library_scan_runs WHERE status = 'complete' LIMIT 1").get(),
+    db
+      .prepare<[string | null, string | null, string | null, string | null]>(
+        `SELECT 1 FROM library_scan_runs WHERE status = 'complete'
+         AND (? IS NULL OR source = ?) AND (? IS NULL OR root_path = ?) LIMIT 1`,
+      )
+      .get(source, source, rootPath, rootPath),
   );
 }
 
@@ -154,7 +169,7 @@ export function scheduleLibraryScan(options: LibraryScanRequest = {}) {
 
 function registerLibraryScan({
   force = false,
-  includeLidarr = true,
+  includeReadOnly = true,
   changedPaths = null,
 }: LibraryScanRequest = {}) {
   const snapshot = getScanRegistrySnapshot();
@@ -168,7 +183,7 @@ function registerLibraryScan({
         const current = getScanRegistry();
         if (normalizeJobId(current.jobId) !== existingJobId) return false;
         const nextRegistry = { ...current };
-        if (includeLidarr === true) nextRegistry.includeLidarr = true;
+        if (includeReadOnly === true) nextRegistry.includeReadOnly = true;
         if (force === true) nextRegistry.force = true;
         if (current.inFlightActive === true) {
           if (fullScanRequested) {
@@ -195,7 +210,7 @@ function registerLibraryScan({
       })
       .immediate();
     if (updated) return existingJobId;
-    return registerLibraryScan({ force, includeLidarr, changedPaths });
+    return registerLibraryScan({ force, includeReadOnly, changedPaths });
   }
   const recoveredPaths =
     registry.inFlightActive === true && Array.isArray(registry.inFlightPaths)
@@ -215,24 +230,56 @@ function registerLibraryScan({
         ...(Array.isArray(requestedPaths) ? requestedPaths : []),
       ]);
   const fullScan = mustRunFullScan || effectivePaths === null;
-  const effectiveIncludeLidarr =
-    includeLidarr === true || (existingJobId != null && registry.includeLidarr === true);
+  const effectiveIncludeReadOnly =
+    includeReadOnly === true || (existingJobId != null && registry.includeReadOnly === true);
   const jobId = libraryScanQueue.enqueue({
     force: effectiveForce,
-    includeLidarr: effectiveIncludeLidarr,
+    includeReadOnly: effectiveIncludeReadOnly,
     changedPaths: fullScan ? null : effectivePaths,
   });
-  const nextRegistry: ScanRegistry = { jobId, includeLidarr: effectiveIncludeLidarr };
+  const nextRegistry: ScanRegistry = { jobId, includeReadOnly: effectiveIncludeReadOnly };
   if (effectiveForce) nextRegistry.force = true;
   if (!fullScan) nextRegistry.changedPaths = effectivePaths;
   if (!setScanRegistryIfUnchanged(snapshot, nextRegistry)) {
     if (getScheduledLibraryScanJobId() === jobId && hasLiveScanJob(jobId)) {
-      return registerLibraryScan({ force, includeLidarr, changedPaths });
+      return registerLibraryScan({ force, includeReadOnly, changedPaths });
     }
     libraryScanQueue.cancel(jobId);
-    return registerLibraryScan({ force, includeLidarr, changedPaths });
+    return registerLibraryScan({ force, includeReadOnly, changedPaths });
   }
   return jobId;
+}
+
+const itemFilesStmt = (match: string) =>
+  db.prepare<[number], Pick<LibraryMediaFilesRow, "path" | "source">>(
+    `SELECT DISTINCT media.path, media.source FROM library_albums AS album
+     JOIN library_album_tracks AS album_track ON album_track.album_id = album.id
+     JOIN library_media_files AS media ON media.track_id = album_track.track_id
+       AND (media.album_id = album.id OR media.album_id IS NULL)
+     WHERE ${match} AND media.source IN ('aurral', 'readonly')
+     ORDER BY media.path`,
+  );
+const albumFilesStmt = itemFilesStmt("album.id = ?");
+const artistFilesStmt = itemFilesStmt("album.artist_id = ?");
+
+export type LibraryItemScope = { albumId: number } | { artistId: number };
+
+// An album or artist rescans the folders that hold its files, so files added
+// beside them are found too. A file loose in a Library folder rescans alone.
+export function scheduleLibraryItemScan(scope: LibraryItemScope) {
+  const files =
+    "albumId" in scope ? albumFilesStmt.all(scope.albumId) : artistFilesStmt.all(scope.artistId);
+  if (files.length === 0) return null;
+  const roots = new Set(
+    [resolveDownloadRoot(), ...readOnlyFolderPaths()].map((root) => path.resolve(root)),
+  );
+  return scheduleLibraryScan({
+    includeReadOnly: files.some((file) => file.source === "readonly"),
+    changedPaths: files.map((file) => {
+      const folder = path.dirname(path.resolve(file.path));
+      return roots.has(folder) ? file.path : folder;
+    }),
+  });
 }
 
 export function claimScheduledLibraryScanJob(jobId: unknown, jobPayload: unknown = null) {
@@ -251,9 +298,9 @@ export function claimScheduledLibraryScanJob(jobId: unknown, jobPayload: unknown
       const currentJobId = normalizeJobId(registry.jobId);
       if (currentJobId !== scheduledJobId && currentJobId !== normalizedJobId) return false;
       const isCurrentJob = currentJobId === normalizedJobId;
-      const nextRegistry: ScanRegistry = { jobId: normalizedJobId, includeLidarr: false };
+      const nextRegistry: ScanRegistry = { jobId: normalizedJobId, includeReadOnly: false };
       if (isCurrentJob) {
-        nextRegistry.includeLidarr = registry.includeLidarr === true;
+        nextRegistry.includeReadOnly = registry.includeReadOnly === true;
         for (const key of [
           "force",
           "changedPaths",
@@ -270,8 +317,8 @@ export function claimScheduledLibraryScanJob(jobId: unknown, jobPayload: unknown
           registry.inFlightActive === true ||
           registry.fullRescanPending === true ||
           registry.force === true;
-        nextRegistry.includeLidarr =
-          request.includeLidarr || (hasRecoveryState && registry.includeLidarr === true);
+        nextRegistry.includeReadOnly =
+          request.includeReadOnly || (hasRecoveryState && registry.includeReadOnly === true);
         if (request.force || (hasRecoveryState && registry.force === true)) {
           nextRegistry.force = true;
         }
@@ -296,28 +343,22 @@ export function claimScheduledLibraryScanJob(jobId: unknown, jobPayload: unknown
     .immediate();
 }
 
+// Clearing a finished scan and queuing the scan for paths that arrived while it
+// ran commit together, so a request that joined it never sees neither.
 export function onLibraryScanSuccess(_payload: unknown, job: { id: number }) {
-  const pending = db
-    .transaction(() => {
-      const registry = getScanRegistry();
-      if (Number(registry.jobId) !== Number(job.id)) return null;
-      const result = {
-        fullScan: registry.fullRescanPending === true,
-        paths: Array.isArray(registry.changedPaths) ? registry.changedPaths : [],
-        includeLidarr: registry.includeLidarr === true,
-        force: registry.force === true,
-      };
-      setScanRegistry(withoutScheduledScan(registry));
-      return result;
-    })
-    .immediate();
-  if (pending && (pending.fullScan || pending.paths.length > 0)) {
+  db.transaction(() => {
+    const registry = getScanRegistry();
+    if (Number(registry.jobId) !== Number(job.id)) return;
+    const fullScan = registry.fullRescanPending === true;
+    const paths = Array.isArray(registry.changedPaths) ? registry.changedPaths : [];
+    setScanRegistry(withoutScheduledScan(registry));
+    if (!fullScan && paths.length === 0) return;
     registerLibraryScan({
-      force: pending.force,
-      includeLidarr: pending.includeLidarr,
-      changedPaths: pending.fullScan ? null : pending.paths,
+      force: fullScan && registry.force === true,
+      includeReadOnly: registry.includeReadOnly === true,
+      changedPaths: fullScan ? null : paths,
     });
-  }
+  }).immediate();
   scheduleReleaseMetadataRefresh({ delaySeconds: 5 });
 }
 
@@ -327,8 +368,8 @@ export function beginLibraryScanJob(jobId: number, payload: unknown) {
     .transaction(() => {
       const registry = getScanRegistry();
       const isCurrentJob = Number(registry.jobId) === Number(jobId);
-      const includeLidarr =
-        request.includeLidarr || (isCurrentJob && registry.includeLidarr === true);
+      const includeReadOnly =
+        request.includeReadOnly || (isCurrentJob && registry.includeReadOnly === true);
       const force = request.force || (isCurrentJob && registry.force === true);
       const interrupted = isCurrentJob && registry.inFlightActive === true;
       const changedPaths =
@@ -346,7 +387,7 @@ export function beginLibraryScanJob(jobId: number, payload: unknown) {
           fullRescanPending: false,
         });
       }
-      return { includeLidarr, force, changedPaths };
+      return { includeReadOnly, force, changedPaths };
     })
     .immediate();
 }
@@ -366,7 +407,7 @@ export function restoreLibraryScanAfterWorkerExit(jobId: number) {
       (!active && !("changedPaths" in registry));
     const nextRegistry: ScanRegistry = {
       jobId,
-      includeLidarr: registry.includeLidarr === true,
+      includeReadOnly: registry.includeReadOnly === true,
     };
     if (registry.force === true) nextRegistry.force = true;
     if (!fullScan) {
@@ -384,16 +425,55 @@ const SCAN_STATUS = {
   cancelled: "failed",
 } as const;
 
+export function isLibraryScanActive() {
+  const jobId = getScheduledLibraryScanJobId();
+  const status = jobId == null ? null : getLibraryScanStatus(jobId)?.status;
+  return status === "queued" || status === "running";
+}
+
 export function getLibraryScanStatus(jobId: string | number) {
   const normalizedJobId = Number(jobId);
   if (!Number.isSafeInteger(normalizedJobId) || normalizedJobId <= 0) return null;
   const job = libraryScanQueue.getJob(normalizedJobId);
   if (!job) return { jobId: normalizedJobId, status: "unknown", error: null };
+  const registry = getScanRegistry();
+  const handingOff =
+    job.state === "done" &&
+    normalizeJobId(registry.jobId) === normalizedJobId &&
+    registry.inFlightActive === true;
   return {
     jobId: normalizedJobId,
-    status: SCAN_STATUS[job.state],
+    status: handingOff ? SCAN_STATUS.running : SCAN_STATUS[job.state],
     error: job.state === "failed" || job.state === "cancelled" ? job.last_error : null,
   };
+}
+
+const doneJobPathsStmt = db
+  .prepare<[], string>(
+    `SELECT DISTINCT final_path FROM download_jobs
+     WHERE status = 'done' AND final_path IS NOT NULL AND upgrade_for_job_id IS NULL`,
+  )
+  .pluck();
+
+async function followChangedJobFiles(changedFiles: Set<string>) {
+  if (changedFiles.size === 0) return;
+  const paths = doneJobPathsStmt
+    .all()
+    .filter((filePath) => changedFiles.has(path.resolve(filePath)));
+  if (paths.length === 0) return;
+  try {
+    if (isDownloadOwnerProcess()) {
+      const { followChangedLibraryFiles } = await import("./downloadJobs/fileReuse.ts");
+      await followChangedLibraryFiles(paths);
+    } else {
+      await requestDownloadOwner("followChangedLibraryFiles", [paths], { timeoutMs: 10 * 60_000 });
+    }
+  } catch (error) {
+    logger.warn("library", "Downloads could not follow the files a Library scan changed", {
+      files: paths.length,
+      reason: safeLogDiagnostic(error),
+    });
+  }
 }
 
 const {
@@ -406,13 +486,11 @@ const {
     return claimScheduledLibraryScanJob(job.id, job.payload);
   },
   processJob: async (payload, job) => {
-    const { lidarrClient } = await import("./lidarrClient.ts");
     const { scanConfiguredLibrary } = await import("./libraryIndexService.ts");
-    const { includeLidarr, force, changedPaths } = beginLibraryScanJob(job.id, payload);
+    const { includeReadOnly, force, changedPaths } = beginLibraryScanJob(job.id, payload);
     const changedFiles = new Set<string>();
-    const scanResult = await scanConfiguredLibrary({
-      lidarrClient,
-      includeLidarr,
+    await scanConfiguredLibrary({
+      includeReadOnly,
       changedPaths,
       force,
       changedFiles,
@@ -421,15 +499,13 @@ const {
       const { resolveChangedAlbumCovers } = await import("./libraryArtwork.ts");
       await resolveChangedAlbumCovers(changedFiles);
     }
+    await followChangedJobFiles(changedFiles);
     const { settleIngestedMusic } = await import("./libraryFiles/ingest.ts");
     await settleIngestedMusic();
     const { pruneLibraryArtwork } = await import("./libraryArtwork.ts");
     await pruneLibraryArtwork().catch((error) =>
       console.error("[libraryScanWorker] Could not prune library artwork:", error),
     );
-    if (scanResult?.lidarr?.error) {
-      throw new Error(`Lidarr library indexing failed: ${scanResult.lidarr.error}`);
-    }
     websocketService.broadcast("library", { type: "library_scan_completed" });
   },
   resolveRetry(error, job) {

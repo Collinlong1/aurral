@@ -1,4 +1,4 @@
-import { createTrackedJob, trackedJob } from "./fixtures.ts";
+import { createTrackedJob, isStepFrom, startWorkerForQueuedWork, trackedJob } from "./fixtures.ts";
 import { test, afterAll, vi } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
@@ -21,7 +21,7 @@ const [
   { dbOps },
   { downloadTracker },
   { processDeemixPipelinePayload },
-  { downloadWorker },
+  { downloadWorker, startWorkerIfPending },
   { beginDownloadAttempt, setActiveDownloadAttemptId },
 ] = await setupIsolatedBackend(
   "deemix-album-grab",
@@ -200,7 +200,7 @@ test("one deemix album queue fills verified siblings and retries only a missing 
     };
     const initial = {
       phase: "search" as const,
-      source: "deemix",
+      source: "deemix" as const,
       jobId: requireFixture(ids[0]),
       downloadAttemptId,
       playlistId: "library",
@@ -223,10 +223,8 @@ test("one deemix album queue fills verified siblings and retries only a missing 
     assert.ok(polled != null);
     assert.equal(polled.phase, "finalize");
     const start = vi.spyOn(downloadWorker, "start").mockImplementation(async () => {});
+    startWorkerForQueuedWork(downloadTracker, startWorkerIfPending);
     await processDeemixPipelinePayload(polled as DeemixPayload, helpers);
-    for (let tick = 0; tick < 100 && start.mock.calls.length === 0; tick += 1) {
-      await new Promise<void>((resolve) => setImmediate(resolve));
-    }
     assert.equal(start.mock.calls.length, 1);
     assert.equal(added, 1);
     assert.equal(removed, 1);
@@ -235,7 +233,7 @@ test("one deemix album queue fills verified siblings and retries only a missing 
     assert.match(trackedJob(downloadTracker, ids[1]).error!, /not in the album download/);
     assert.ok((await stat(trackedJob(downloadTracker, ids[0]).finalPath!)).isFile());
     const { getAurralHistoryRequests } =
-      await import("../../backend/services/aurralHistoryService.ts");
+      await import("../../backend/services/aurralHistoryRequests.ts");
     const activity = (await getAurralHistoryRequests()).filter((item) => ids.includes(item.jobId!));
     assert.equal(activity.length, 2);
     const imported = activity.find((item) => item.jobId === ids[0]);
@@ -291,8 +289,9 @@ const serveStandard = (t: import("vite-plus/test").TestContext) =>
   ]);
 
 function deemixCandidates(result: Awaited<ReturnType<typeof processDeemixPipelinePayload>>) {
-  assert.ok(result?.candidates != null);
-  return result.candidates as NonNullable<DeemixPayload["candidates"]>;
+  assert.ok(isStepFrom(result, "deemix"));
+  assert.ok(result.candidates);
+  return result.candidates;
 }
 
 const albumEntry = (id: string, title: string, artist = "The Band") => ({
@@ -305,7 +304,7 @@ const albumEntry = (id: string, title: string, artist = "The Band") => ({
 async function searchWith(ids: string[], releaseMbid: string) {
   const payload = {
     phase: "search" as const,
-    source: "deemix",
+    source: "deemix" as const,
     jobId: requireFixture(ids[0]),
     albumGrab: true,
     albumGroupJobIds: ids,

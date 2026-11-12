@@ -16,6 +16,7 @@ import {
 import type { SearchTrackRequest } from "../trackIdentity.ts";
 import { getNormalizedText } from "../../providers/brainzmashRanking.ts";
 import { groupSoulseekSearchResults } from "../../downloadJobs/trackSearchQueries.ts";
+import { isVariousArtistsCredit } from "../titleText.ts";
 
 type SlskdFile = RawCandidate & { file?: string | null; size?: unknown };
 
@@ -73,7 +74,7 @@ function extractYears(value: string | null | undefined) {
 function artistNames(request: SearchTrackRequest) {
   return [request?.artistName, ...(request?.artistAliases || [])]
     .map((entry) => String(entry || "").trim())
-    .filter(Boolean);
+    .filter((name) => name && !isVariousArtistsCredit(name));
 }
 
 function pathContainsLabel(text: string | null | undefined, target: string | null | undefined) {
@@ -225,10 +226,12 @@ function parseFilenameArtistTitle(
 ) {
   const known = artistNames(request);
   const normalizedKnown = known.map((name) => getNormalizedText(name));
-  const isKnownArtist = (name: string) =>
-    normalizedKnown.length === 0 || normalizedKnown.includes(getNormalizedText(name));
   const isNumericName = (name: string | null | undefined) =>
     /^\d{1,3}$/.test(String(name || "").trim());
+  const isKnownArtist = (name: string) =>
+    normalizedKnown.length === 0
+      ? !isNumericName(name)
+      : normalizedKnown.includes(getNormalizedText(name));
   const raw = String(baseName || "").trim();
   const leading = /^(\d{1,3})(?:\s*[-._)\]]|\s+-\s+)\s*/.exec(raw);
   const leadingTrackNumber = leading ? Number(leading[1]) : null;
@@ -273,8 +276,8 @@ function readAdvertisedDurationMs(item: SlskdFile) {
 // Turns raw slskd search results into canonical candidates enriched with
 // folder evidence. Identity decisions belong to the shared engine; this only
 // gathers what Soulseek can (and cannot) prove about each file.
-export function buildSoulseekCandidates(
-  results: SlskdFile[],
+export function buildSoulseekCandidates<File extends SlskdFile>(
+  results: File[],
   request: SearchTrackRequest,
   options: SoulseekOptions = {},
 ) {
@@ -292,7 +295,7 @@ export function buildSoulseekCandidates(
       const filePath = String(item?.file || "");
       const baseName = getFileBaseName(filePath);
       const parsed = parseFilenameArtistTitle(baseName, request);
-      const candidate: CandidateTrack<SlskdFile> | null = normalizeCandidate("soulseek", item, {
+      const candidate: CandidateTrack<File> | null = normalizeCandidate("soulseek", item, {
         capabilities: { filename: true },
         parseFilename: false,
       });

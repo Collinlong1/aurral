@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { keepPreviousData, useInfiniteQuery, useQueries, useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQueries, useQuery } from "@tanstack/react-query";
 import type { InfiniteData, QueryKey } from "@tanstack/react-query";
 import type { ApiError } from "../utils/api/core.ts";
 import { getApiErrorMessage, getApiErrorText } from "../utils/api/errors.ts";
@@ -8,14 +8,12 @@ import {
   libraryLookupBatchQuery,
   lookupAlbumsInLibraryBatch,
   requestAlbumFromSearch,
-  settleLibraryOwnerConflict,
   type ArtistsInLibrary,
 } from "../utils/api/endpoints/library.ts";
 import { parseResponse } from "hono/client";
 import { staticPlaylistsClient } from "../utils/api/clients/staticPlaylists.ts";
 import { DotLoader } from "../components/DotLoader";
 import { SkeletonSearchResults, SkeletonStatus } from "../components/Skeletons";
-import { getReleaseGroupCoversBatch } from "../utils/api/endpoints/artists.ts";
 import {
   librarySearchQuery,
   playlistSearchQuery,
@@ -26,15 +24,12 @@ import SearchAlbumResults, { type SearchAlbum } from "../components/SearchAlbumR
 import SearchArtistResults from "../components/SearchArtistResults";
 import AddActionButton from "../components/AddActionButton";
 import ReleaseWaitBadge from "../components/ReleaseWaitBadge";
-import { isAwaitingRelease } from "../utils/aurralAlbumStatus.ts";
+import { isAwaitingRelease } from "../utils/albumStatus.ts";
 import SearchLibraryCheck from "../components/SearchLibraryCheck";
-import SearchMixedResultList, {
-  type SearchImageMap,
-  type SearchItem,
-} from "../components/SearchMixedResultList";
+import SearchMixedResultList, { type SearchItem } from "../components/SearchMixedResultList";
 import SearchTopResultCard from "../components/SearchTopArtistCard";
 import SearchPlaylistShelf from "../components/SearchPlaylistShelf";
-import { TrackPlaylistMenu } from "./ArtistDetails/components/TrackPlaylistMenu";
+import { TrackPlaylistMenu } from "../components/TrackPlaylistMenu";
 import { buildMixedSearchPageItems } from "../utils/searchNavigation";
 import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
@@ -50,10 +45,7 @@ import {
   describeAlbumRequestResult,
   getAlbumAddAction,
   isAlbumCompleteInLibrary,
-  shouldTriggerAlbumSearch,
 } from "../utils/albumAddAction";
-import { buildAlbumRequestPayload } from "../utils/libraryDestination";
-import { useLibraryDestination } from "../hooks/useLibraryDestination";
 import { useActiveDownloads } from "../hooks/useActiveDownloads";
 import {
   PAGE_SIZE,
@@ -89,9 +81,7 @@ type CatalogSearchPage = Awaited<ReturnType<typeof searchCatalog>>;
 type SearchResultItem = SearchItem & {
   durationMs?: number | null;
   monitored?: boolean;
-  managedBy?: string | null;
   trackFileCount?: number;
-  ownerConflict?: { message: string };
 };
 type AlbumActionTarget = Pick<
   SearchResultItem,
@@ -104,27 +94,15 @@ type AlbumLibraryState =
   | boolean
   | {
       inLibrary?: boolean;
-      managedBy?: string | null;
-      providerAlbumId?: string | null;
-      providerArtistId?: string | null;
       status?: string;
       monitored?: boolean;
       trackFileCount?: number;
       releaseDate?: string;
-      ownerConflict?: { message: string };
     };
 
 const EMPTY_SEARCH_PAGES: CatalogSearchPage[] = [];
-const EMPTY_COVERS: SearchImageMap = {};
 const combineLibraryLookup = (queries: { data?: ArtistsInLibrary }[]): ArtistsInLibrary =>
   queries.reduce<ArtistsInLibrary>((merged, query) => ({ ...merged, ...query.data }), {});
-const toCoverMap = (covers: Awaited<ReturnType<typeof getReleaseGroupCoversBatch>>) =>
-  Object.fromEntries(
-    Object.entries(covers).map(([mbid, cover]): [string, string | null] => [
-      mbid,
-      cover?.image || null,
-    ]),
-  );
 const LIBRARY_RESULT_LIMIT = 6;
 const UNIFIED_RESULT_LIMIT = 20;
 const CATALOG_UNAVAILABLE = "The metadata server did not answer. Try again in a moment.";
@@ -167,7 +145,6 @@ function SearchResults() {
   const albumOptionsMenuRef = useRef<HTMLDivElement>(null);
   const { hasPermission } = useAuth();
   const { showSuccess, showError, showInfo } = useToast();
-  const libraryDestination = useLibraryDestination();
   const { isAlbumDownloading } = useActiveDownloads();
 
   const trimmedQuery = useMemo(() => query.trim(), [query]);
@@ -376,32 +353,6 @@ function SearchResults() {
       (catalogUnavailable ? CATALOG_UNAVAILABLE : null);
   const hasMore = !searchUpdating && catalogQuery.hasNextPage === true;
 
-  const coverRequests = useMemo(() => {
-    const albums: SearchResultItem[] = rawUnifiedResults
-      ? [rawUnifiedResults.top, ...rawUnifiedResults.albums].filter(
-          (item): item is NonNullable<typeof item> => item?.type === "album",
-        )
-      : isAlbumSearch
-        ? rawResults
-        : [];
-    const seen = new Set<string>();
-    return albums.flatMap((album) => {
-      const mbid = typeof album.id === "string" ? album.id : "";
-      if (!mbid || album.coverUrl || seen.has(mbid)) return [];
-      seen.add(mbid);
-      return [{ mbid, artistName: album.artistName, albumTitle: album.title }];
-    });
-  }, [isAlbumSearch, rawResults, rawUnifiedResults]);
-  const coversQuery = useQuery({
-    queryKey: queryKeys.searchCovers(coverRequests.map((item) => item.mbid)),
-    queryFn: () => getReleaseGroupCoversBatch(coverRequests),
-    enabled: coverRequests.length > 0,
-    select: toCoverMap,
-    placeholderData: keepPreviousData,
-    staleTime: Infinity,
-  });
-  const albumCovers = coversQuery.data ?? EMPTY_COVERS;
-
   const albumResultsForTab = useMemo(() => {
     if (!isAlbumSearch) return results;
     return results.filter((album) => matchesAlbumReleaseTab(album, albumReleaseTab));
@@ -493,29 +444,19 @@ function SearchResults() {
   );
 
   const handleAlbumAction = useCallback(
-    async (album: AlbumActionTarget, managedBy: string = libraryDestination.primary) => {
+    async (album: AlbumActionTarget) => {
       if (!album?.id) return;
       const albumId = String(album.id);
-      const shouldTriggerSearch = shouldTriggerAlbumSearch({
-        status: album.status,
-        inLibrary: album.inLibrary,
-        monitored: album.monitored,
-      });
       setPendingAlbumIds((prev) => ({ ...prev, [albumId]: true }));
       try {
-        const result = await requestAlbumFromSearch(
-          buildAlbumRequestPayload({
-            albumMbid: albumId,
-            albumName: album.title,
-            artistMbid: album.artistMbid,
-            artistName: album.artistName,
-            managedBy,
-            triggerSearch: shouldTriggerSearch,
-          }),
-        );
+        const result = await requestAlbumFromSearch({
+          albumMbid: albumId,
+          albumName: album.title,
+          artistMbid: album.artistMbid,
+          artistName: album.artistName,
+        });
         const nextAlbum = {
           inLibrary: true,
-          managedBy: result?.album?.managedBy || result?.managedBy || managedBy,
           libraryAlbumId: result.album?.id,
           libraryArtistId: result.artist?.id,
           status: result?.queued ? "processing" : result.status,
@@ -527,21 +468,12 @@ function SearchResults() {
         const outcome = describeAlbumRequestResult(result, album.title);
         (outcome.kind === "info" ? showInfo : showSuccess)(outcome.message);
       } catch (err) {
-        const conflict = settleLibraryOwnerConflict(err);
-        if (conflict) {
-          setAlbumLibraryLookup((prev) => ({
-            ...prev,
-            [albumId]: { ownerConflict: conflict },
-          }));
-          showInfo(`${album.title}: ${conflict.message}`);
-          return;
-        }
         showError(`Could not download the album: ${getApiErrorMessage(err, "Unknown error")}`);
       } finally {
         setPendingAlbumIds(({ [albumId]: _, ...prev }) => prev);
       }
     },
-    [libraryDestination.primary, showError, showInfo, showSuccess],
+    [showError, showInfo, showSuccess],
   );
 
   const handleSearchTrackAdd = useCallback(
@@ -676,9 +608,8 @@ function SearchResults() {
         const pending = !!pendingAlbumIds[albumId] || isAlbumDownloading(albumId);
         return (
           <AddActionButton
-            {...getAlbumAddAction(item, libraryDestination)}
-            ownerConflict={item.ownerConflict}
-            onAdd={(managedBy) => handleAlbumAction(item, managedBy)}
+            {...getAlbumAddAction(item)}
+            onAdd={() => handleAlbumAction(item)}
             isLoading={pending}
             loadingLabel="Downloading"
             disabled={pending || ALBUM_PENDING_STATUSES.has(item.status)}
@@ -692,7 +623,6 @@ function SearchResults() {
       canAddAlbum,
       handleAlbumAction,
       isAlbumDownloading,
-      libraryDestination,
       handleSearchTrackAdd,
       isSearchResultInLibrary,
       loadStaticPlaylists,
@@ -707,10 +637,9 @@ function SearchResults() {
   const searchListProps = useMemo(
     () => ({
       query: trimmedQuery,
-      albumCovers,
       renderAction: renderSearchResultAction,
     }),
-    [albumCovers, renderSearchResultAction, trimmedQuery],
+    [renderSearchResultAction, trimmedQuery],
   );
 
   const unifiedView = useMemo(() => {
@@ -1076,7 +1005,6 @@ function SearchResults() {
                       {unifiedView.topResult && (
                         <SearchTopResultCard
                           item={unifiedView.topResult}
-                          albumCovers={albumCovers}
                           libraryLookup={libraryLookup}
                           query={trimmedQuery}
                         />
@@ -1098,11 +1026,9 @@ function SearchResults() {
                   {activeFilter === "singles" && unifiedView.singles.length > 0 && (
                     <SearchAlbumResults
                       albums={unifiedView.singles}
-                      albumCovers={albumCovers}
                       canAddAlbum={canAddAlbum}
                       pendingAlbumIds={pendingAlbumIds}
                       onAlbumAction={handleAlbumAction}
-                      libraryDestination={libraryDestination}
                       viewMode="grid"
                     />
                   )}
@@ -1120,11 +1046,9 @@ function SearchResults() {
                   {activeFilter === "albums" && unifiedView.albums.length > 0 && (
                     <SearchAlbumResults
                       albums={unifiedView.albums}
-                      albumCovers={albumCovers}
                       canAddAlbum={canAddAlbum}
                       pendingAlbumIds={pendingAlbumIds}
                       onAlbumAction={handleAlbumAction}
-                      libraryDestination={libraryDestination}
                       viewMode="grid"
                     />
                   )}
@@ -1132,11 +1056,9 @@ function SearchResults() {
               ) : isAlbumSearch ? (
                 <SearchAlbumResults
                   albums={displayedResults.filter(isAlbumListItem)}
-                  albumCovers={albumCovers}
                   canAddAlbum={canAddAlbum}
                   pendingAlbumIds={pendingAlbumIds}
                   onAlbumAction={handleAlbumAction}
-                  libraryDestination={libraryDestination}
                   viewMode={albumViewMode}
                 />
               ) : (

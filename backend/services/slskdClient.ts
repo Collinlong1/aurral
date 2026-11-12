@@ -7,17 +7,19 @@ import { logger } from "./logger.ts";
 import { readMany, readOne } from "./integrationData.ts";
 import { asAppError } from "../../lib/errors.ts";
 import type { StoredIntegrations } from "../db/helpers/settings.ts";
+import { getSlskdCleanupTargets, markSlskdCleanupTargetsCleaned } from "./slskdTransferHistory.ts";
 
 const NORMALIZED_SEARCH_RESULTS = Symbol("normalizedSearchResults");
 const DEFAULT_SEARCH_TIMEOUT_MS = 60000;
 const DEFAULT_EMPTY_SEARCH_TIMEOUT_MS = 10000;
 const DEFAULT_SEARCH_GRACE_PERIOD_MS = 20000;
 const DEFAULT_SEARCH_IDLE_TIMEOUT_MS = 15000;
+const CANCEL_SETTLE_MS = 10_000;
 const DEFAULT_FILE_LIMIT = 1000;
 const DEFAULT_RESPONSE_LIMIT = 150;
 const DEFAULT_MAX_PEER_QUEUE = 150;
 const DEFAULT_MIN_PEER_SPEED = 51200;
-const SEARCH_START_GAP_MS = 5000;
+const SEARCH_START_GAP_MS = 7000;
 const SEARCH_STARTED_AT_SETTING = "slskdSearchStartedAt";
 const SOULSEEK_LOGGED_OUT_CODE = "SLSKD_SOULSEEK_LOGGED_OUT";
 export const SOULSEEK_LOGGED_OUT_MESSAGE = "slskd is not logged in to Soulseek";
@@ -274,16 +276,6 @@ function getSettings(config: SlskdConfig | null = null) {
     .replace(/\/+$/, "");
   const apiKey = String(slskd.apiKey || "").trim();
   return { url, apiKey, slskd };
-}
-
-export function getSlskdSearchFormatOptions(config: SlskdConfig | null = null) {
-  const slskd = getSettings(config).slskd || {};
-  const preferredFormat =
-    String(slskd.preferredFormat || "").toLowerCase() === "mp3" ? "mp3" : "flac";
-  return {
-    preferredFormat,
-    strictFormat: slskd.preferredFormatStrict === true,
-  };
 }
 
 export function isSlskdCleanupAfterRunsEnabled(config: SlskdConfig | null = null) {
@@ -1208,6 +1200,7 @@ export class SlskdClient {
       const cancelled = await client.put(endpoint, undefined, { signal });
       if (cancelled.status === 404) return true;
       if (cancelled.status >= 400) return false;
+      const cancelledAt = Date.now();
       while (!signal?.aborted) {
         const response = await client.get(endpoint, {
           signal,
@@ -1215,7 +1208,8 @@ export class SlskdClient {
         });
         if (response.status === 404) return true;
         if (response.status !== 200) return false;
-        if (readOne(searchSchema, response.data, { service: "slskd", endpoint }).endedAt) {
+        const search = readOne(searchSchema, response.data, { service: "slskd", endpoint });
+        if (search.endedAt || Date.now() - cancelledAt >= CANCEL_SETTLE_MS) {
           const deleted = await client.delete(endpoint, { signal });
           return [200, 204, 404].includes(deleted.status);
         }
@@ -1252,8 +1246,6 @@ export class SlskdClient {
 
       if (ownedOnly && searchIds.length === 0 && transfers.length === 0) {
         try {
-          const { getSlskdCleanupTargets, markSlskdCleanupTargetsCleaned } =
-            await import("./slskdTransferHistory.ts");
           const targets = getSlskdCleanupTargets();
           searchIds = targets.searchIds;
           transfers = targets.transfers;

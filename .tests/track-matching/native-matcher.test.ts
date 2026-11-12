@@ -68,6 +68,9 @@ test("script-safe identity preserves canonical equivalents and allowed title suf
     ["Hoppípolla", "Hoppipolla"],
     ["時", "時 - Remastered 2011"],
     ["がみ - Radio Edit", "がみ (Radio Edit)"],
+    ["Razorback - Original Mix", "Razorback"],
+    ["Razorback - Original Mix", "Razorback (Original Mix)"],
+    ["Commies - Avalon & Laughing Buddha Remix", "Commies (Avalon & Laughing Buddha Remix)"],
     ["कि", "कि"],
   ] satisfies [unknown, unknown][]) {
     const wanted = { title: expected, artists: ["X"], durationMs: 200000 };
@@ -176,6 +179,25 @@ test("known recording, variant, and duration contradictions cannot be rescued by
     const result = decideRecording(request, [candidate]);
     assert.equal(result.decision, "skip");
     assert.ok(requireFixture(result.candidates[0]).contradictions.length > 0);
+  }
+});
+
+test("a version named at the end of a title is another recording", () => {
+  for (const [expected, version] of [
+    ["Song", "Wembley 1986 Live"],
+    ["Song", "BBC Session Live"],
+    ["Song", "Dub Mix"],
+    ["Song", "Rough Mix"],
+    ["Song (Dub Mix)", "Rough Mix"],
+    ["Commies (Avalon Remix)", "Laughing Buddha Remix"],
+  ] satisfies [string, string][]) {
+    const wanted = { title: expected, artists: ["X"], durationMs: 200000 };
+    const core = expected.replace(/ \(.*\)$/u, "");
+    for (const offered of [`${core} (${version})`, `${core} - ${version}`]) {
+      const candidate = { ...wanted, title: offered };
+      assert.equal(decideRecording(wanted, [candidate]).decision, "skip", offered);
+      assert.equal(verifyDownloadedRecording(wanted, candidate).decision, "no_match", offered);
+    }
   }
 });
 

@@ -2,7 +2,7 @@ import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 
 import {
-  buildAurralPick,
+  buildPick,
   getPopularReleaseGroups,
   getReleaseMetric,
 } from "../../frontend/src/pages/ArtistDetails/utils.ts";
@@ -116,7 +116,7 @@ test("the Aurral pick is the most listened studio album the user has not got or 
     "rg-not-for-threes": "downloading",
   });
 
-  const pick = buildAurralPick({ releaseGroups, getAlbumStatus });
+  const pick = buildPick({ releaseGroups, getAlbumStatus });
   assert.ok(pick != null);
 
   assert.equal(pick.title, "Rest Proof Clockwork");
@@ -134,9 +134,9 @@ test("the Aurral pick prefers a studio album over a more listened single, mix, o
     release("Quiet Album", "Album", { listenerCount: 12, listenCount: 50 }),
   ];
 
-  assert.equal(buildAurralPick({ releaseGroups })?.title, "Quiet Album");
+  assert.equal(buildPick({ releaseGroups })?.title, "Quiet Album");
   assert.equal(
-    buildAurralPick({
+    buildPick({
       releaseGroups,
       getAlbumStatus: statusLookup({ "rg-quiet-album": "available" }),
     })?.title,
@@ -148,17 +148,37 @@ test("the Aurral pick still offers an album that is in Lidarr but unmonitored", 
   const releaseGroups = [release("Shelved", "Album", { listenerCount: 5, listenCount: 9 })];
 
   assert.equal(
-    buildAurralPick({
+    buildPick({
       releaseGroups,
       getAlbumStatus: statusLookup({ "rg-shelved": "unmonitored" }),
     })?.title,
     "Shelved",
   );
   assert.equal(
-    buildAurralPick({
+    buildPick({
       releaseGroups,
       getAlbumStatus: statusLookup({ "rg-shelved": "added" }),
     }),
     null,
   );
+});
+
+test("the newest release from the last 60 days leads the popular releases", () => {
+  const now = Date.UTC(2026, 10, 11);
+  const releaseGroups = [
+    ...plaidDiscography(),
+    release("Older New Single", "Single", { "first-release-date": "2026-10-01" }),
+    release("Newest Live", "Album", {
+      "secondary-types": ["Live"],
+      "first-release-date": "2026-10-20",
+    }),
+    release("Announced", "Album", { "first-release-date": "2026-12-01" }),
+    release("Too Old", "Album", { "first-release-date": "2026-09-01" }),
+  ];
+
+  assert.deepEqual(titles(getPopularReleaseGroups(releaseGroups, 3, now)), [
+    "Newest Live",
+    "Double Figure",
+    "The Digging Remedy",
+  ]);
 });

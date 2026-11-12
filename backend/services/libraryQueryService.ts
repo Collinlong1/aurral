@@ -16,11 +16,12 @@ import {
   rebuildStoredLibraryGenreStats,
 } from "../config/library-search-index.ts";
 import { isOwnKey } from "../../lib/ownKey.ts";
+import type { LibraryStatus } from "../../lib/libraryStatus.ts";
+import { utcDay } from "../../lib/releaseDate.ts";
 import { parseLibrarySearch, type LibrarySearch } from "./librarySearchIndex.ts";
 import { MATCH, matchQuality } from "./searchText.ts";
 import {
-  getManagedByMap,
-  type LibraryOwner,
+  getManagementMap,
   invalidateLibraryManagementCache,
   onLibraryManagementChange,
   refreshLibraryManagementCache,
@@ -107,7 +108,7 @@ export type LibraryTrackFile = {
   createdAt: LibraryMediaFilesRow["created_at"];
 };
 
-const SOURCES = new Set(["aurral", "lidarr", "readonly", "flow"]);
+const SOURCES = new Set(["aurral", "readonly", "flow"]);
 const libraryCache = new Map<string, LibraryCollection>();
 const pageCountCache = new Map<string, number>();
 const countDataVersion = db.prepare<[], { data_version: number }>("PRAGMA data_version");
@@ -174,7 +175,6 @@ const metadataFields = (metadata: LibraryMetadata | null) => ({
   metadata,
   providerId: metadata?.id ?? null,
   monitored: metadata?.monitored === true,
-  monitorOption: metadata?.monitor || metadata?.addOptions?.monitor || "none",
 });
 
 const parseSources = (value: string | null): string[] =>
@@ -259,12 +259,11 @@ export interface LibraryAlbum {
   metadata: LibraryMetadata | null;
   providerId?: string | number | null;
   monitored?: boolean;
-  monitorOption?: string;
   trackIds: number[];
   sources: string[];
   source?: string | null;
   available: boolean;
-  managedBy?: LibraryOwner | null;
+  managed?: boolean;
   monitorMode?: string | null;
   trackCount?: number;
   availableTrackCount?: number;
@@ -286,7 +285,7 @@ export interface LibraryTrack {
   sources: string[];
   source?: string | null;
   available: boolean;
-  managedBy?: LibraryOwner | null;
+  managed?: boolean;
   monitorMode?: string | null;
 }
 
@@ -299,12 +298,11 @@ interface LibraryRowArtist {
   metadata: Record<string, unknown> | null;
   providerId: string | number | null;
   monitored: boolean;
-  monitorOption: string;
   albumIds: number[];
   sources: string[];
   source?: string | null;
   available: boolean;
-  managedBy?: LibraryOwner | null;
+  managed?: boolean;
   monitorMode?: string | null;
 }
 
@@ -316,7 +314,7 @@ interface LibraryAlbumTrackArtist {
   sortName: string | null;
   metadata: Record<string, unknown> | null;
   albumIds: number[];
-  managedBy: LibraryOwner | null;
+  managed: boolean;
   monitorMode: string | null;
   sources: string[];
   available: boolean;
@@ -329,8 +327,8 @@ export type LibraryArtist =
 export type LibraryGenre = ReturnType<typeof computeLibraryGenreStats>[number];
 
 function buildLibraryFromRows(rows: Iterable<LibraryCanonicalRow>) {
-  const artistManagement = getManagedByMap("artist");
-  const albumManagement = getManagedByMap("album");
+  const artistManagement = getManagementMap("artist");
+  const albumManagement = getManagementMap("album");
   const artists = new Map<number, LibraryRowArtist>();
   const albums = new Map<number, LibraryAlbum>();
   const tracks = new Map<number, LibraryTrack>();
@@ -351,7 +349,7 @@ function buildLibraryFromRows(rows: Iterable<LibraryCanonicalRow>) {
       };
       artists.set(row.artist_id, artist);
     }
-    artist.managedBy = artistManagement.get(row.artist_id)?.managedBy ?? null;
+    artist.managed = artistManagement.has(row.artist_id);
     artist.monitorMode = artistManagement.get(row.artist_id)?.monitorMode ?? null;
     let album = albums.get(row.album_id);
     if (!album) {
@@ -372,7 +370,7 @@ function buildLibraryFromRows(rows: Iterable<LibraryCanonicalRow>) {
       };
       albums.set(row.album_id, album);
     }
-    album.managedBy = albumManagement.get(row.album_id)?.managedBy ?? null;
+    album.managed = albumManagement.has(row.album_id);
     album.monitorMode = albumManagement.get(row.album_id)?.monitorMode ?? null;
     let track = tracks.get(row.track_id);
     if (!track) {
@@ -394,7 +392,7 @@ function buildLibraryFromRows(rows: Iterable<LibraryCanonicalRow>) {
       };
       tracks.set(row.track_id, track);
     }
-    track.managedBy = album.managedBy ?? null;
+    track.managed = Boolean(album.managed);
     track.monitorMode = album.monitorMode ?? null;
 
     if (!artist.albumIds.includes(album.id)) artist.albumIds.push(album.id);
@@ -545,20 +543,17 @@ export function getLibraryArtistMbids({
 const libraryArtistProjection = (row: LibraryArtistProjectionRow) => {
   const metadata = readLibraryMetadata(row.metadata_json) || {};
   const providerId = metadata.id == null ? null : String(metadata.id);
-  const monitorOption = metadata.monitor || metadata.addOptions?.monitor || "none";
   const sources = new Set(
     String(row.sources || "")
       .split(",")
       .map((source) => source.trim())
       .filter(Boolean),
   );
-  if (metadata.librarySource === "lidarr") sources.add("lidarr");
-  const management = getManagedByMap("artist").get(Number(row.id)) || null;
+  const management = getManagementMap("artist").get(Number(row.id)) || null;
   return {
     id: String(row.id),
     providerId,
-    lidarrManaged: metadata.librarySource === "lidarr",
-    managedBy: management?.managedBy ?? null,
+    managed: Boolean(management),
     monitorMode: management?.monitorMode ?? null,
     mbid: row.mbid || null,
     foreignArtistId: metadata.foreignArtistId || row.mbid || row.identity_key,
@@ -569,9 +564,7 @@ const libraryArtistProjection = (row: LibraryArtistProjectionRow) => {
     path: metadata.path || null,
     addedAt: metadata.added || (row.created_at ? new Date(row.created_at).toISOString() : null),
     monitored: metadata.monitored === true,
-    monitorOption,
     monitorNewItems: metadata.monitorNewItems || "none",
-    addOptions: metadata.addOptions || { monitor: monitorOption },
     quality: metadata.qualityProfile?.name || "standard",
     albumFolders: true,
     statistics: {
@@ -581,7 +574,6 @@ const libraryArtistProjection = (row: LibraryArtistProjectionRow) => {
     },
     sources: [...sources].sort(),
     available: Boolean(row.available),
-    stale: Boolean(row.stale),
   };
 };
 
@@ -671,7 +663,6 @@ type LibraryArtistProjectionRow = Pick<
   size_on_disk: number;
   sources: string | null;
   available: number;
-  stale: number;
 };
 
 function buildLibraryArtistProjectionQuery({
@@ -750,21 +741,7 @@ function buildLibraryArtistProjectionQuery({
       COUNT(DISTINCT album_track.track_id) AS track_count,
       COALESCE(SUM(CASE WHEN media.available = 1 THEN media.size ELSE 0 END), 0) AS size_on_disk,
       GROUP_CONCAT(DISTINCT media.source) AS sources,
-      MAX(CASE WHEN media.available = 1 THEN 1 ELSE 0 END) AS available,
-      CASE WHEN EXISTS (
-        SELECT 1
-        FROM library_scan_runs AS scan
-        WHERE scan.source = 'lidarr'
-          AND scan.status = 'failed'
-          AND EXISTS (SELECT 1 FROM library_media_files WHERE source = 'lidarr')
-          AND scan.id > COALESCE((
-            SELECT complete.id
-            FROM library_scan_runs AS complete
-            WHERE complete.source = 'lidarr' AND complete.status = 'complete'
-            ORDER BY complete.id DESC
-            LIMIT 1
-          ), 0)
-      ) THEN 1 ELSE 0 END AS stale
+      MAX(CASE WHEN media.available = 1 THEN 1 ELSE 0 END) AS available
     FROM artist_page AS artist
     LEFT JOIN library_albums AS album ON album.artist_id = artist.id
     LEFT JOIN library_album_tracks AS album_track ON album_track.album_id = album.id
@@ -864,15 +841,6 @@ export function getRecentlyAddedLibraryArtists({
     .map((artist) => ({ ...artist, addedAt: addedAtById.get(artist.id) }));
 }
 
-export function getLibraryArtistProjectionQueryPlan(options: LibraryArtistProjectionOptions = {}) {
-  const query = buildLibraryArtistProjectionQuery(options);
-  return db
-    .prepare<unknown[], { id: number; parent: number; notused: number; detail: string }>(
-      `EXPLAIN QUERY PLAN ${query.sql}`,
-    )
-    .all(...query.parameters);
-}
-
 export function* iterateLibraryArtistProjection({
   pageSize = 100,
 }: { pageSize?: number | string } = {}) {
@@ -910,7 +878,7 @@ const libraryDateAlbumProjection = (row: LibraryDateAlbumRow) => {
   const metadata = readLibraryMetadata(row.metadata_json) || {};
   const artistMetadata = readLibraryMetadata(row.artist_metadata_json) || {};
   const sources = parseSources(row.sources);
-  const management = getManagedByMap("album").get(Number(row.id)) || null;
+  const management = getManagementMap("album").get(Number(row.id)) || null;
   const trackCount = Number(row.track_count || 0);
   const availableTrackCount = Number(row.available_track_count || 0);
   return {
@@ -929,7 +897,7 @@ const libraryDateAlbumProjection = (row: LibraryDateAlbumRow) => {
     title: row.title,
     releaseDate: row.release_date,
     monitored: metadata.monitored === true,
-    managedBy: management?.managedBy ?? null,
+    managed: Boolean(management),
     monitorMode: management?.monitorMode ?? null,
     source: sources.length === 1 ? sources[0] : null,
     sources,
@@ -1041,7 +1009,7 @@ export function getLibraryIndexLastModified() {
        UNION ALL SELECT MAX(updated_at) FROM library_albums
        UNION ALL SELECT MAX(updated_at) FROM library_tracks
        UNION ALL SELECT MAX(updated_at) FROM library_media_files
-       UNION ALL SELECT MAX(completed_at) FROM library_scan_runs WHERE source IN ('lidarr-removal', 'library-tidy')
+       UNION ALL SELECT MAX(completed_at) FROM library_scan_runs WHERE source = 'library-tidy'
      )`,
     )
     .get();
@@ -1100,8 +1068,10 @@ export function getLibraryTrackPath(
      ORDER BY media.path COLLATE NOCASE`,
     )
     .all(album.id, track.id, album.id);
-  const managedBy = getManagedByMap("album").get(Number(album.id))?.managedBy || null;
-  return selectCanonicalFile(files, album.id, managedBy)?.path || null;
+  return (
+    selectCanonicalFile(files, album.id, getManagementMap("album").has(Number(album.id)))?.path ||
+    null
+  );
 }
 
 export function getLibraryTrack({
@@ -1822,12 +1792,12 @@ const recentMediaFilter = (
   return conditions.length ? ` AND ${conditions.join(" AND ")}` : "";
 };
 
-const TRACK_PLAY_COUNT = `(
-  SELECT COUNT(*) FROM play_events AS play
+const TRACK_PLAYS = `FROM play_events AS play
   WHERE play.user_id = ?
     AND play.title = track.title COLLATE NOCASE
-    AND (play.artist = track.artist_name COLLATE NOCASE OR play.artist = artist.name COLLATE NOCASE)
-)`;
+    AND (play.artist = track.artist_name COLLATE NOCASE OR play.artist = artist.name COLLATE NOCASE)`;
+const TRACK_PLAY_COUNT = `(SELECT COUNT(*) ${TRACK_PLAYS})`;
+const TRACK_PLAYED = `EXISTS (SELECT 1 ${TRACK_PLAYS})`;
 
 const recentMediaOrder = (
   kind: string,
@@ -1874,11 +1844,10 @@ const AURRAL_MONITORED_ARTIST = `EXISTS (
   SELECT 1 FROM library_management AS artist_management
   WHERE artist_management.entity_kind = 'artist'
     AND artist_management.entity_id = artist.id
-    AND artist_management.managed_by = 'aurral'
     AND artist_management.monitor_rules IS NOT NULL
 )`;
 
-const aurralFetching = (alias: string) => `CASE WHEN json_valid(${alias}.metadata_json)
+const beingFetched = (alias: string) => `CASE WHEN json_valid(${alias}.metadata_json)
   THEN json_extract(${alias}.metadata_json, '$.librarySource') = 'aurral'
     AND json_extract(${alias}.metadata_json, '$.monitored') = 1
   ELSE 0 END`;
@@ -1887,7 +1856,7 @@ const visibleAlbum = (sourceFilter: string | null): PageSql => {
   const playable = pageMediaExists("albums", sourceFilter, true);
   if (sourceFilter) return playable;
   return {
-    sql: `(${playable.sql} OR ${aurralFetching("album")})`,
+    sql: `(${playable.sql} OR ${beingFetched("album")})`,
     parameters: playable.parameters,
   };
 };
@@ -1974,6 +1943,64 @@ const pageMediaExists = (
   };
 };
 
+const managedAlbum = (alias: string) => `EXISTS (
+  SELECT 1 FROM library_management AS status_management
+  WHERE status_management.entity_kind = 'album' AND status_management.entity_id = ${alias}.id
+)`;
+
+const monitoredAlbum = (alias: string) => `(EXISTS (
+  SELECT 1 FROM library_management AS status_management
+  WHERE status_management.entity_kind = 'album'
+    AND status_management.entity_id = ${alias}.id
+    AND coalesce(status_management.monitor_mode, '') <> 'unmonitored'
+) AND CASE WHEN json_valid(${alias}.metadata_json)
+  THEN coalesce(json_extract(${alias}.metadata_json, '$.monitored') = 1, 0)
+  ELSE 0 END)`;
+
+const missingTracksAlbum = (alias: string, sourceFilter: string | null): PageSql => {
+  const { conditions, parameters } = mediaSourceClause(sourceFilter, "status_media");
+  const releaseDay = `substr(trim(coalesce(${alias}.release_date, '')), 1, 10)`;
+  return {
+    sql: `(EXISTS (
+      SELECT 1 FROM library_album_tracks AS status_track
+      WHERE status_track.album_id = ${alias}.id
+        AND NOT EXISTS (
+          SELECT 1 FROM library_media_files AS status_media
+          WHERE status_media.track_id = status_track.track_id
+            AND ${albumMediaCondition("status_media", "status_track")}
+            AND status_media.available = 1
+            ${conditions.map((condition) => `AND ${condition}`).join(" ")}
+        )
+    ) AND NOT (${managedAlbum(alias)} AND ${releaseDay} GLOB '[0-9][0-9][0-9][0-9]*' AND ${releaseDay} > ?))`,
+    parameters: [...parameters, utcDay()],
+  };
+};
+
+const statusPredicate = (
+  kind: string,
+  status: LibraryStatus,
+  sourceFilter: string | null,
+  availableOnly: LibraryAvailability,
+): PageSql | null => {
+  if (kind === "albums") {
+    if (status === "missing") return missingTracksAlbum("album", sourceFilter);
+    const monitored = monitoredAlbum("album");
+    return { sql: status === "monitored" ? monitored : `NOT ${monitored}`, parameters: [] };
+  }
+  if (kind !== "artists") return null;
+  if (status === "monitored") return { sql: AURRAL_MONITORED_ARTIST, parameters: [] };
+  if (status === "unmonitored") return { sql: `NOT ${AURRAL_MONITORED_ARTIST}`, parameters: [] };
+  const visible = pageMediaExists("albums", sourceFilter, availableOnly);
+  const missing = missingTracksAlbum("album", sourceFilter);
+  return {
+    sql: `EXISTS (
+      SELECT 1 FROM library_albums AS album
+      WHERE album.artist_id = artist.id AND ${visible.sql} AND ${missing.sql}
+    )`,
+    parameters: [...visible.parameters, ...missing.parameters],
+  };
+};
+
 const genrePredicate = (aliases: string[], genre: string): PageSql => {
   const clauses: string[] = [];
   const parameters: unknown[] = [];
@@ -2011,7 +2038,7 @@ export function getLibraryArtistPage({
 } = {}) {
   const sourceFilter = normalizeSource(source);
   const media = pageMediaExists("artists", sourceFilter, availableOnly);
-  const artistManagement = getManagedByMap("artist");
+  const artistManagement = getManagementMap("artist");
   const conditions = [media.sql];
   const parameters = [...media.parameters];
   const normalizedQuery = text(query).toLocaleLowerCase();
@@ -2095,7 +2122,7 @@ export function getLibraryArtistPage({
             providerId: metadata?.id ?? null,
             albumIds: [],
             albumCount: Number(row.album_count || 0),
-            managedBy: artistManagement.get(row.artist_id)?.managedBy ?? null,
+            managed: artistManagement.has(row.artist_id),
             monitorMode: artistManagement.get(row.artist_id)?.monitorMode ?? null,
             sources: [],
             source: null,
@@ -2172,7 +2199,7 @@ export function getLibraryArtistPage({
           albumCount: Number(row.album_count || 0),
           trackCount: Number(row.track_count || 0),
           sizeOnDisk: Number(row.size_on_disk || 0),
-          managedBy: artistManagement.get(row.artist_id)?.managedBy ?? null,
+          managed: artistManagement.has(row.artist_id),
           monitorMode: artistManagement.get(row.artist_id)?.monitorMode ?? null,
           sources,
           source: sources.length === 1 ? sources[0] : null,
@@ -2746,6 +2773,7 @@ function buildPageQuery({
   availableOnly,
   query,
   genre,
+  status,
   sort,
   direction,
   artistId,
@@ -2757,6 +2785,7 @@ function buildPageQuery({
   availableOnly: LibraryAvailability;
   query: string;
   genre: string;
+  status: LibraryStatus | null;
   sort: string;
   direction: string;
   artistId: string | number | null;
@@ -2845,6 +2874,10 @@ function buildPageQuery({
       where.push("album.id = ?");
       parameters.push(Number(albumId));
     }
+    if (sort === "plays") {
+      where.push(TRACK_PLAYED);
+      parameters.push(userId ?? -1);
+    }
   }
 
   if (searchMatch) {
@@ -2871,6 +2904,11 @@ function buildPageQuery({
     const predicate = genrePredicate(genreAliases, genre);
     where.push(predicate.sql);
     parameters.push(...predicate.parameters);
+  }
+  const statusFilter = status && statusPredicate(kind, status, sourceFilter, availableOnly);
+  if (statusFilter) {
+    where.push(statusFilter.sql);
+    parameters.push(...statusFilter.parameters);
   }
 
   const orderDirection = direction === "desc" ? "DESC" : "ASC";
@@ -3122,8 +3160,8 @@ function getAlbumTrackSummary(albumId: string | number, sourceFilter: string | n
     .get(...parameters);
   if (!row) return { artist: null, album: null };
   const sources = parseSources(row.sources);
-  const artistManagement = getManagedByMap("artist").get(row.artist_id) || null;
-  const albumManagement = getManagedByMap("album").get(row.album_id) || null;
+  const artistManagement = getManagementMap("artist").get(row.artist_id) || null;
+  const albumManagement = getManagementMap("album").get(row.album_id) || null;
   const artistMetadata = readLibraryMetadata(row.artist_metadata_json);
   const albumMetadata = readLibraryMetadata(row.album_metadata_json);
   const albumCredits = creditsByAlbumIds([row.album_id]).get(row.album_id) ?? [];
@@ -3137,9 +3175,8 @@ function getAlbumTrackSummary(albumId: string | number, sourceFilter: string | n
       metadata: artistMetadata,
       providerId: artistMetadata?.id ?? null,
       monitored: artistMetadata?.monitored === true,
-      monitorOption: artistMetadata?.monitor || artistMetadata?.addOptions?.monitor || "none",
       albumIds: [row.album_id],
-      managedBy: artistManagement?.managedBy ?? null,
+      managed: Boolean(artistManagement),
       monitorMode: artistManagement?.monitorMode ?? null,
       sources,
       available: Boolean(row.available),
@@ -3157,10 +3194,9 @@ function getAlbumTrackSummary(albumId: string | number, sourceFilter: string | n
       metadata: albumMetadata,
       providerId: albumMetadata?.id ?? null,
       monitored: albumMetadata?.monitored === true,
-      monitorOption: albumMetadata?.monitor || albumMetadata?.addOptions?.monitor || "none",
       ...(albumCredits.length && { creditedArtistMbids: albumCredits }),
       trackIds: [],
-      managedBy: albumManagement?.managedBy ?? null,
+      managed: Boolean(albumManagement),
       monitorMode: albumManagement?.monitorMode ?? null,
       sources,
       available: Boolean(row.available),
@@ -3306,6 +3342,7 @@ type LibraryPageOptions = LibraryScope & {
   offset?: number | string | null;
   query?: unknown;
   genre?: unknown;
+  status?: LibraryStatus | null;
   sort?: unknown;
   direction?: unknown;
   artistId?: string | number | null;
@@ -3351,6 +3388,7 @@ export function getLibraryPage({
   offset = null,
   query = "",
   genre = "",
+  status = null,
   sort = null,
   direction = "asc",
   artistId = null,
@@ -3428,6 +3466,7 @@ export function getLibraryPage({
     availableOnly,
     query: normalizedQuery,
     genre: normalizedGenre,
+    status,
     sort: normalizedSort,
     direction: normalizedDirection,
     artistId,

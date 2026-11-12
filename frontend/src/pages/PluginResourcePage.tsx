@@ -6,7 +6,7 @@ import { useAudioQueue } from "../contexts/audioQueueContext.ts";
 import { pluginsClient } from "../utils/api/clients/plugins.ts";
 import { pluginQueueTrack } from "../utils/pluginQueue.ts";
 import { albumPath } from "../../../lib/albumPath.ts";
-import { readApiError } from "./Settings/utils/apiError.ts";
+import { readApiError } from "../utils/api/errors.ts";
 import type { readPluginResource } from "../../../backend/services/plugins/pluginPresentation.ts";
 import "./PluginPage.css";
 

@@ -1,4 +1,4 @@
-import { PlaylistBulkActionsProvider } from "./pages/playlists/usePlaylistBulkActions.ts";
+import { PlaylistBulkActionsProvider } from "./contexts/PlaylistBulkActions.ts";
 import {
   createBrowserRouter,
   createRoutesFromElements,
@@ -55,6 +55,7 @@ const PluginPage = lazy(() => import("./pages/PluginPage.tsx"));
 const PluginResourcePage = lazy(() => import("./pages/PluginResourcePage.tsx"));
 const WrappedPage = lazy(routeModules.wrapped);
 const WrappedAnnouncement = lazy(() => import("./components/WrappedAnnouncement.tsx"));
+const LidarrConversionReport = lazy(() => import("./components/LidarrConversionReport.tsx"));
 const ArtistDetailsPage = lazy(routeModules.artist);
 const ArtistReleaseListPage = lazy(routeModules.artistReleases);
 const AlbumPage = lazy(routeModules.album);
@@ -116,7 +117,7 @@ const PermissionRoute = ({ children, permission }: { children: ReactNode; permis
   return children;
 };
 
-type HealthIssue = "lidarr" | "degraded" | "backend";
+type HealthIssue = "degraded" | "backend";
 
 type AppOutletContext = {
   healthIssue: HealthIssue | null;
@@ -158,7 +159,7 @@ function AppContent() {
   const applyBootstrapHealth = (payload: BootstrapPayload) => {
     setIsHealthy(payload.status === "ok");
     setRootFolderConfigured(payload.rootFolderConfigured || false);
-    setHealthIssue(payload.lidarr?.circuitOpen ? "lidarr" : null);
+    setHealthIssue(null);
   };
 
   useEffect(() => {
@@ -235,23 +236,16 @@ function ProtectedLayout() {
               <WrappedAnnouncement />
             </Suspense>
           )}
-          {healthIssue === "lidarr" && isHealthy && (
-            <div className="app-status-banner app-status-banner--warning">
-              <AlertTriangle className="app-status-banner__icon app-status-banner__icon--warning" />
-              <p className="app-status-banner__text app-status-banner__text--warning">
-                Lidarr is busy. Library updates may be delayed.
-              </p>
-            </div>
+          {bootstrap?.lidarrConversion && (
+            <Suspense fallback={null}>
+              <LidarrConversionReport />
+            </Suspense>
           )}
-
           {healthIssue === "degraded" && (
             <div className="app-status-banner app-status-banner--warning">
               <AlertTriangle className="app-status-banner__icon app-status-banner__icon--warning" />
               <p className="app-status-banner__text app-status-banner__text--warning">
-                Aurral is responding slowly.{" "}
-                {bootstrap?.lidarrConfigured
-                  ? "Lidarr may be busy. Try again in a minute."
-                  : "Try again in a minute."}
+                Aurral is responding slowly. Try again in a minute.
               </p>
             </div>
           )}

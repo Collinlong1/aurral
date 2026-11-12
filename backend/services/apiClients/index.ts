@@ -7,8 +7,6 @@ export {
   normalizeNewsGroups,
   DEFAULT_NEWS_FEEDS,
   DEFAULT_NEWS_GROUPS,
-  getMusicbrainzApiBaseUrl,
-  getMetadataProviderHealthSnapshot,
 } from "./config.ts";
 
 export {
@@ -30,7 +28,6 @@ export {
 
 export {
   getDeezerArtistById,
-  deezerGetArtistTopTracks,
   deezerGetArtistTopTracksById,
   deezerGetArtistTopTrackList,
   deezerGetRelatedArtists,

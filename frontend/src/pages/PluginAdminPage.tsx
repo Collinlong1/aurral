@@ -9,7 +9,7 @@ import type {
   PluginPageV2Field,
 } from "../../../backend/services/plugins/pluginPages.ts";
 import { pluginsClient } from "../utils/api/clients/plugins.ts";
-import { readApiError } from "./Settings/utils/apiError.ts";
+import { readApiError } from "../utils/api/errors.ts";
 import { Select } from "../components/Select";
 import PillToggle from "../components/PillToggle";
 import StatePanel from "../components/StatePanel";

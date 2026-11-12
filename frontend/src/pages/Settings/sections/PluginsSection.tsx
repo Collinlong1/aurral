@@ -12,8 +12,7 @@ import { pluginsClient } from "../../../utils/api/clients/plugins.ts";
 import { formatRelativeTime } from "../../../utils/dateTime.ts";
 import { copyText } from "../../../utils/shareLink.ts";
 import { SettingsCommitInput, SettingsInput, SettingsTextarea } from "../components/SettingsField";
-import { useSettingsRoute } from "../settingsRoute.tsx";
-import { readApiError } from "../utils/apiError.ts";
+import { useSettingsRoute } from "../../../navigation/settingsRoute.tsx";
 import {
   SettingsActions,
   SettingsGroup,
@@ -24,6 +23,8 @@ import {
   useSettingsItem,
   type ServiceStatus,
 } from "../SettingsLayout";
+import { readApiError } from "../../../utils/api/errors.ts";
+import { OFFICIAL_PLUGINS_URL } from "../../../../../lib/officialPlugins.ts";
 
 type PluginList = InferResponseType<typeof pluginsClient.$get, 200>;
 type Plugin = PluginList["plugins"][number];
@@ -383,7 +384,8 @@ function InstallGroup({ list }: { list: PluginList }) {
   const [checked, setChecked] = useState<Inspected | null>(null);
   const [installed, setInstalled] = useState<string[]>([]);
   const inspect = useMutation({
-    mutationFn: () => parseResponse(pluginsClient.install.inspect.$post({ json: { url } })),
+    mutationFn: (link: string) =>
+      parseResponse(pluginsClient.install.inspect.$post({ json: { url: link } })),
     onSuccess: (result) => {
       setChecked(result);
       setInstalled([]);
@@ -468,15 +470,26 @@ function InstallGroup({ list }: { list: PluginList }) {
       title="Install from a link"
       note={
         <>
-          Paste a link to a plugin&apos;s GitHub repo. You can also put its folder in{" "}
-          <code className="settings-code">{list.folder}</code>.
+          Paste a link to a plugin&apos;s GitHub repo, or{" "}
+          <button
+            type="button"
+            className="settings-link"
+            disabled={inspect.isPending}
+            onClick={() => {
+              setUrl(OFFICIAL_PLUGINS_URL);
+              inspect.mutate(OFFICIAL_PLUGINS_URL);
+            }}
+          >
+            use the official plugins
+          </button>
+          . You can also put its folder in <code className="settings-code">{list.folder}</code>.
         </>
       }
     >
       <form
         onSubmit={(event) => {
           event.preventDefault();
-          if (url.trim()) inspect.mutate();
+          if (url.trim()) inspect.mutate(url);
         }}
       >
         <SettingsRow

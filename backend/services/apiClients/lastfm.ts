@@ -1,5 +1,5 @@
 import * as v from "valibot";
-import { http, isTransientNetworkError } from "../../../lib/http.ts";
+import { http, isTransientNetworkError, waitBeforeRetry } from "../../../lib/http.ts";
 import { createHash } from "node:crypto";
 import createRateLimiter from "./rateLimiter.ts";
 import createCache from "./simpleCache.ts";
@@ -11,14 +11,17 @@ import { runSharedInflight, type InflightRequests } from "../sharedInflight.ts";
 import { asAppError } from "../../../lib/errors.ts";
 import { lenient, lenientCount, lenientText, oneOrMany, readOne } from "../integrationData.ts";
 
-interface LastfmScrobbleEvent {
-  playedAt: number | string;
+interface LastfmTrackEvent {
   artist: string;
   title: string;
   album?: string | null;
   durationMs?: number | null;
   trackMbid?: string | null;
   artistMbid?: string | null;
+}
+
+interface LastfmScrobbleEvent extends LastfmTrackEvent {
+  playedAt: number | string;
 }
 
 interface LastfmErrorDetails {
@@ -139,17 +142,26 @@ export const lastfmGetSession = async (token: string | null | undefined) =>
     { service: "Last.fm", endpoint: "auth.getSession" },
   ).session;
 
+const lastfmTrackParams = (event: LastfmTrackEvent) => ({
+  artist: event.artist,
+  track: event.title,
+  ...(event.album && { album: event.album }),
+  ...(event.artistMbid && { artist_mbid: event.artistMbid }),
+  ...(event.trackMbid && { mbid: event.trackMbid }),
+  ...(event.durationMs && { duration: Math.round(event.durationMs / 1000) }),
+});
+
 export const lastfmScrobble = (event: LastfmScrobbleEvent, sessionKey: string | null | undefined) =>
   signedLastfmRequest("track.scrobble", {
     sk: sessionKey,
-    artist: event.artist,
-    track: event.title,
+    ...lastfmTrackParams(event),
     timestamp: Math.floor(Number(event.playedAt) / 1000),
-    ...(event.album && { album: event.album }),
-    ...(event.artistMbid && { artist_mbid: event.artistMbid }),
-    ...(event.trackMbid && { mbid: event.trackMbid }),
-    ...(event.durationMs && { duration: Math.round(event.durationMs / 1000) }),
   });
+
+export const lastfmUpdateNowPlaying = (
+  event: LastfmTrackEvent,
+  sessionKey: string | null | undefined,
+) => signedLastfmRequest("track.updateNowPlaying", { sk: sessionKey, ...lastfmTrackParams(event) });
 
 export async function lastfmRequest(
   method: string,
@@ -219,8 +231,7 @@ export async function lastfmRequest(
           if (sharedSignal.aborted) throw sharedSignal.reason || error;
           lastError = error;
           if (retryCount < maxRetries && isRetryable(error)) {
-            const backoffMs = 300 * Math.pow(2, retryCount) + retryCount * 200;
-            await new Promise((resolve) => setTimeout(resolve, backoffMs));
+            await waitBeforeRetry(retryCount);
             continue;
           }
           break;

@@ -15,7 +15,7 @@ import {
 import { downloadTracker } from "../downloadJobs/downloadTracker.ts";
 import { writeAudioTags } from "../audioTags.ts";
 import { buildMetadataRecord } from "../libraryFileScanner.ts";
-import { configuredLidarrFolders, libraryFolderOwner } from "../libraryFolders.ts";
+import { libraryFolderOwner, readOnlyFolderPaths } from "../libraryFolders.ts";
 import {
   getLibraryMediaFile,
   moveLibraryMediaFilePath,
@@ -49,6 +49,7 @@ import {
   updateLibraryFileOperation,
   updateLibraryFileOperationItem,
 } from "./operationStore.ts";
+import { playlistManager } from "../playlists/playlistManager.ts";
 
 const TAKEN_NAME_REASON = "Another file already has this name.";
 
@@ -61,7 +62,7 @@ type AlbumFileRow = Pick<
 type TagFillAlbums = NonNullable<Parameters<typeof planTagFill>[1]>;
 type CleanupPlanContext = {
   root: string;
-  lidarrRoots: string[];
+  readOnlyRoots: string[];
   albums: TagFillAlbums;
   targets: Map<string, string>;
 };
@@ -89,7 +90,7 @@ function libraryAlbumIds() {
 
 function albumFiles(
   albumId: number,
-  { root, lidarrRoots }: { root: string; lidarrRoots: string[] },
+  { root, readOnlyRoots }: { root: string; readOnlyRoots: string[] },
 ) {
   const seen = new Set<number>();
   return db
@@ -106,7 +107,7 @@ function albumFiles(
     .all(albumId)
     .filter((file) => {
       if (seen.has(file.id) || !isPathInsideRoot(path.resolve(file.path), root)) return false;
-      if (libraryFolderOwner(file.path, { downloadRoot: root, lidarrRoots }) !== "aurral")
+      if (libraryFolderOwner(file.path, { downloadRoot: root, readOnlyRoots }) !== "aurral")
         return false;
       seen.add(file.id);
       return true;
@@ -364,7 +365,7 @@ export async function planCleanup(operation: LibraryFileOperation, deadline: num
   }
   const context: CleanupPlanContext = {
     root,
-    lidarrRoots: configuredLidarrFolders(null),
+    readOnlyRoots: readOnlyFolderPaths(),
     albums: new Map(),
     targets: new Map(
       db
@@ -407,9 +408,10 @@ const LINK_FALLBACK = new Set<string | undefined>([
 async function renameLibraryFile(from: string, to: string) {
   await fs.mkdir(path.dirname(to), { recursive: true });
   let keptOld = false;
+  let linked = false;
   try {
     await fs.link(from, to);
-    keptOld = true;
+    keptOld = linked = true;
   } catch (error) {
     const failure = asAppError(error);
     if (failure?.code === "EEXIST") {
@@ -425,14 +427,23 @@ async function renameLibraryFile(from: string, to: string) {
       throw error;
     }
   }
+  if (keptOld) {
+    try {
+      await fs.unlink(from);
+    } catch (error) {
+      if (asAppError(error)?.code !== "ENOENT") {
+        if (linked) await fs.unlink(to).catch(() => {});
+        throw error;
+      }
+    }
+  }
   commitRename(from, to);
-  if (keptOld) await fs.unlink(from).catch(() => {});
   await transferSidecars(from, to, "move").catch(() => {});
 }
 
 function moveJobs(from: string, to: string) {
   for (const job of downloadTracker.getAll()) {
-    if (job.status !== "done" || !job.finalPath || path.resolve(job.finalPath) !== from) continue;
+    if (job.status !== "done" || path.resolve(job.finalPath) !== from) continue;
     downloadTracker.updateFinalPath(job.id, to);
   }
 }
@@ -680,12 +691,11 @@ export async function finishCleanup(operation: LibraryFileOperation) {
     await removeEmptyDirectories(folder, root);
   }
   if (moves.length) {
-    const { playlistManager } = await import("../playlists/playlistManager.ts");
     playlistManager.requestPlaylistSync();
   }
   if (removing) updateLibraryFileOperation(operation.id, { summary: { removingSources: null } });
   return {
-    includeLidarr: false,
+    includeReadOnly: false,
     changedPaths: [...folders.keys(), ...[...folders.values()].flatMap((targets) => [...targets])],
   };
 }

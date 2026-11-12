@@ -8,15 +8,9 @@ import { lastfmStationClient } from "../../../services/importLists/lastfmStation
 import { logger, safeLogDiagnostic } from "../../../services/logger.ts";
 import { asAppError } from "../../../../lib/errors.ts";
 import { validate } from "../../../middleware/validate.ts";
-import { isErrorStatus } from "../../shared/errorStatus.ts";
+import { getErrorStatus } from "../../shared/errorStatus.ts";
 import { importSettings, requirePlaylistAccess } from "./utils.ts";
 import type { AppEnv } from "../../../middleware/requestUser.ts";
-
-const getErrorStatus = (error: unknown) => {
-  const failure = asAppError(error);
-  const status = failure?.statusCode || failure?.response?.status;
-  return isErrorStatus(status) ? status : 500;
-};
 
 const stationReference = {
   playlistId: v.nullish(v.string()),
@@ -148,12 +142,6 @@ export default new Hono<AppEnv>()
         );
       } catch (error) {
         const failure = asAppError(error);
-        if (failure?.code === "STATIC_PLAYLIST_NAME_CONFLICT") {
-          logger.debug("playlist-import", "Last.fm station import name already exists", {
-            playlistName: name || null,
-          });
-          return c.json({ error: "Playlist name already exists", message: failure.message }, 409);
-        }
         const status = getErrorStatus(error);
         logger[status >= 500 ? "error" : "warn"](
           "playlist-import",

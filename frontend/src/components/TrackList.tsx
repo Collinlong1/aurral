@@ -58,6 +58,7 @@ export type TrackListRow = {
   badge?: ReactNode;
   subtitle?: ReactNode;
   detail?: ReactNode;
+  reason?: ReactNode;
   trailing?: ReactNode;
   active?: boolean;
   missing?: boolean;
@@ -104,7 +105,7 @@ export function FavoriteButton({
   );
 }
 
-function PlayingIndicator({ row }: { row: Pick<TrackListRow, "loading" | "playing"> }) {
+export function PlayingIndicator({ row }: { row: Pick<TrackListRow, "loading" | "playing"> }) {
   const state = row.loading ? "loading" : row.playing ? "playing" : "paused";
   return (
     <span className={`track-playing-indicator is-${state}`} aria-hidden="true">
@@ -244,17 +245,22 @@ export function TrackList({
   selection = null,
   highlightKey = null,
   showYear = false,
+  showReason = false,
+  wideTime = false,
 }: {
   label: string;
   rows: TrackListRow[];
   showYear?: boolean;
-  variant?: "collection" | "release";
+  showReason?: boolean;
+  wideTime?: boolean;
+  variant?: "collection" | "release" | "compact";
   sort?: TrackSort | null;
   selection?: TrackSelection | null;
   highlightKey?: string | number | null;
 }) {
   const rowRefs = useRef(new Map<string, HTMLDivElement>());
   const isCollection = variant === "collection";
+  const hasCover = variant !== "release";
 
   useEffect(() => {
     if (!highlightKey) return undefined;
@@ -268,37 +274,45 @@ export function TrackList({
 
   return (
     <div
-      className={`native-library-track-list native-library-track-list--${variant}${showYear ? " native-library-track-list--year" : ""}`}
+      className={`native-library-track-list native-library-track-list--${variant}${showYear ? " native-library-track-list--year" : ""}${showReason ? " native-library-track-list--reason" : ""}${wideTime ? " native-library-track-list--wide-time" : ""}`}
     >
-      <div
-        className="native-library-track native-library-track--heading"
-        aria-hidden={sort || selection ? undefined : "true"}
-      >
-        {selection ? (
-          <span className="native-library-track__select">
-            <input
-              type="checkbox"
-              checked={selection.allSelected}
-              onChange={selection.onToggleAll}
-              aria-label="Select all tracks"
+      {variant === "compact" ? null : (
+        <div
+          className="native-library-track native-library-track--heading"
+          aria-hidden={sort || selection ? undefined : "true"}
+        >
+          {selection ? (
+            <span className="native-library-track__select">
+              <input
+                type="checkbox"
+                checked={selection.allSelected}
+                onChange={selection.onToggleAll}
+                aria-label="Select all tracks"
+              />
+            </span>
+          ) : (
+            <span />
+          )}
+          <HeadingCell id="number" label="#" sort={sort} className="native-library-track__number" />
+          {isCollection ? <span /> : null}
+          <HeadingCell id="title" label="Title" sort={sort} />
+          {isCollection ? <HeadingCell id="artist" label="Artist" sort={sort} /> : null}
+          {isCollection ? <HeadingCell id="album" label="Album" sort={sort} /> : null}
+          {showReason ? <span className="native-library-track__reason">Why</span> : null}
+          {showYear ? (
+            <HeadingCell
+              id="year"
+              label="Year"
+              sort={sort}
+              className="native-library-track__year"
             />
-          </span>
-        ) : (
+          ) : null}
+          <span className="native-library-track__time">Time</span>
           <span />
-        )}
-        <HeadingCell id="number" label="#" sort={sort} className="native-library-track__number" />
-        {isCollection ? <span /> : null}
-        <HeadingCell id="title" label="Title" sort={sort} />
-        {isCollection ? <HeadingCell id="artist" label="Artist" sort={sort} /> : null}
-        {isCollection ? <HeadingCell id="album" label="Album" sort={sort} /> : null}
-        {showYear ? (
-          <HeadingCell id="year" label="Year" sort={sort} className="native-library-track__year" />
-        ) : null}
-        <span className="native-library-track__time">Time</span>
-        <span />
-        <span />
-        <span />
-      </div>
+          <span />
+          <span />
+        </div>
+      )}
       <div role="list" aria-label={label}>
         {rows.flatMap((row) => {
           const playLabel = row.playing
@@ -373,7 +387,7 @@ export function TrackList({
               <span className="native-library-track__number" aria-hidden="true">
                 {row.active ? <PlayingIndicator row={row} /> : row.number}
               </span>
-              {isCollection ? (
+              {hasCover ? (
                 <TrackCover
                   cover={row.cover}
                   indicator={row.active ? <PlayingIndicator row={row} /> : null}
@@ -416,6 +430,9 @@ export function TrackList({
               ) : null}
               {isCollection ? (
                 <TrackLink link={row.album} className="native-library-track__album" />
+              ) : null}
+              {showReason ? (
+                <span className="native-library-track__reason">{row.reason}</span>
               ) : null}
               {showYear ? <span className="native-library-track__year">{row.year}</span> : null}
               <span

@@ -4,8 +4,8 @@ import {
   getAlbumByMbid,
   isMetadataNotFoundError,
   resolveAlbumByArtistAndTitle,
-  selectAlbumRelease,
 } from "../providers/brainzmashProvider.ts";
+import { selectAlbumRelease } from "../providers/brainzmashRanking.ts";
 import type {
   NormalizedAlbum,
   NormalizedRelease,
@@ -127,7 +127,7 @@ function matchMusicBrainzTrack(
   return null;
 }
 
-function musicBrainzTags(
+export function musicBrainzTags(
   mbAlbum: NormalizedAlbum,
   { release, track }: { release: NormalizedRelease; track: NormalizedTrack },
 ) {

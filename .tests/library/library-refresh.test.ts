@@ -4,7 +4,9 @@ import assert from "node:assert/strict";
 import { test, vi } from "vite-plus/test";
 import path from "node:path";
 import fs from "node:fs";
+import os from "node:os";
 import { EventEmitter } from "node:events";
+import * as v from "valibot";
 import { requireFixture } from "../playlists/fixtures.ts";
 
 process.env.NODE_ENV = "test";
@@ -14,7 +16,9 @@ const {
   claimScheduledLibraryScanJob,
   beginLibraryScanJob,
   clearScheduledLibraryScan,
+  getLibraryScanStatus,
   getScheduledLibraryScanJobId,
+  libraryScanSchema,
   onLibraryScanFinalFailure,
   onLibraryScanSuccess,
   scanRegistrySchema,
@@ -23,14 +27,14 @@ const {
 } = await import("../../backend/services/libraryScanWorker.ts");
 const { dbOps } = await import("../../backend/db/helpers/index.ts");
 const { db } = await import("../../backend/config/db-sqlite.ts");
-const { beginLibraryScan, finishLibraryScan } =
-  await import("../../backend/services/libraryMediaStore.ts");
+const libraryStore = await import("../../backend/services/libraryMediaStore.ts");
+const { beginLibraryScan, finishLibraryScan } = libraryStore;
+const { resolveDownloadRoot } = await import("../../backend/services/downloadPaths.ts");
 const { processSystemTask } = await import("../../backend/services/systemTaskWorker.ts");
+const { saveReadOnlyFolderPaths } = await import("../../backend/services/libraryFolders.ts");
 const { libraryScanQueue } = await import("../../backend/services/jobs/queues.ts");
 const { SCHEDULES } = await import("../../backend/services/jobs/schedules.ts");
-const { createLibraryFileWatcher, resolveLibraryWatchRoots } =
-  await import("../../backend/services/libraryFileWatcher.ts");
-const { lidarrClient } = await import("../../backend/services/lidarrClient.ts");
+const { createLibraryFileWatcher } = await import("../../backend/services/libraryFileWatcher.ts");
 
 test("library scans are not scheduled as a recurring background task", () => {
   assert.equal(
@@ -39,10 +43,11 @@ test("library scans are not scheduled as a recurring background task", () => {
   );
 });
 
-test("library bootstrap runs until the first completed scan, and again while a turned-off Lidarr's music remains", async () => {
+test("library bootstrap runs until the first completed scan", async () => {
   const queue = libraryScanQueue;
   db.prepare("DELETE FROM library_scan_runs").run();
   clearScheduledLibraryScan();
+  const readOnlyFolder = fs.mkdtempSync(path.join(os.tmpdir(), "aurral-read-only-"));
   let bootstrapJobId: number | null = null;
   try {
     await processSystemTask({ kind: "library-index-bootstrap" });
@@ -56,22 +61,30 @@ test("library bootstrap runs until the first completed scan, and again while a t
     await processSystemTask({ kind: "library-index-bootstrap" });
     assert.equal(getScheduledLibraryScanJobId(), null);
 
-    db.prepare(
-      `INSERT INTO library_management (entity_kind, entity_id, managed_by, created_at, updated_at)
-       VALUES ('artist', 987654, 'lidarr', 0, 0)`,
-    ).run();
-    vi.spyOn(lidarrClient, "isConfigured").mockImplementation(() => true);
-    await processSystemTask({ kind: "library-index-bootstrap" });
-    assert.equal(getScheduledLibraryScanJobId(), null);
-    vi.spyOn(lidarrClient, "isConfigured").mockImplementation(() => false);
+    const mounted = path.join(readOnlyFolder, "mounted");
+    const mountedLater = path.join(readOnlyFolder, "later");
+    fs.mkdirSync(mounted);
+    saveReadOnlyFolderPaths([mounted, mountedLater]);
     await processSystemTask({ kind: "library-index-bootstrap" });
     bootstrapJobId = getScheduledLibraryScanJobId();
-    assert.ok(bootstrapJobId, "a turned-off Lidarr's indexed music is removed after startup");
+    assert.ok(bootstrapJobId, "read-only folders that were never scanned get a scan");
+    queue.cancel(bootstrapJobId);
+    clearScheduledLibraryScan();
+
+    finishLibraryScan(beginLibraryScan({ source: "readonly", rootPath: mounted }));
+    await processSystemTask({ kind: "library-index-bootstrap" });
+    assert.equal(getScheduledLibraryScanJobId(), null);
+
+    fs.mkdirSync(mountedLater);
+    await processSystemTask({ kind: "library-index-bootstrap" });
+    bootstrapJobId = getScheduledLibraryScanJobId();
+    assert.ok(bootstrapJobId, "a folder mounted later gets its own scan");
   } finally {
-    db.prepare("DELETE FROM library_management WHERE entity_id = 987654").run();
     if (bootstrapJobId) queue.cancel(bootstrapJobId);
     clearScheduledLibraryScan();
-    db.prepare("DELETE FROM library_scan_runs WHERE source = 'test'").run();
+    saveReadOnlyFolderPaths([]);
+    fs.rmSync(readOnlyFolder, { recursive: true, force: true });
+    db.prepare("DELETE FROM library_scan_runs WHERE source IN ('test', 'readonly')").run();
   }
 });
 
@@ -88,7 +101,7 @@ test("library refresh queues a quick or full scan and exposes its queue status",
     ReturnType<typeof import("../../backend/services/libraryScanWorker.ts").getLibraryScanStatus>
   >;
   type Queued = { queued: boolean; jobId: number; status: ScanStatus };
-  const refresh = async (body?: { mode: string }) => {
+  const refresh = async (body?: object) => {
     const response = await app.request("/library/refresh", {
       method: "POST",
       ...(body && {
@@ -102,7 +115,7 @@ test("library refresh queues a quick or full scan and exposes its queue status",
   let refreshJobId: number | undefined;
 
   const queuedPayload = (jobId: number) =>
-    JSON.parse(requireValue(libraryScanQueue.getJob(jobId)).payload);
+    v.parse(libraryScanSchema, JSON.parse(requireValue(libraryScanQueue.getJob(jobId)).payload));
 
   try {
     assert.equal((await refresh({ mode: "bogus" })).statusCode, 400);
@@ -117,7 +130,7 @@ test("library refresh queues a quick or full scan and exposes its queue status",
     assert.equal(quick.body.status.status, "queued");
     assert.deepEqual(queuedPayload(quick.body.jobId), {
       force: false,
-      includeLidarr: true,
+      includeReadOnly: true,
       changedPaths: null,
     });
     libraryScanQueue.cancel(quick.body.jobId);
@@ -128,6 +141,57 @@ test("library refresh queues a quick or full scan and exposes its queue status",
     assert.equal(queuedPayload(full.body.jobId).force, true);
     libraryScanQueue.cancel(full.body.jobId);
     clearScheduledLibraryScan();
+
+    const root = resolveDownloadRoot();
+    const artist = libraryStore.upsertLibraryArtist({ identityKey: "name:refresh", name: "R" });
+    const addAlbum = (title: string, files: string[]) => {
+      const album = libraryStore.upsertLibraryAlbum({
+        identityKey: `album:${title}`,
+        artistId: artist.id,
+        title,
+      });
+      files.forEach((file, index) => {
+        const track = libraryStore.upsertLibraryTrack({
+          identityKey: `track:${title}:${index}`,
+          title: `${title} ${index}`,
+        });
+        libraryStore.linkLibraryAlbumTrack({ albumId: album.id, trackId: track.id });
+        libraryStore.upsertLibraryMediaFile({
+          trackId: track.id,
+          albumId: album.id,
+          source: "aurral",
+          path: path.join(root, file),
+        });
+      });
+      return album.id;
+    };
+    const albumId = addAlbum("Disc", [
+      "R/Disc/CD1/01.flac",
+      "R/Disc/CD1/02.flac",
+      "R/Disc/CD2/01.flac",
+    ]);
+    addAlbum("Loose", ["loose.mp3"]);
+    const emptyAlbumId = addAlbum("Wanted", []);
+    const scoped = async (body: object) => {
+      const queued = await refresh(body);
+      assert.equal(queued.statusCode, 202);
+      const payload = queuedPayload(queued.body.jobId);
+      libraryScanQueue.cancel(queued.body.jobId);
+      clearScheduledLibraryScan();
+      return payload;
+    };
+    assert.deepEqual(await scoped({ albumId }), {
+      force: false,
+      includeReadOnly: false,
+      changedPaths: [path.join(root, "R/Disc/CD1"), path.join(root, "R/Disc/CD2")],
+    });
+    assert.deepEqual((await scoped({ artistId: artist.id })).changedPaths, [
+      path.join(root, "R/Disc/CD1"),
+      path.join(root, "R/Disc/CD2"),
+      path.join(root, "loose.mp3"),
+    ]);
+    assert.equal((await refresh({ albumId: emptyAlbumId })).statusCode, 404);
+    assert.equal((await refresh({ albumId: 1.5 })).statusCode, 400);
 
     const { jobId } = (await refresh({ mode: "quick" })).body;
     assert.equal(queuedPayload(jobId).force, false);
@@ -177,15 +241,16 @@ test("a full refresh upgrades a pending local-only scan", () => {
   clearScheduledLibraryScan();
   let jobId: number | undefined;
   try {
-    jobId = scheduleLibraryScan({ includeLidarr: false });
+    jobId = scheduleLibraryScan({ includeReadOnly: false });
     assert.deepEqual(JSON.parse(requireValue(queue.getJob(jobId)).payload), {
       force: false,
-      includeLidarr: false,
+      includeReadOnly: false,
       changedPaths: null,
     });
-    assert.equal(scheduleLibraryScan({ includeLidarr: true }), jobId);
+    assert.equal(scheduleLibraryScan({ includeReadOnly: true }), jobId);
     assert.equal(
-      requireValue(dbOps.getJSONSetting("pendingLibraryScanJob", scanRegistrySchema)).includeLidarr,
+      requireValue(dbOps.getJSONSetting("pendingLibraryScanJob", scanRegistrySchema))
+        .includeReadOnly,
       true,
     );
   } finally {
@@ -200,7 +265,7 @@ test("pending watcher scans merge changed paths into one job", () => {
   let jobId: number | undefined;
   try {
     jobId = scheduleLibraryScan({
-      includeLidarr: false,
+      includeReadOnly: false,
       changedPaths: ["/data/music/Artist/Album/01 Track.flac"],
     });
     assert.equal(
@@ -227,10 +292,10 @@ test("watcher paths do not downgrade a queued full scan", () => {
   clearScheduledLibraryScan();
   let jobId: number | undefined;
   try {
-    jobId = scheduleLibraryScan({ includeLidarr: false });
+    jobId = scheduleLibraryScan({ includeReadOnly: false });
     assert.equal(
       scheduleLibraryScan({
-        includeLidarr: false,
+        includeReadOnly: false,
         changedPaths: ["/data/music/Artist/Album/01 Track.flac"],
       }),
       jobId,
@@ -252,14 +317,14 @@ test("an oversized active watcher merge requests a full rescan", () => {
   let jobId: number | undefined;
   try {
     jobId = scheduleLibraryScan({
-      includeLidarr: false,
+      includeReadOnly: false,
       changedPaths: ["/data/music/in-flight.flac"],
     });
     assert.equal(queue.claim("overflow-library-scan-test")?.id, jobId);
     assert.equal(claimScheduledLibraryScanJob(jobId), true);
     dbOps.setJSONSetting("pendingLibraryScanJob", {
       jobId,
-      includeLidarr: false,
+      includeReadOnly: false,
       changedPaths: Array.from({ length: 4096 }, (_, index) => `/data/music/${index}.flac`),
       inFlightActive: true,
       inFlightPaths: ["/data/music/in-flight.flac"],
@@ -267,7 +332,7 @@ test("an oversized active watcher merge requests a full rescan", () => {
     });
 
     scheduleLibraryScan({
-      includeLidarr: false,
+      includeReadOnly: false,
       changedPaths: ["/data/music/overflow.flac"],
     });
 
@@ -280,17 +345,17 @@ test("an oversized active watcher merge requests a full rescan", () => {
   }
 });
 
-test("claiming an unregistered scan does not inherit stale Lidarr mode", () => {
+test("claiming an unregistered scan does not inherit a stale read-only setting", () => {
   const queue = libraryScanQueue;
   clearScheduledLibraryScan();
   let jobId: number | undefined;
   try {
-    jobId = scheduleLibraryScan({ includeLidarr: false });
-    dbOps.setJSONSetting("pendingLibraryScanJob", { includeLidarr: true });
+    jobId = scheduleLibraryScan({ includeReadOnly: false });
+    dbOps.setJSONSetting("pendingLibraryScanJob", { includeReadOnly: true });
     assert.equal(claimScheduledLibraryScanJob(jobId), true);
     assert.deepEqual(dbOps.getJSONSetting("pendingLibraryScanJob", scanRegistrySchema), {
       jobId,
-      includeLidarr: false,
+      includeReadOnly: false,
     });
   } finally {
     if (jobId) queue.cancel(jobId);
@@ -305,13 +370,13 @@ test("an early replacement claim retains in-flight, pending, and new scan paths"
   let replacementJobId: number | undefined;
   try {
     staleJobId = scheduleLibraryScan({
-      includeLidarr: true,
+      includeReadOnly: true,
       changedPaths: ["/data/music/old.flac"],
     });
     queue.cancel(staleJobId);
     dbOps.setJSONSetting("pendingLibraryScanJob", {
       jobId: staleJobId,
-      includeLidarr: true,
+      includeReadOnly: true,
       changedPaths: ["/data/music/pending.flac"],
       inFlightActive: true,
       inFlightPaths: ["/data/music/in-flight.flac"],
@@ -324,7 +389,7 @@ test("an early replacement claim retains in-flight, pending, and new scan paths"
       assert.equal(claimed?.id, id);
       assert.equal(claimScheduledLibraryScanJob(id, claimed.payload), true);
       const begun = beginLibraryScanJob(id, claimed.payload);
-      assert.equal(begun.includeLidarr, true);
+      assert.equal(begun.includeReadOnly, true);
       assert.deepEqual(begun.changedPaths, [
         path.resolve("/data/music/in-flight.flac"),
         path.resolve("/data/music/pending.flac"),
@@ -334,7 +399,7 @@ test("an early replacement claim retains in-flight, pending, and new scan paths"
     });
 
     replacementJobId = scheduleLibraryScan({
-      includeLidarr: false,
+      includeReadOnly: false,
       changedPaths: ["/data/music/new.flac"],
     });
     assert.equal(getScheduledLibraryScanJobId(), replacementJobId);
@@ -346,10 +411,10 @@ test("an early replacement claim retains in-flight, pending, and new scan paths"
   }
 });
 
-test("an early first claim uses its targeted payload without stale Lidarr mode", () => {
+test("an early first claim uses its targeted payload without a stale read-only setting", () => {
   const queue = libraryScanQueue;
   clearScheduledLibraryScan();
-  dbOps.setJSONSetting("pendingLibraryScanJob", { includeLidarr: true });
+  dbOps.setJSONSetting("pendingLibraryScanJob", { includeReadOnly: true });
   let jobId: number | undefined;
   try {
     const enqueue = queue.enqueue.bind(queue);
@@ -359,17 +424,49 @@ test("an early first claim uses its targeted payload without stale Lidarr mode",
       assert.equal(claimed?.id, id);
       assert.equal(claimScheduledLibraryScanJob(id, claimed.payload), true);
       const begun = beginLibraryScanJob(id, claimed.payload);
-      assert.equal(begun.includeLidarr, false);
+      assert.equal(begun.includeReadOnly, false);
       assert.deepEqual(begun.changedPaths, [path.resolve("/data/music/new.flac")]);
       return id;
     });
     jobId = scheduleLibraryScan({
-      includeLidarr: false,
+      includeReadOnly: false,
       changedPaths: ["/data/music/new.flac"],
     });
     assert.equal(getScheduledLibraryScanJobId(), jobId);
   } finally {
     if (jobId) queue.cancel(jobId);
+    clearScheduledLibraryScan();
+  }
+});
+
+test("paths queued during a full scan follow it as a targeted scan", () => {
+  const queue = libraryScanQueue;
+  clearScheduledLibraryScan();
+  let fullJob: number | undefined;
+  let followUp: number | null = null;
+  try {
+    fullJob = scheduleLibraryScan({ force: true });
+    const claimed = requireValue(queue.claim("follow-up-library-scan-test"));
+    assert.equal(claimed.id, fullJob);
+    assert.equal(claimScheduledLibraryScanJob(fullJob), true);
+    beginLibraryScanJob(fullJob, { force: true, includeReadOnly: true, changedPaths: null });
+    scheduleLibraryScan({ includeReadOnly: false, changedPaths: ["/data/music/Album"] });
+    assert.equal(claimed.ack(), true);
+    assert.equal(getLibraryScanStatus(fullJob)?.status, "running");
+
+    onLibraryScanSuccess(null, { id: fullJob });
+    assert.equal(getLibraryScanStatus(fullJob)?.status, "completed");
+
+    followUp = getScheduledLibraryScanJobId();
+    const payload = v.parse(
+      libraryScanSchema,
+      JSON.parse(requireValue(queue.getJob(requireValue(followUp))).payload),
+    );
+    assert.equal(payload.force, false);
+    assert.deepEqual(payload.changedPaths, ["/data/music/Album"]);
+  } finally {
+    if (fullJob) queue.cancel(fullJob);
+    if (followUp) queue.cancel(followUp);
     clearScheduledLibraryScan();
   }
 });
@@ -454,27 +551,6 @@ test("library file watcher keeps changed paths and retries when queueing their s
   assert.deepEqual(attempts, [changed, changed]);
 
   watcher.close();
-});
-
-test("library watcher reuses configured roots without querying Lidarr", () => {
-  const rootPath = path.resolve("/data/music");
-  const pathProbe = vi.spyOn(fs, "existsSync").mockImplementation(() => {
-    throw new Error("Main-thread path probe");
-  });
-  vi.spyOn(lidarrClient, "isConfigured").mockImplementation(() => true);
-  vi.spyOn(lidarrClient, "getConfiguredRootFolderPaths").mockImplementation(() => [rootPath]);
-  const rootRequest = vi.spyOn(lidarrClient, "getRootFolders").mockImplementation(async () => {
-    throw new Error("watcher should not discover roots");
-  });
-
-  assert.equal(
-    resolveLibraryWatchRoots().some(
-      (root) => (typeof root === "string" ? root : root?.path) === rootPath,
-    ),
-    true,
-  );
-  assert.equal(rootRequest.mock.calls.length, 0);
-  assert.equal(pathProbe.mock.calls.length, 0);
 });
 
 test("library watcher creates roots without probing the filesystem on the main thread", () => {

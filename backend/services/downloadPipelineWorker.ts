@@ -1,4 +1,3 @@
-import * as v from "valibot";
 import { asAppError } from "../../lib/errors.ts";
 import { createJobWorker } from "./jobs/worker.ts";
 import { downloadPipelineQueue } from "./jobs/queues.ts";
@@ -7,6 +6,7 @@ import {
   processPipelinePayload,
   enqueuePendingJobsWithoutBatch,
   failPipelineJob,
+  pipelinePayloadSchema,
   type PipelinePayload,
 } from "./downloadPipeline.ts";
 import { isPipelinePayloadActive } from "./downloadJobs/downloadCancellation.ts";
@@ -15,20 +15,7 @@ import { logger, safeLogDiagnostic } from "./logger.ts";
 import { recordAlbumGrabQueued, recordAlbumGrabPhase } from "./albumGrabActivity.ts";
 import { downloadTracker } from "./downloadJobs/downloadTracker.ts";
 import { hasShareDownloads } from "./shareLinks/downloadStore.ts";
-import { withDownloadPayloadMutation } from "./downloadJobs/mutationGuards.ts";
-
-const pipelineStepSchema = v.looseObject({
-  jobId: v.string(),
-  phase: v.string(),
-  downloadAttemptId: v.nullish(v.string()),
-  playlistId: v.nullish(v.string()),
-  albumGroupJobIds: v.nullish(v.array(v.string())),
-});
-
-// Each source writes the rest of its step state and reads it back in its next step.
-export const pipelinePayloadSchema = v.custom<PipelinePayload>((input) =>
-  v.is(pipelineStepSchema, input),
-);
+import { withDownloadPayloadMutation } from "./downloadJobs/downloadOwnership.ts";
 
 interface PipelineDependencies {
   processPipelinePayload?: typeof processPipelinePayload;

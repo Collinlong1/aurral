@@ -83,7 +83,7 @@ test("a library album prefetch matches the page query whatever its list state", 
       ? { tracks: [{ id: 1, title: "Track" }], total: 1 }
       : {},
   }));
-  const { libraryViewQueryOptions } = await import("../../frontend/src/pages/libraryViewQuery.ts");
+  const { libraryViewQueryOptions } = await import("../../frontend/src/utils/libraryViewQuery.ts");
 
   await prefetchRoute("/album/7");
   const prefetched = requests.length;
@@ -109,7 +109,7 @@ test("an album linked by MBID prefetches its library view too", async (t) => {
   const { requests, prefetchRoute, queryClient } = await setup(t, (url) => ({
     body: url.pathname.includes("/library") ? { tracks: [], total: 0 } : { id: mbid },
   }));
-  const { libraryViewQueryOptions } = await import("../../frontend/src/pages/libraryViewQuery.ts");
+  const { libraryViewQueryOptions } = await import("../../frontend/src/utils/libraryViewQuery.ts");
 
   await prefetchRoute(`/album/${mbid}`);
   assert.equal(apiRequests(requests, `/artists/release-group/${mbid}`).length, 1);
@@ -128,4 +128,25 @@ test("a route counts as ready only after its page code has loaded", async (t) =>
   assert.equal(isRouteModuleLoaded("/discover/news"), true);
   assert.equal(isRouteModuleLoaded("/search"), false);
   assert.equal(isRouteModuleLoaded("https://example.com/discover/news"), false);
+});
+
+test("an artist's library tracks prefetch filters by artist and matches the page query", async (t) => {
+  const { requests, prefetchRoute, queryClient } = await setup(t, () => ({
+    body: { kind: "tracks", tracks: [], total: 0 },
+  }));
+  const { libraryListParams, libraryViewQueryOptions } =
+    await import("../../frontend/src/utils/libraryViewQuery.ts");
+
+  await prefetchRoute("/library/tracks?artist=5");
+  const prefetched = requests.length;
+  assert.ok(apiRequests(requests, "artistId=5").length > 0);
+
+  const { sort, direction, pageIndex, artist } = libraryListParams(
+    "tracks",
+    new URLSearchParams("artist=5"),
+  );
+  await queryClient.fetchQuery(
+    libraryViewQueryOptions({ section: "tracks", pageIndex, sort, direction, artist }),
+  );
+  assert.equal(requests.length, prefetched);
 });

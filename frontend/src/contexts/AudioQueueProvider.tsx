@@ -33,6 +33,7 @@ import type {
 } from "../utils/audioQueue";
 import { AudioQueueContext } from "./audioQueueContext";
 import { useAuth } from "./AuthContext";
+import { useToast } from "./ToastContext";
 import { getRequestToken } from "../utils/api/core";
 import {
   QUEUE_STORAGE_KEY,
@@ -45,7 +46,7 @@ import { playQueueClient } from "../utils/api/clients/playQueue.ts";
 import { useWebSocketChannel } from "../hooks/useWebSocket";
 import { playEventsClient } from "../utils/api/clients/playEvents.ts";
 import { libraryRadioClient } from "../utils/api/clients/libraryRadio.ts";
-import { getReleaseGroupCoversBatch } from "../utils/api/endpoints/artists";
+import { getReleaseGroupCover } from "../utils/api/endpoints/artists";
 import { createAudioEngine } from "../utils/audioEngine";
 import {
   MEDIA_SESSION_SEEK_SECONDS,
@@ -180,6 +181,32 @@ async function fetchRadio(seed: RadioSeed, queue: QueueEntry[] = []) {
   return tracks.map(normalizeStreamQueueTrack);
 }
 
+const playEventFields = (track: QueueEntry) => ({
+  trackId: track.id,
+  title: track.title,
+  artist: track.artist,
+  album: track.album,
+  albumId: track.libraryAlbumId,
+  artistMbid: track.artistMbid,
+  albumMbid: track.albumMbid,
+  trackMbid: track.trackMbid,
+  durationMs: track.durationMs,
+});
+
+function sendNowPlaying(track: QueueEntry) {
+  if (!track.recordHistory) return;
+  playEventsClient["now-playing"].$post({ json: playEventFields(track) }).catch(() => {});
+}
+
+function recordPlay(track: QueueEntry) {
+  if (!track.recordHistory) return;
+  parseResponse(
+    playEventsClient.$post({
+      json: { ...playEventFields(track), playedAt: Date.now(), source: "native-player" },
+    }),
+  ).catch(() => {});
+}
+
 function trackAt(state: QueueState, playbackIndex: number) {
   const queueIndex = state.playbackOrder[playbackIndex];
   return queueIndex == null ? null : (state.queue[queueIndex] ?? null);
@@ -193,6 +220,11 @@ function trackSignature(
 ) {
   return `${state.queueRevision}:${track.entryId ?? state.playbackOrder[playbackIndex]}:${track.src}:${formatKey}`;
 }
+
+const isMissing = (src: string) =>
+  fetch(src, { method: "HEAD", credentials: "same-origin" })
+    .then((response) => response.status === 404)
+    .catch(() => false);
 
 function readStoredQueue(owner: string | null) {
   try {
@@ -220,6 +252,7 @@ export function AudioQueueProvider({ children }: { children: ReactNode }) {
   const [engine] = useState(createAudioEngine);
   const playback = useSyncExternalStore(engine.subscribe, engine.getSnapshot, engine.getSnapshot);
   const { user } = useAuth() ?? {};
+  const { showInfo } = useToast();
   const owner = user ? String(user.id ?? user.username ?? "local") : null;
   const ownsQueueRef = useRef(false);
   const restoredOwnerRef = useRef<string | null>(null);
@@ -255,27 +288,6 @@ export function AudioQueueProvider({ children }: { children: ReactNode }) {
     (s: QueueState, playbackIndex: number, options?: LoadTrackOptions) => void
   >(() => {});
 
-  const recordPlay = useCallback((track: QueueEntry) => {
-    if (!track.recordHistory) return;
-    parseResponse(
-      playEventsClient.$post({
-        json: {
-          trackId: track.id,
-          title: track.title,
-          artist: track.artist,
-          album: track.album,
-          albumId: track.libraryAlbumId,
-          artistMbid: track.artistMbid,
-          albumMbid: track.albumMbid,
-          trackMbid: track.trackMbid,
-          durationMs: track.durationMs,
-          playedAt: Date.now(),
-          source: "native-player",
-        },
-      }),
-    ).catch(() => {});
-  }, []);
-
   const loadTrack = useCallback(
     (
       s: QueueState,
@@ -283,7 +295,8 @@ export function AudioQueueProvider({ children }: { children: ReactNode }) {
       { formatAttemptIndex = 0, autoplay = true }: LoadTrackOptions = {},
     ) => {
       const track = trackAt(s, playbackIndex);
-      if (!track?.src) return;
+      const src = track?.src;
+      if (!src) return;
       const formatAttempts = getFormatLoadAttempts(track);
       const formatKey = formatAttempts[formatAttemptIndex];
       if (!formatKey) return;
@@ -294,7 +307,7 @@ export function AudioQueueProvider({ children }: { children: ReactNode }) {
       if (resumeAt?.entryId !== track.entryId) resumeAtRef.current = null;
 
       engine.load({
-        src: track.src,
+        src,
         format: getHowlerFormat(formatKey),
         autoplay,
         startAt: (() => {
@@ -302,8 +315,17 @@ export function AudioQueueProvider({ children }: { children: ReactNode }) {
           const resumed = resumeAt?.entryId === track.entryId ? resumeAt.position : start;
           return Math.max(start, end > start ? Math.min(resumed, end) : resumed);
         })(),
-        onLoadError: () => {
+        onLoadError: async () => {
           loadedSignatureRef.current = null;
+          const missing = formatAttemptIndex === 0 && (await isMissing(src));
+          const cur = stateRef.current;
+          if (trackAt(cur, cur.currentIndex)?.entryId !== track.entryId) return;
+          if (missing) {
+            resumeAtRef.current = null;
+            dispatch({ type: "REMOVE_MISSING", entryId: track.entryId, autoplay });
+            showInfo(`Removed ${track.title} from the queue because its file is missing`);
+            return;
+          }
           if (formatAttemptIndex + 1 >= formatAttempts.length) {
             resumeAtRef.current = null;
             dispatch({
@@ -318,6 +340,7 @@ export function AudioQueueProvider({ children }: { children: ReactNode }) {
             autoplay,
           });
         },
+        onStart: () => sendNowPlaying(track),
         onPlayed: () => recordPlay(track),
         onEnd: () => {
           const cur = stateRef.current;
@@ -329,7 +352,7 @@ export function AudioQueueProvider({ children }: { children: ReactNode }) {
         },
       });
     },
-    [dispatch, engine, recordPlay],
+    [dispatch, engine, showInfo],
   );
 
   const loadTrackAtIndex = useCallback(
@@ -886,11 +909,12 @@ export function AudioQueueProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!missingArtworkMbid) return undefined;
     let cancelled = false;
-    getReleaseGroupCoversBatch([
-      { mbid: missingArtworkMbid, artistName: currentArtist, albumTitle: currentAlbum },
-    ])
-      .then((covers) => {
-        const artwork = covers?.[missingArtworkMbid]?.image;
+    getReleaseGroupCover(missingArtworkMbid, {
+      artistName: currentArtist,
+      albumTitle: currentAlbum,
+    })
+      .then(({ images }) => {
+        const artwork = images[0]?.image;
         if (!cancelled && artwork) {
           dispatch({ type: "SET_ALBUM_ARTWORK", albumMbid: missingArtworkMbid, artwork });
         }

@@ -1,11 +1,13 @@
 import { useMemo, useState } from "react";
+import { parseResponse } from "hono/client";
 import ArtworkImage from "../../components/ArtworkImage";
 import { useWebSocketChannel } from "../../hooks/useWebSocket";
 import { queryClient, queryKeys } from "../../queryClient.ts";
+import { libraryClient } from "../../utils/api/clients/library.ts";
 import { clearLibraryPageCache } from "../../utils/api/endpoints/library.ts";
 import { EMPTY_LIBRARY } from "../../utils/libraryPageData.ts";
-import { libraryPreviewData, libraryPreviewFavorites } from "../libraryPreviewData";
-import type { LibraryViewData } from "../libraryViewQuery.ts";
+import { libraryPreviewData, libraryPreviewFavorites } from "../../utils/libraryPreviewData";
+import type { LibraryViewData } from "../../utils/libraryViewQuery.ts";
 import type { WebSocketChannelMessage } from "../../../../backend/services/websocketService.ts";
 import type { LibraryAlbum, LibraryArtist, LibraryTrack } from "../../utils/libraryPageData.ts";
 
@@ -24,7 +26,7 @@ export type LibraryTarget = {
   [Kind in keyof LibraryEntityByKind]: { kind: Kind; entity: LibraryEntityByKind[Kind] };
 }[keyof LibraryEntityByKind];
 
-export type LibraryRemoval = LibraryTarget & { manager?: string | null };
+export type LibraryRemoval = LibraryTarget;
 
 export type TrackDownloadState = { jobId: string | null; status: string };
 
@@ -65,21 +67,6 @@ export const TRACK_DOWNLOAD_ACTIVE_STATUSES = new Set([
   "blocked",
   "completed",
 ]);
-
-export const TRACK_DOWNLOAD_ACTION_LABELS: Partial<Record<string, string>> = {
-  submitting: "Adding to search queue…",
-  pending: "Queued for search",
-  processing: "Searching for track…",
-  searching: "Searching for track…",
-  downloading: "Downloading track…",
-  moving: "Adding to library…",
-  blocked: "Needs review",
-  completed: "Downloaded; waiting for library refresh",
-  failed: "Retry download track",
-};
-
-export const trackDownloadActionLabel = (status: string | null | undefined) =>
-  TRACK_DOWNLOAD_ACTION_LABELS[status ?? ""] || "Download track";
 
 export const activityDownloadStatus = (
   request: { status?: string; statusLabel?: unknown } | null | undefined,
@@ -175,6 +162,33 @@ export const invalidateLibraryViews = () => {
     queryClient.invalidateQueries({ queryKey: queryKeys.libraryViewPrefix }),
   ]);
 };
+
+const wait = (durationMs: number) => new Promise((resolve) => setTimeout(resolve, durationMs));
+
+const ACTIVE_SCAN: (string | undefined)[] = ["queued", "running"];
+
+// A request made while a scan runs is scanned by the scan that follows it.
+export async function waitForLibraryScan(jobId: number, isCurrent = () => true) {
+  let current = jobId;
+  while (true) {
+    const status = await parseResponse(
+      libraryClient.refresh[":jobId"].$get({ param: { jobId: encodeURIComponent(current) } }),
+    );
+    if (!isCurrent()) return false;
+    if (status.status === "failed") throw new Error(status.error || "Library refresh failed");
+    if (status.status === "completed") {
+      const next = await parseResponse(libraryClient.refresh.$get());
+      if (!isCurrent()) return false;
+      if (!next.jobId || !ACTIVE_SCAN.includes(next.status?.status)) {
+        void invalidateLibraryViews();
+        return true;
+      }
+      current = next.jobId;
+      continue;
+    }
+    await wait(750);
+  }
+}
 
 const handleLibraryScanMessage = (message: WebSocketChannelMessage) => {
   if (message?.type === "library_scan_completed") void invalidateLibraryViews();

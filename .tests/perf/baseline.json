@@ -4,7 +4,7 @@
       "cold": 13,
       "warm": 13
     },
-    "bytes": 1541,
+    "bytes": 1466,
     "scans": []
   },
   "library home": {
@@ -12,7 +12,7 @@
       "cold": 127,
       "warm": 121
     },
-    "bytes": 187921,
+    "bytes": 179984,
     "scans": []
   },
   "library albums": {
@@ -20,7 +20,7 @@
       "cold": 20,
       "warm": 20
     },
-    "bytes": 142233,
+    "bytes": 135998,
     "scans": []
   },
   "library albums, last page": {
@@ -28,7 +28,7 @@
       "cold": 20,
       "warm": 20
     },
-    "bytes": 146256,
+    "bytes": 139992,
     "scans": []
   },
   "library albums, recently added": {
@@ -36,7 +36,7 @@
       "cold": 20,
       "warm": 20
     },
-    "bytes": 142233,
+    "bytes": 135998,
     "scans": []
   },
   "library artists": {
@@ -44,7 +44,7 @@
       "cold": 13,
       "warm": 12
     },
-    "bytes": 92726,
+    "bytes": 91526,
     "scans": []
   },
   "library tracks": {
@@ -52,7 +52,7 @@
       "cold": 21,
       "warm": 21
     },
-    "bytes": 132905,
+    "bytes": 131386,
     "scans": []
   },
   "library genres": {
@@ -68,7 +68,15 @@
       "cold": 21,
       "warm": 20
     },
-    "bytes": 162483,
+    "bytes": 155001,
+    "scans": []
+  },
+  "library status filter": {
+    "queries": {
+      "cold": 34,
+      "warm": 32
+    },
+    "bytes": 233327,
     "scans": []
   },
   "library filter": {
@@ -76,15 +84,15 @@
       "cold": 21,
       "warm": 20
     },
-    "bytes": 145653,
+    "bytes": 139360,
     "scans": []
   },
   "artist page": {
     "queries": {
-      "cold": 64,
-      "warm": 62
+      "cold": 60,
+      "warm": 57
     },
-    "bytes": 146472,
+    "bytes": 130619,
     "scans": []
   },
   "album page": {
@@ -92,7 +100,7 @@
       "cold": 25,
       "warm": 24
     },
-    "bytes": 16769,
+    "bytes": 16567,
     "scans": []
   },
   "favorites": {
@@ -100,7 +108,7 @@
       "cold": 22,
       "warm": 22
     },
-    "bytes": 258768,
+    "bytes": 253491,
     "scans": []
   },
   "search": {
@@ -116,20 +124,32 @@
       "cold": 28,
       "warm": 28
     },
-    "bytes": 14050,
+    "bytes": 12110,
     "scans": []
   },
   "discover artist": {
     "queries": {
-      "cold": 22,
-      "warm": 5
+      "cold": 92,
+      "warm": 58
     },
-    "bytes": 379,
+    "bytes": 2040,
     "scans": [],
     "calls": {
-      "brainzmash": {
+      "api.deezer.com": {
+        "cold": 2,
+        "warm": 1
+      },
+      "api.listenbrainz.org": {
         "cold": 1,
+        "warm": 1
+      },
+      "brainzmash": {
+        "cold": 2,
         "warm": 0
+      },
+      "labs.api.listenbrainz.org": {
+        "cold": 1,
+        "warm": 1
       }
     }
   },
@@ -147,6 +167,16 @@
       }
     }
   },
+  "discover album tracks": {
+    "queries": {
+      "cold": 8,
+      "warm": 8
+    },
+    "bytes": 17,
+    "scans": [
+      "library_albums"
+    ]
+  },
   "discover search": {
     "queries": {
       "cold": 12,
@@ -163,29 +193,25 @@
   },
   "similar artists": {
     "queries": {
-      "cold": 29,
-      "warm": 5
+      "cold": 20,
+      "warm": 6
     },
     "bytes": 14,
     "scans": [],
     "calls": {
-      "api.deezer.com": {
-        "cold": 2,
-        "warm": 1
-      },
       "brainzmash": {
-        "cold": 2,
+        "cold": 1,
         "warm": 0
       },
       "labs.api.listenbrainz.org": {
         "cold": 1,
-        "warm": 1
+        "warm": 0
       }
     }
   },
   "playlists": {
     "queries": {
-      "cold": 40,
+      "cold": 39,
       "warm": 19
     },
     "bytes": 4503,
@@ -302,5 +328,47 @@
     "scans": [
       "download_jobs"
     ]
+  },
+  "album match": {
+    "queries": {
+      "cold": 35,
+      "warm": 4
+    },
+    "bytes": 35,
+    "scans": [],
+    "calls": {
+      "brainzmash": {
+        "cold": 1,
+        "warm": 0
+      }
+    }
+  },
+  "track match": {
+    "queries": {
+      "cold": 18,
+      "warm": 4
+    },
+    "bytes": 40,
+    "scans": [],
+    "calls": {
+      "brainzmash": {
+        "cold": 1,
+        "warm": 0
+      }
+    }
+  },
+  "artist match": {
+    "queries": {
+      "cold": 13,
+      "warm": 4
+    },
+    "bytes": 12,
+    "scans": [],
+    "calls": {
+      "brainzmash": {
+        "cold": 1,
+        "warm": 0
+      }
+    }
   }
 }

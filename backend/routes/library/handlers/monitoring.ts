@@ -5,8 +5,13 @@ import { noCache } from "../../../middleware/cacheHeaders.ts";
 import { requireAdmin, requireAuth, requirePermission } from "../../../middleware/guards.ts";
 import type { AppEnv } from "../../../middleware/requestUser.ts";
 import { validate } from "../../../middleware/validate.ts";
-import { removeMonitoringExclusion } from "../../../services/aurralMonitoringStore.ts";
+import { removeMonitoringExclusion } from "../../../services/monitoringStore.ts";
 import { libraryManager } from "../../../services/libraryManager.ts";
+import {
+  dismissLidarrConversionReport,
+  setUpLidarrPlugin,
+} from "../../../services/lidarrConversionReport.ts";
+import { PluginRequestError } from "../../../services/plugins/pluginService.ts";
 import { asAppError } from "../../../../lib/errors.ts";
 import { isErrorStatus, isFailure } from "../../shared/errorStatus.ts";
 
@@ -48,10 +53,7 @@ export default new Hono<AppEnv>()
       const mbid = c.req.param("mbid");
       if (!UUID_REGEX.test(mbid)) return c.json({ error: "Invalid MBID format" }, 400);
       try {
-        const result = await libraryManager.previewAurralArtistMonitoring(
-          mbid,
-          c.req.valid("json"),
-        );
+        const result = await libraryManager.previewArtistMonitoring(mbid, c.req.valid("json"));
         if (isFailure(result)) return sendFailure(c, result);
         return c.json(result, 200);
       } catch (error) {
@@ -88,6 +90,23 @@ export default new Hono<AppEnv>()
       return c.json(result, 200);
     } catch (error) {
       return sendError(c, error, "Failed to save monitoring defaults");
+    }
+  })
+  .post("/lidarr-conversion/dismiss", requireAuth, requireAdmin, (c) => {
+    try {
+      dismissLidarrConversionReport();
+      return c.json({ success: true }, 200);
+    } catch (error) {
+      return sendError(c, error, "Failed to dismiss the Lidarr conversion report");
+    }
+  })
+  .post("/lidarr-conversion/plugin", requireAuth, requireAdmin, async (c) => {
+    try {
+      return c.json(await setUpLidarrPlugin(), 200);
+    } catch (error) {
+      if (error instanceof PluginRequestError)
+        return c.json({ error: error.message }, error.status);
+      return sendError(c, error, "Failed to set up the Lidarr plugin");
     }
   })
   .get("/monitoring/exclusions", requireAuth, noCache, validate("query", exclusionsQuery), (c) => {

@@ -49,9 +49,6 @@ export interface LibraryData {
 
 const text = (value: unknown) => String(value || "").trim();
 
-export const getAlbumCoverId = (album: LibraryAlbum | null | undefined) =>
-  album?.releaseGroupMbid || album?.mbid || null;
-
 export const favoriteId = (
   kind: string,
   entity: { id?: unknown; identityKey?: unknown } | null | undefined,
@@ -236,11 +233,12 @@ export const releaseTypeOf = (album: LibraryAlbum | null | undefined) => {
 export const albumCardMeta = (
   album: LibraryAlbum | null | undefined,
   { available, total }: { available: number; total?: number | null },
+  { type = true }: { type?: boolean } = {},
 ) => {
   const partial = Boolean(total && available < total);
   const unit = total === 1 ? "track" : "tracks";
   return {
-    details: [releaseTypeOf(album), yearOf(album?.releaseDate)].filter(Boolean).join(" · "),
+    details: [type && releaseTypeOf(album), yearOf(album?.releaseDate)].filter(Boolean).join(" · "),
     count: partial ? `${available}/${total} ${unit}` : `${total || 0} ${unit}`,
     partial,
   };

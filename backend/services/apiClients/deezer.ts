@@ -7,6 +7,7 @@ import { createOutagePause } from "./outagePause.ts";
 
 const DEEZER_API_URL = "https://api.deezer.com";
 const DEEZER_NO_DATA_CODE = 800;
+export const DEEZER_HEADERS = { "Accept-Language": "en" };
 
 export const deezerErrorSchema = v.looseObject({
   error: v.looseObject({ code: v.optional(v.number()) }),
@@ -208,7 +209,9 @@ async function deezerGet<Schema extends v.GenericSchema>(
   path: string,
   config: DeezerRequest,
 ) {
-  const { data } = await deezerPause.run(() => http.get(`${DEEZER_API_URL}${path}`, config));
+  const { data } = await deezerPause.run(() =>
+    http.get(`${DEEZER_API_URL}${path}`, { ...config, headers: DEEZER_HEADERS }),
+  );
   const failure = v.safeParse(deezerErrorSchema, data);
   if (!failure.success) return readOne(schema, data, { service: "Deezer", endpoint: path });
   if (failure.output.error.code === DEEZER_NO_DATA_CODE) return null;
@@ -402,16 +405,6 @@ export async function deezerGetArtistTopTrackList(
       .filter((track) => track.title.trim())
       .map((track) => toTopListTrack(track, artistName));
   });
-}
-
-export async function deezerGetArtistTopTracks(artistName: string) {
-  try {
-    const artist = await getDeezerArtist(artistName);
-    if (!artist) return [];
-    return await getDeezerArtistTopTracksById(artist.id);
-  } catch (e) {
-    return [];
-  }
 }
 
 export async function deezerGetArtistTopTracksById(artistId: DeezerArtistId) {
@@ -668,10 +661,12 @@ export function scoreDeezerTrackMatch(track: TrackLike, deezerTrack: TrackLike) 
   return score;
 }
 
+type Previewed<T> = T & { preview_url?: string; previewProvider?: string; previewTrackId?: string };
+
 export function attachDeezerTrackPreviews<T extends TrackLike>(
   tracks: T[],
   deezerTracks: Awaited<ReturnType<typeof deezerGetAlbumTracks>>,
-) {
+): Previewed<T>[] {
   if (!Array.isArray(tracks) || tracks.length === 0) return tracks || [];
   if (!Array.isArray(deezerTracks) || deezerTracks.length === 0) return tracks;
 
@@ -729,7 +724,7 @@ export async function enrichTracksWithDeezerPreviews<T extends TrackLike>(
     releaseDate?: string;
     cacheKey?: string;
   } = {},
-) {
+): Promise<Previewed<T>[]> {
   if (!Array.isArray(tracks) || tracks.length === 0) return tracks || [];
   const normalizedCacheKey =
     cacheKey ||

@@ -8,11 +8,8 @@ import { getBulkOperation, saveBulkOperation } from "./bulkOperationStore.ts";
 
 type PlaylistOperation = Record<string, unknown>;
 
-const PERMANENT_ERROR_CODES = new Set([
-  "STATIC_PLAYLIST_NAME_CONFLICT",
-  "FLOW_NAME_CONFLICT",
-  "PLUGIN_PERMISSION_REVOKED",
-]);
+// A revoked plugin grant will not succeed on retry.
+const PERMANENT_ERROR_CODES = new Set(["PLUGIN_PERMISSION_REVOKED"]);
 
 let currentLabel: string | null = null;
 let flowRunLabel: string | null = null;
@@ -147,11 +144,7 @@ const flowRunWorker = createJobWorker(flowRunQueue, {
 
 export const { start: startFlowRunWorker, stop: stopFlowRunWorker } = flowRunWorker;
 
-export const {
-  start: startPlaylistOperationWorker,
-  stop: stopPlaylistOperationWorker,
-  isRunning: isPlaylistOperationWorkerRunning,
-} = worker;
+export const { start: startPlaylistOperationWorker, stop: stopPlaylistOperationWorker } = worker;
 
 export function getPlaylistOperationWorkerStatus() {
   return {

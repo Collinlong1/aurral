@@ -1,6 +1,7 @@
 import * as v from "valibot";
 import { buildPlaylistTrackIdentity, dedupePlaylistTracks } from "../playlists/playlistTracks.ts";
 import {
+  DEEZER_HEADERS,
   deezerErrorSchema,
   deezerLimiter,
   deezerPageSchema,
@@ -9,6 +10,8 @@ import {
 } from "../apiClients/deezer.ts";
 import { readMany, readOne } from "../integrationData.ts";
 import { mapWithConcurrency } from "../discovery/helpers.ts";
+import createCache from "../apiClients/simpleCache.ts";
+import { asAppError } from "../../../lib/errors.ts";
 
 const DEEZER_API_URL = "https://api.deezer.com";
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -20,6 +23,7 @@ const SHELF_CONCURRENCY = 6;
 const SHELF_TTL_MS = 24 * 60 * 60 * 1000;
 const SEARCH_RESULTS_PER_TAG = 25;
 const MAX_CACHED_SEARCHES = 200;
+const ARTIST_PLAYLISTS = 20;
 const FAILED_SOURCE_RETRY_MS = 15 * 60 * 1000;
 const FEATURED_SOURCE_ID = "genre-0";
 const PLAYLIST_ID_PATTERN = /^\d{1,20}$/;
@@ -87,7 +91,7 @@ export const deezerPlaylistSchema = v.looseObject({
   nb_tracks: v.optional(v.number()),
   picture_xl: v.nullish(v.string()),
   picture_big: v.nullish(v.string()),
-  user: v.optional(v.looseObject({ name: v.optional(v.string()) })),
+  user: v.optional(v.looseObject({ id: v.optional(v.number()), name: v.optional(v.string()) })),
   creator: v.optional(v.looseObject({ name: v.optional(v.string()) })),
 });
 
@@ -99,6 +103,7 @@ type CachedSource = { playlists: PlaylistSummary[] | null; error: unknown; expir
 const sourceCache = new Map<string, CachedSource>();
 const sourceRequests = new Map<string, Promise<PlaylistSummary[]>>();
 const tagSearchCache = new Map<string, SearchedPlaylists & { expiresAt: number }>();
+const artistPlaylistCache = createCache<PlaylistSummary[]>(SHELF_TTL_MS / 1000, 500);
 
 const providerError = (message: string, statusCode: number, code: string) => {
   const error: Error & { statusCode?: number; code?: string } = new Error(message);
@@ -124,7 +129,7 @@ export async function deezerRequest<Schema extends v.GenericSchema>(
   try {
     response = await deezerLimiter.schedule(() =>
       fetch(url, {
-        headers: { Accept: "application/json" },
+        headers: { Accept: "application/json", ...DEEZER_HEADERS },
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       }),
     );
@@ -185,7 +190,7 @@ const normalizePlaylistSummary = (playlist: DeezerPlaylist) => {
     name,
     description: String(playlist.description || "").trim() || null,
     trackCount: Number(playlist.nb_tracks) || 0,
-    artworkUrl: playlist.picture_xl || playlist.picture_big || null,
+    artworkUrl: playlist.picture_big || playlist.picture_xl || null,
     curator: String(playlist.user?.name || playlist.creator?.name || "").trim() || null,
   };
 };
@@ -259,9 +264,8 @@ const normalizeTracks = (rows: DeezerTrack[]) => {
 
 export async function getDeezerPlaylist(value: unknown) {
   const id = validateDeezerPlaylistId(value);
-  const summary = normalizePlaylistSummary(
-    await deezerRequest(deezerPlaylistSchema, `/playlist/${id}`),
-  );
+  const playlist = await deezerRequest(deezerPlaylistSchema, `/playlist/${id}`);
+  const summary = normalizePlaylistSummary(playlist);
   if (!summary) {
     throw providerError("The Deezer playlist is unavailable", 404, "DEEZER_PLAYLIST_NOT_FOUND");
   }
@@ -276,7 +280,11 @@ export async function getDeezerPlaylist(value: unknown) {
     index += page.received;
     if (page.received === 0 || !page.next) break;
   }
-  return { ...summary, ...normalizeTracks(rows.slice(0, MAX_TRACKS)) };
+  return {
+    ...summary,
+    artworkUrl: playlist.picture_xl || summary.artworkUrl,
+    ...normalizeTracks(rows.slice(0, MAX_TRACKS)),
+  };
 }
 
 type ShelfSource = {
@@ -387,8 +395,30 @@ export async function getEditorialShelf(scope: ShelfScope = "all") {
   return categories;
 }
 
-const isEditorPlaylist = (playlist: DeezerPlaylist) =>
-  /deezer/i.test(String(playlist.user?.name || playlist.creator?.name || ""));
+const curatorName = (playlist: DeezerPlaylist) =>
+  String(playlist.user?.name || playlist.creator?.name || "");
+
+const isEditorPlaylist = (playlist: DeezerPlaylist) => /deezer/i.test(curatorName(playlist));
+
+const artistPlaylistRank = (playlist: DeezerPlaylist) =>
+  /deezer artist editor/i.test(curatorName(playlist)) ? 0 : isEditorPlaylist(playlist) ? 1 : 2;
+
+export async function getDeezerArtistPlaylists(artistId: string) {
+  const cached = artistPlaylistCache.get(artistId);
+  if (cached) return cached;
+  const { items } = await deezerList(deezerPlaylistSchema, `/artist/${artistId}/playlists`, {
+    limit: ARTIST_PLAYLISTS,
+  }).catch((error: unknown) => {
+    if (asAppError(error)?.code === "DEEZER_PLAYLIST_NOT_FOUND") return { items: [] };
+    throw error;
+  });
+  const playlists = items
+    .toSorted((left, right) => artistPlaylistRank(left) - artistPlaylistRank(right))
+    .map(normalizePlaylistSummary)
+    .filter((playlist) => playlist !== null);
+  artistPlaylistCache.set(artistId, playlists);
+  return playlists;
+}
 
 export async function searchDeezerPlaylists(term: unknown): Promise<SearchedPlaylists> {
   const key = String(term || "")

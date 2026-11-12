@@ -5,7 +5,7 @@ import { playlistManager } from "../../../services/playlists/playlistManager.ts"
 import { flowPlaylistConfig } from "../../../services/playlists/flowPlaylistConfig.ts";
 import { playlistOperationQueue } from "../../../services/playlists/playlistOperationQueue.ts";
 import { buildLidarrImportListItems } from "../../../services/lidarrImportListFeed.ts";
-import { withPlaylistMutationLock } from "../../../services/downloadJobs/mutationGuards.ts";
+import { withPlaylistMutationLock } from "../../../services/downloadJobs/downloadLocks.ts";
 import {
   DEFAULT_LIMIT,
   flowPayloadError,
@@ -22,6 +22,9 @@ import {
   restoreMarkedPlaylistDownloadWork,
 } from "../../../services/downloadJobs/downloadCancellationService.ts";
 import { buildFlowFromTemplate, listFlowTemplates } from "../../../services/flows/flowTemplates.ts";
+import { getDiscoverPlaylistPreset } from "../../../config/discoverPlaylistPresets.ts";
+import { browseCoverFile } from "../../../services/discovery/browseCovers.ts";
+import { sendImageFile } from "../../shared/sendImageFile.ts";
 import { saveFlowAsStaticPlaylist } from "../../../services/flows/staticPlaylistFromFlow.ts";
 import { asAppError } from "../../../../lib/errors.ts";
 import {
@@ -118,6 +121,29 @@ export default new Hono<AppEnv>()
       );
     }
   })
+  .get(
+    "/flow-templates/:templateId/cover",
+    requirePlaylistAccess,
+    validate("query", v.object({ w: v.optional(v.string()) })),
+    async (c) => {
+      const template = getDiscoverPlaylistPreset(c.req.param("templateId"));
+      if (!template) return c.json({ error: "Flow template not found" }, 404);
+      try {
+        const file = await browseCoverFile({
+          title: template.name,
+          template: template.cover,
+          artist: null,
+        });
+        c.header("Cache-Control", "private, max-age=31536000, immutable");
+        const sent = await sendImageFile(c, file, Number(c.req.valid("query").w), {
+          contentType: "image/webp",
+        });
+        return sent || c.json({ error: "Cover not found" }, 404);
+      } catch (error) {
+        return c.json({ error: "Failed to draw cover", message: asAppError(error)?.message }, 500);
+      }
+    },
+  )
   .post("/flows", requirePlaylistAccess, validate("json", flowCreate), async (c) => {
     try {
       const user = c.var.user;
@@ -158,9 +184,6 @@ export default new Hono<AppEnv>()
       return c.json({ success: true, flow }, 200);
     } catch (error) {
       const failure = asAppError(error);
-      if (failure?.code === "FLOW_NAME_CONFLICT") {
-        return c.json({ error: "Flow name already exists", message: failure.message }, 400);
-      }
       return c.json({ error: "Failed to create flow", message: failure?.message }, 500);
     }
   })
@@ -194,9 +217,6 @@ export default new Hono<AppEnv>()
       return c.json({ success: true, flow: updated }, 200);
     } catch (error) {
       const failure = asAppError(error);
-      if (failure?.code === "FLOW_NAME_CONFLICT") {
-        return c.json({ error: "Flow name already exists", message: failure.message }, 400);
-      }
       return c.json({ error: "Failed to update flow", message: failure?.message }, 500);
     }
   })
@@ -315,9 +335,6 @@ export default new Hono<AppEnv>()
         return c.json({ success: true, ...saved }, 200);
       } catch (error) {
         const failure = asAppError(error);
-        if (failure?.code === "STATIC_PLAYLIST_NAME_CONFLICT") {
-          return c.json({ error: "Playlist name already exists", message: failure.message }, 400);
-        }
         return c.json(
           { error: "Failed to create static playlist", message: failure?.message },
           500,

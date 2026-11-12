@@ -2,7 +2,10 @@ import { Hono } from "hono";
 import { staticPlaylistJobs } from "../../../services/playlists/playlistJobs.ts";
 import * as v from "valibot";
 import path from "path";
-import { downloadTracker } from "../../../services/downloadJobs/downloadTracker.ts";
+import {
+  downloadTracker,
+  jobStatusSchema,
+} from "../../../services/downloadJobs/downloadTracker.ts";
 import { downloadWorker } from "../../../services/downloadJobs/downloadWorker.ts";
 import { flowPlaylistConfig } from "../../../services/playlists/flowPlaylistConfig.ts";
 import { orderJobsByPlaylistTracks } from "../../../services/playlists/playlistTracks.ts";
@@ -10,17 +13,17 @@ import {
   getPlaylistStatusSnapshot,
   getPlaylistsContainingTrack,
 } from "../../../services/playlists/playlistStatusSnapshot.ts";
-import { indexUnmonitoredJobs } from "../../../services/aurralUnmonitoredJobs.ts";
+import { indexUnmonitoredJobs } from "../../../services/unmonitoredJobs.ts";
 import { noCache } from "../../../middleware/cacheHeaders.ts";
 import { requireAdmin, requireAuth } from "../../../middleware/guards.ts";
-import { hasPermission } from "../../../middleware/auth.ts";
+import { hasPermission } from "../../../services/auth.ts";
 import {
   ACTIVE_JOB_STATUSES,
   RETRYABLE_JOB_STATUSES,
   cancelTrackDownload,
   cancelTrackDownloads,
   retryTrackDownload,
-} from "../../../services/aurralAlbumJobs.ts";
+} from "../../../services/albumJobs.ts";
 import { getTrackJobRequesterId } from "../../../services/aurralHistoryService.ts";
 import {
   LIBRARY_JOB_TYPE,
@@ -37,12 +40,15 @@ import {
 import { invalidateRequestsCache } from "../../requests.ts";
 import { getLibraryMediaFile } from "../../../services/libraryMediaStore.ts";
 import {
-  decorateJobQuality,
-  getQualityProfile,
-  isAurralOwnedPath,
   queueQualityUpgrade,
   runQualityUpgradeCheck,
 } from "../../../services/qualityProfileService.ts";
+import {
+  decorateJobQuality,
+  getQualityProfile,
+  isAurralOwnedPath,
+} from "../../../services/qualityProfile.ts";
+import { readOnlyFolderPaths } from "../../../services/libraryFolders.ts";
 import { getLibraryTrackOwnershipBatch } from "../../../services/libraryQueryService.ts";
 import { playlistTrackFavoriteIds } from "../../../services/subsonicLibraryService.ts";
 import { logger, safeLogDiagnostic } from "../../../services/logger.ts";
@@ -113,7 +119,6 @@ function getAccessibleManualSearchJob(
     if (
       job.status !== "done" ||
       job.upgradeForJobId ||
-      job.managedBy !== "aurral" ||
       !isAurralOwnedPath(job.finalPath) ||
       downloadTracker.findActiveUpgradeJob(job)
     ) {
@@ -128,14 +133,18 @@ function getAccessibleManualSearchJob(
   return downloadTracker.isWantedMissing(job) ? job : null;
 }
 
-function toPublicJob(job: DownloadJob, profile: ReturnType<typeof getQualityProfile>) {
+function toPublicJob(
+  job: DownloadJob,
+  profile: ReturnType<typeof getQualityProfile>,
+  readOnlyRoots: string[],
+) {
   const {
     stagingPath: _stagingPath,
     heldForReview: _heldForReview,
     finalPath,
     externalPath: _externalPath,
     ...publicJob
-  } = decorateJobQuality(job, profile);
+  } = decorateJobQuality(job, profile, readOnlyRoots);
   const streamFormat = finalPath ? path.extname(finalPath).slice(1).toLowerCase() : "";
   return { ...publicJob, streamFormat: streamFormat || null };
 }
@@ -265,6 +274,7 @@ export default new Hono<AppEnv>()
             .map((job) => ({ ...job, playlistId, playlistType: playlistId }))
         : downloadTracker.getByPlaylistType(playlistId, limit);
       const profile = getQualityProfile();
+      const readOnlyRoots = readOnlyFolderPaths();
       const accessibleJobs = filterJobsForUser(user, jobs);
       const libraryOwnership = getLibraryTrackOwnershipBatch(accessibleJobs);
       const libraryCovers = getLibraryCoverUrlsForJobs(accessibleJobs);
@@ -276,7 +286,7 @@ export default new Hono<AppEnv>()
       );
       return c.json(
         accessibleJobs.map((job, index) => ({
-          ...toPublicJob(job, profile),
+          ...toPublicJob(job, profile, readOnlyRoots),
           ...withLibraryNames(libraryInfo.get(String(job.id))),
           libraryOwned: libraryOwnership[index] === true,
           favoriteId: favoriteIds[index],
@@ -303,9 +313,14 @@ export default new Hono<AppEnv>()
       }
       const jobs = filterJobsForUser(
         c.var.user,
-        status ? downloadTracker.getByStatus(status) : downloadTracker.getAll(),
+        !status
+          ? downloadTracker.getAll()
+          : v.is(jobStatusSchema, status)
+            ? downloadTracker.getByStatus(status)
+            : [],
       );
       const profile = getQualityProfile();
+      const readOnlyRoots = readOnlyFolderPaths();
       const isUnmonitored = indexUnmonitoredJobs();
       const customArtwork = getCustomArtworkMap(
         "playlist-track",
@@ -313,7 +328,7 @@ export default new Hono<AppEnv>()
       );
       return c.json(
         jobs.map((job) => ({
-          ...toPublicJob(job, profile),
+          ...toPublicJob(job, profile, readOnlyRoots),
           monitored: !isUnmonitored(job),
           ...(job.status === "cancelled" &&
             !downloadTracker.isWantedMissing(job) && { albumCancelled: true }),

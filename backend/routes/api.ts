@@ -4,7 +4,6 @@ import { HTTPException } from "hono/http-exception";
 import type { AppEnv } from "../middleware/requestUser.ts";
 import { logger } from "../services/logger.ts";
 import artists from "./artists/index.ts";
-import artistStream from "./artists/handlers/stream.ts";
 import auth from "./auth.ts";
 import backup from "./backup.ts";
 import deezer from "./deezer.ts";
@@ -16,7 +15,6 @@ import inbox from "./inbox.ts";
 import library from "./library/index.ts";
 import libraryStreams from "./library/streams.ts";
 import lidarrFeed from "./lidarrFeed.ts";
-import lidarrWebhook from "./lidarrWebhook.ts";
 import logs from "./logs.ts";
 import mcp from "./mcp.ts";
 import news from "./news.ts";
@@ -79,7 +77,6 @@ export const api = new Hono<AppEnv>()
   .route("/", playlistImports)
   .route("/", playlistJobs)
   .route("/", playlistWorker)
-  .route("/", artistStream)
   .route("/", artists)
   .route("/", search)
   .route("/", imageProxy)
@@ -107,7 +104,6 @@ export const api = new Hono<AppEnv>()
   .route("/", shareLinks)
   .route("/", starPrompt)
   .route("/", wrapped)
-  .route("/", lidarrWebhook)
   .route("/", lidarrFeed)
   .route("/", logs);
 

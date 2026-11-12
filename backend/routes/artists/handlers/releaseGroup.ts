@@ -6,10 +6,7 @@ import { cacheFor, noCache } from "../../../middleware/cacheHeaders.ts";
 import { requireStreamAuth } from "../../../middleware/guards.ts";
 import type { AppEnv } from "../../../middleware/requestUser.ts";
 import { validate } from "../../../middleware/validate.ts";
-import {
-  fetchReleaseGroupCoverUrl,
-  resolveReleaseGroupCoversBatch,
-} from "../../../services/releaseGroupCoverService.ts";
+import { fetchReleaseGroupCoverUrl } from "../../../services/releaseGroupCoverService.ts";
 import { enrichTracksWithDeezerPreviews } from "../../../services/apiClients/index.ts";
 import {
   getArtistByMbid,
@@ -28,23 +25,8 @@ import { queryText } from "../utils.ts";
 import { musicbrainzGetReleaseTrackCredits } from "../../../services/apiClients/musicbrainz.ts";
 
 type ReleaseGroupAlbum = Awaited<ReturnType<typeof getAlbumByMbid>>;
-type ReleaseGroupCovers = Awaited<ReturnType<typeof resolveReleaseGroupCoversBatch>>;
 
 const ratingsBody = v.object({ ids: v.optional(v.array(v.string()), []) });
-
-const coversBody = v.object({
-  items: v.optional(
-    v.array(
-      v.object({
-        mbid: v.optional(v.string()),
-        id: v.optional(v.string()),
-        artistName: v.optional(v.string()),
-        albumTitle: v.optional(v.string()),
-      }),
-    ),
-    [],
-  ),
-});
 
 const coverQuery = v.object({
   refresh: v.optional(v.string()),
@@ -52,12 +34,8 @@ const coverQuery = v.object({
   albumTitle: queryText,
 });
 
-const tracksQuery = v.object({
+const previewsQuery = v.object({
   artistMbid: queryText,
-  artistName: queryText,
-  albumTitle: queryText,
-  releaseType: queryText,
-  releaseDate: queryText,
   deezerAlbumId: queryText,
 });
 
@@ -95,28 +73,6 @@ export default new Hono<AppEnv>()
         { error: "Failed to load release ratings", message: asAppError(error)?.message },
         502,
       );
-    }
-  })
-  .post("/release-groups/covers", validate("json", coversBody), async (c) => {
-    const { items } = c.req.valid("json");
-    const noCovers: ReleaseGroupCovers = {};
-    if (!items.length) return c.json({ covers: noCovers }, 200);
-    try {
-      const covers = await resolveReleaseGroupCoversBatch(items);
-      const hasTransientError = Object.values(covers).some((entry) => entry?.transientError);
-      c.header(
-        "Cache-Control",
-        hasTransientError
-          ? "public, max-age=60, stale-while-revalidate=300"
-          : "public, max-age=31536000, immutable",
-      );
-      return c.json({ covers }, 200);
-    } catch (error) {
-      logger.error("releaseGroup", "Error in release-groups covers batch route:", {
-        message: asAppError(error)?.message,
-      });
-      c.header("Cache-Control", "public, max-age=60");
-      return c.json({ covers: noCovers }, 200);
     }
   })
   .get("/release-group/:mbid", cacheFor(3600), async (c) => {
@@ -212,44 +168,13 @@ export default new Hono<AppEnv>()
     c.header("Cache-Control", credits.size ? "private, max-age=86400" : "no-store");
     return c.json({ credits: Object.fromEntries(credits) }, 200);
   })
-  .get("/release-group/:mbid/tracks", noCache, validate("query", tracksQuery), async (c) => {
+  .get("/release-group/:mbid/tracks", noCache, async (c) => {
+    const mbid = c.req.param("mbid");
+    if (!UUID_REGEX.test(mbid)) return c.json({ error: "Invalid MBID format" }, 400);
     try {
-      const mbid = c.req.param("mbid");
-      if (!UUID_REGEX.test(mbid)) {
-        return c.json({ error: "Invalid MBID format" }, 400);
-      }
-
-      const query = c.req.valid("query");
-      const artistMbid = UUID_REGEX.test(query.artistMbid) ? query.artistMbid : "";
-      const { artistName, albumTitle, releaseType, releaseDate, deezerAlbumId } = query;
-
       const tracks = await getAlbumTracksByAlbumMbid(mbid, { chooseRelease: chooseLibraryRelease });
-      let deezerArtistId = "";
-      if (artistMbid) {
-        const override = dbOps.getArtistOverride(artistMbid);
-        deezerArtistId = override?.deezerArtistId || "";
-        if (!deezerArtistId) {
-          const resolvedArtistMbid = override?.musicbrainzId || artistMbid;
-          const metadataArtist = await getArtistByMbid(resolvedArtistMbid).catch(() => null);
-          deezerArtistId = getLinkedDeezerArtistId(metadataArtist?.links) || "";
-        }
-      }
-      const enrichedTracks: ((typeof tracks)[number] & {
-        preview_url?: string | null;
-        previewProvider?: string;
-        previewTrackId?: string;
-      })[] = await enrichTracksWithDeezerPreviews(tracks, {
-        artistName,
-        deezerArtistId,
-        deezerAlbumId,
-        albumTitle,
-        releaseType,
-        releaseDate,
-        cacheKey: `release-group:${mbid}:${deezerAlbumId || deezerArtistId || artistName}`,
-      });
-
       return c.json(
-        enrichedTracks.map((track) => ({
+        tracks.map((track) => ({
           id: track.recordingId || track.id,
           mbid: track.recordingId || track.id,
           title: track.title,
@@ -260,9 +185,6 @@ export default new Hono<AppEnv>()
           position: track.trackPosition || track.trackNumber || 0,
           releaseMbid: track.releaseMbid || null,
           length: track.durationMs || null,
-          preview_url: track.preview_url || null,
-          previewProvider: track.previewProvider || null,
-          previewTrackId: track.previewTrackId || null,
         })),
         200,
       );
@@ -273,4 +195,53 @@ export default new Hono<AppEnv>()
       });
       return c.json({ error: "Failed to fetch tracks", message: failure?.message }, 500);
     }
+  })
+  .get("/release-group/:mbid/previews", noCache, validate("query", previewsQuery), async (c) => {
+    const mbid = c.req.param("mbid");
+    if (!UUID_REGEX.test(mbid)) return c.json({ error: "Invalid MBID format" }, 400);
+    const query = c.req.valid("query");
+    const previews: Record<
+      string,
+      { preview_url: string; previewProvider?: string; previewTrackId?: string }
+    > = {};
+    try {
+      const [album, tracks] = await Promise.all([
+        getAlbumByMbid(mbid),
+        getAlbumTracksByAlbumMbid(mbid, { chooseRelease: chooseLibraryRelease }),
+      ]);
+      const artistMbid = UUID_REGEX.test(query.artistMbid)
+        ? query.artistMbid
+        : album.artists[0]?.id || "";
+      const override = artistMbid ? dbOps.getArtistOverride(artistMbid) : null;
+      const metadataArtist =
+        artistMbid && !override?.deezerArtistId
+          ? await getArtistByMbid(override?.musicbrainzId || artistMbid).catch(() => null)
+          : null;
+      const deezerArtistId =
+        override?.deezerArtistId || getLinkedDeezerArtistId(metadataArtist?.links) || "";
+      const artistName = metadataArtist?.name || album.artists[0]?.name || "";
+      const previewed = await enrichTracksWithDeezerPreviews(tracks, {
+        artistName,
+        deezerArtistId,
+        deezerAlbumId: query.deezerAlbumId,
+        albumTitle: album.title,
+        releaseType: album.type,
+        releaseDate: album.releaseDate || "",
+        cacheKey: `release-group:${mbid}:${query.deezerAlbumId || deezerArtistId || artistName}`,
+      });
+      for (const track of previewed) {
+        if (!track.preview_url) continue;
+        previews[track.recordingId || track.id] = {
+          preview_url: track.preview_url,
+          previewProvider: track.previewProvider,
+          previewTrackId: track.previewTrackId,
+        };
+      }
+    } catch (error) {
+      logger.info("releaseGroup", "Release previews unavailable", {
+        mbid,
+        message: asAppError(error)?.message,
+      });
+    }
+    return c.json({ previews }, 200);
   });

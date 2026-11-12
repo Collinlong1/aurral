@@ -9,6 +9,8 @@ type LibraryViewOptions = {
   pageIndex?: number;
   query?: string;
   genre?: string;
+  status?: string | null;
+  artist?: string;
   sort?: string;
   direction?: string;
   albumId?: MaybeId;
@@ -71,34 +73,6 @@ export const queryKeys = {
   appSettings: ["settings", "app"],
   playlistFileSettings: ["settings", "playlist-files"],
   downloadClientSettings: ["settings", "download-clients"],
-  lidarrRootFolders: (url: MaybeText, credentialsRevision = 0): QueryKey => [
-    "settings",
-    "lidarr",
-    "root-folders",
-    url || "",
-    credentialsRevision,
-  ],
-  lidarrProfiles: (url: MaybeText, credentialsRevision = 0): QueryKey => [
-    "settings",
-    "lidarr",
-    "profiles",
-    url || "",
-    credentialsRevision,
-  ],
-  lidarrMetadataProfiles: (url: MaybeText, credentialsRevision = 0): QueryKey => [
-    "settings",
-    "lidarr",
-    "metadata-profiles",
-    url || "",
-    credentialsRevision,
-  ],
-  lidarrTags: (url: MaybeText, credentialsRevision = 0): QueryKey => [
-    "settings",
-    "lidarr",
-    "tags",
-    url || "",
-    credentialsRevision,
-  ],
   activityRequests: (userId: MaybeId): QueryKey => ["activity", "requests", userId || null],
   libraryActivityRequests: (userId: MaybeId): QueryKey => [
     "library",
@@ -110,12 +84,16 @@ export const queryKeys = {
   lyrics: (track: Record<string, string | undefined>): QueryKey => ["lyrics", track],
   trackPulse: (albumId: MaybeId, trackId: MaybeId): QueryKey => ["track-pulse", albumId, trackId],
   listeningHistory: (userId: MaybeId): QueryKey => ["auth", "listening-history", userId || null],
-  lidarrPreferences: (userId: MaybeId): QueryKey => ["auth", "lidarr-preferences", userId || null],
   libraryPrefix: ["library"],
   libraryFavorites: ["library", "favorites"],
   libraryAlbums: (artistId: MaybeId): QueryKey => ["library", "albums", artistId || null],
   libraryAlbumsPrefix: ["library", "albums"],
   libraryArtist: (mbid: MaybeText): QueryKey => ["library", "artist", mbid || null],
+  libraryMatches: (
+    kind: "artist" | "album" | "track",
+    id: string | number,
+    query: string,
+  ): QueryKey => ["library", "matches", kind, id, query],
   artistMonitoring: (mbid: MaybeText): QueryKey => [
     "library",
     "artist",
@@ -138,6 +116,7 @@ export const queryKeys = {
     options,
   ],
   libraryLookup: (id: string): QueryKey => ["library", "lookup", id],
+  libraryArtistPlays: (artistId: string): QueryKey => ["library", "artist-plays", artistId],
   libraryLookupBatch: (ids: string[]): QueryKey => ["library", "lookup-batch", [...ids].sort()],
   libraryViewPrefix: LIBRARY_VIEW_QUERY_KEY,
   libraryPagePrefix: LIBRARY_PAGE_QUERY_KEY,
@@ -194,11 +173,12 @@ export const queryKeys = {
   artistCover: (mbid: MaybeText): QueryKey => ["artists", "cover", mbid || null],
   releaseGroupDetails: (id: MaybeText): QueryKey => ["artists", "release-group", id],
   releaseTrackCredits: (id: MaybeText): QueryKey => ["artists", "release-track-credits", id],
-  releaseGroupTracks: (id: MaybeText, context: unknown): QueryKey => [
+  releaseGroupTracks: (id: MaybeText): QueryKey => ["artists", "release-group-tracks", id],
+  releaseGroupPreviews: (id: MaybeText, hints: unknown): QueryKey => [
     "artists",
-    "release-group-tracks",
+    "release-group-previews",
     id,
-    context,
+    hints,
   ],
   releaseGroupRatings: (ids: string[]): QueryKey => [
     "artists",
@@ -233,13 +213,28 @@ export const queryKeys = {
   ],
   artistSimilarPrefix: ["artists", "similar"],
   artistAppearsOn: (mbid: MaybeText): QueryKey => ["artists", "appears-on", mbid || null],
+  artistPlaylists: (mbid: MaybeText, artistName: MaybeText): QueryKey => [
+    "artists",
+    "playlists",
+    mbid || null,
+    artistName || "",
+  ],
+  artistPlaylistsPrefix: ["artists", "playlists"],
+  artistShows: (mbid: MaybeText, artistName: MaybeText): QueryKey => [
+    "artists",
+    "shows",
+    mbid || null,
+    artistName || "",
+  ],
+  artistListening: (mbid: MaybeText, artistName: MaybeText): QueryKey => [
+    "artists",
+    "listening",
+    mbid || null,
+    artistName || "",
+  ],
   activeDownloads: ["downloads", "active"],
   downloadStatus: (ids: MaybeId[]): QueryKey => ["library", "download-status", [...ids].sort()],
-  aurralAlbumStatus: (albumId: MaybeId): QueryKey => [
-    "library",
-    "aurral-album-status",
-    String(albumId),
-  ],
+  albumStatus: (albumId: MaybeId): QueryKey => ["library", "aurral-album-status", String(albumId)],
   searchCatalog: (query: string, scope: string, options: unknown): QueryKey => [
     "search",
     scope,
@@ -248,7 +243,6 @@ export const queryKeys = {
   ],
   searchUnified: (query: string, limit: number): QueryKey => ["search", "unified", query, limit],
   searchLibrary: (query: string, limit: number): QueryKey => ["search", "library", query, limit],
-  searchCovers: (mbids: string[]): QueryKey => ["search", "covers", ...mbids],
   searchPlaylists: (query: string): QueryKey => ["search", "playlists", query],
   storageHealth: ["settings", "storage-health"],
   settingsTasks: ["settings", "tasks"],

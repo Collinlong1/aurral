@@ -1,7 +1,11 @@
 import type { PipelinePayload } from "./downloadPipeline.ts";
 import path from "path";
 import fs from "fs/promises";
-import { downloadTracker, type DownloadJob } from "./downloadJobs/downloadTracker.ts";
+import {
+  downloadTracker,
+  type DownloadJob,
+  type PipelineStep,
+} from "./downloadJobs/downloadTracker.ts";
 import { asAppError } from "../../lib/errors.ts";
 import { getDownloadClient } from "./download/downloadClientSettings.ts";
 import { logger } from "./logger.ts";
@@ -36,28 +40,26 @@ import {
   isPipelinePayloadActive,
   withPipelineCommitLock,
 } from "./downloadJobs/downloadCancellation.ts";
+import {
+  recordTrackJobDownloading,
+  recordTrackJobMoving,
+  recordTrackJobSearching,
+} from "./aurralHistoryService.ts";
 
 const ytdlpClient = getDownloadClient("ytdlp");
 const SONG_READS = 6;
 const LIVE_STATUSES = new Set(["is_live", "was_live", "post_live", "is_upcoming"]);
 
 type YtdlpResult = Awaited<ReturnType<YtdlpClient["search"]>>[number];
-type YtdlpCandidate = Omit<ReturnType<typeof toPipelineCandidate>, "raw"> & { raw: YtdlpResult };
+type YtdlpCandidate = Partial<ReturnType<typeof toPipelineCandidate<YtdlpResult>>> & {
+  raw: YtdlpResult;
+};
 
-type YtdlpPayload = {
-  jobId: string;
-  phase: string;
-  source?: string | null;
-  playlistId?: string | null;
-  track?: Parameters<typeof buildResolvedTrack>[1];
-  destination?: string | null;
-  upgradeForJobId?: string | null;
-  manualSelection?: boolean;
+type YtdlpPayload = PipelineStep & {
+  source: "ytdlp";
   candidates?: YtdlpCandidate[];
   candidate?: YtdlpCandidate | null;
-  candidateIndex?: number;
   downloadedPath?: string | null;
-  heldForReview?: ReturnType<typeof holdForReview> | null;
 };
 
 type YtdlpHelpers = {
@@ -108,11 +110,7 @@ async function handleYtdlpSearch(payload: YtdlpPayload, helpers: YtdlpHelpers) {
     downloadSource: "ytdlp",
     downloadClient: "ytdlp",
   });
-  import("./aurralHistoryService.ts")
-    .then(({ recordTrackJobSearching }) => recordTrackJobSearching(job))
-    .catch((err) => {
-      console.warn(err);
-    });
+  recordTrackJobSearching(job);
 
   const resolvedTrack = {
     ...buildResolvedTrack(job, payload.track),
@@ -220,7 +218,7 @@ async function handleYtdlpSearch(payload: YtdlpPayload, helpers: YtdlpHelpers) {
   return {
     ...payload,
     phase: "download",
-    source: "ytdlp",
+    source: "ytdlp" as const,
     candidates,
     candidateIndex: 0,
     resolvedTrack,
@@ -238,11 +236,7 @@ async function handleYtdlpDownload(payload: YtdlpPayload, helpers: YtdlpHelpers)
   if (!url) {
     return helpers.failOrTryNextSource(payload, job, "No yt-dlp video URL available");
   }
-  import("./aurralHistoryService.ts")
-    .then(({ recordTrackJobDownloading }) => recordTrackJobDownloading(job))
-    .catch((err) => {
-      console.warn(err);
-    });
+  recordTrackJobDownloading(job);
 
   let downloaded;
   try {
@@ -284,7 +278,7 @@ async function handleYtdlpDownload(payload: YtdlpPayload, helpers: YtdlpHelpers)
   return {
     ...payload,
     phase: "finalize",
-    source: "ytdlp",
+    source: "ytdlp" as const,
     candidate,
     candidateIndex: index,
     downloadedPath: downloaded.filePath,
@@ -335,7 +329,7 @@ async function handleYtdlpFinalize(payload: YtdlpPayload, helpers: YtdlpHelpers)
         ...payload,
         downloadedPath: null,
         heldForReview: holdForReview(job, {
-          source: "ytdlp",
+          source: "ytdlp" as const,
           sourcePath: heldPath,
           reason: validation.reason,
         }),
@@ -364,11 +358,7 @@ async function handleYtdlpFinalize(payload: YtdlpPayload, helpers: YtdlpHelpers)
   const finalPath = path.join(finalDir, finalName);
   const committed = await withPipelineCommitLock(payload, async () => {
     await writeAudioMetadata(filePath, resolvedTrack);
-    import("./aurralHistoryService.ts")
-      .then(({ recordTrackJobMoving }) => recordTrackJobMoving(job))
-      .catch((err) => {
-        console.warn(err);
-      });
+    recordTrackJobMoving(job);
     const committedFinalPath = await commitDownloadedFile(filePath, finalPath);
     await ytdlpClient.cleanupStaging(job.id);
     return finalizePipelineJobSuccess({

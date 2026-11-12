@@ -39,15 +39,11 @@ const discardStaticPlaylist = async (playlistId: string) => {
 
 export async function saveFlowAsStaticPlaylist(
   flow: FlowConfig,
-  {
-    name,
-    ownerUserId,
-    replacesFlow = false,
-  }: { name: string; ownerUserId: number | null; replacesFlow?: boolean },
+  { name, ownerUserId }: { name: string; ownerUserId: number | null },
 ) {
   const saved = new Map<string, { job: DownloadJob }>();
   for (const job of downloadTracker.getByPlaylistType(flow.id)) {
-    if (job.status !== "done" || typeof job.finalPath !== "string") continue;
+    if (job.status !== "done") continue;
     const identity = buildPlaylistTrackIdentity(job);
     if (saved.has(identity)) continue;
     if (await isFile(job.finalPath)) saved.set(identity, { job });
@@ -65,7 +61,6 @@ export async function saveFlowAsStaticPlaylist(
     recordHistory: flow.recordHistory,
     tracks: linked.tracks,
     ownerUserId,
-    replacesFlowId: replacesFlow ? flow.id : null,
   });
   try {
     await playlistManager.ensurePlaylistArtwork(playlist.id);

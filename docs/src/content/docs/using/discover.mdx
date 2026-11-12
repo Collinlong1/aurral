@@ -61,11 +61,11 @@ To choose and order the sections on your Discover page, select **Customize Disco
 
 ## Recent and upcoming releases
 
-**Recent & upcoming releases** lists new and upcoming albums from library artists that have a MusicBrainz ID. Aurral builds this list from BrainzMash, its hosted metadata service. Lidarr is not required. It also adds new releases from your recommended artists, which Aurral reads from ListenBrainz every few hours.
+**Recent & upcoming releases** lists new and upcoming albums from library artists that have a MusicBrainz ID. Aurral builds this list from BrainzMash, its hosted metadata service. It also adds new releases from your recommended artists, which Aurral reads from ListenBrainz every few hours.
 
 Aurral checks each artist's releases about once a week. New artists are checked when they first appear, after a library scan or when you add them. If BrainzMash can't load an artist, Aurral tries that artist again after an hour. It leaves out albums that are already in your Library. If BrainzMash is unavailable, Aurral keeps the last list that it loaded.
 
-To get a release, select **Download album**. Lidarr downloads it when Lidarr is connected, and Aurral downloads it otherwise. See [Who manages your library](/using/library/#who-manages-your-library). When Aurral manages an album that isn't out yet, it adds the album to your Library and downloads it on the release date.
+To get a release, select **Download album**. When the album isn't out yet, Aurral adds the album to your Library and downloads it on the release date.
 
 ## Artist news
 
@@ -120,7 +120,7 @@ Below the rows, **Your taste** shows your top genres and **Based on** lists your
 
 **Discover > Trending** shows what's popular right now: top songs, albums, and artists, a chart for each genre, and popular playlists. It needs no account or API key. Songs, artists, and genre charts come from Deezer, and albums come from Apple Music. Aurral updates them every 6 hours. The **Trending artists** row on Discover shows the same top artists.
 
-The charts follow the country your server is in. If Deezer or Apple Music has no chart for that country, Aurral shows the worldwide songs chart or the US albums chart instead.
+The top songs and albums follow the country your server is in, as Deezer sees it. To pick a country yourself, or **Worldwide**, an admin selects the country next to the **Trending** title. Aurral then stops asking Deezer where the server is, until an admin picks **Automatic** again. Top artists and genre charts are worldwide. If Deezer or Apple Music has no chart for a country, Aurral shows the worldwide songs chart or the US albums chart instead.
 
 Aurral saves the songs chart once a day, so rank changes and days at No. 1 appear after your server has been running for two days.
 

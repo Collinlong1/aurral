@@ -16,7 +16,7 @@ import type { FlowConfig, StaticPlaylist } from "./flowPlaylistConfig.ts";
 import { playlistOperationQueue } from "./playlistOperationQueue.ts";
 import { getPlaylistOperationWorkerStatus } from "./playlistOperationWorker.ts";
 import { getDownloadClient } from "../download/downloadClientSettings.ts";
-import { dbOps, userOps } from "../../db/helpers/index.ts";
+import { userOps } from "../../db/helpers/index.ts";
 import { db, getDatabaseRevision } from "../../config/db-sqlite.ts";
 import type { RequestUser } from "../../middleware/requestUser.ts";
 import type { SettingsRow } from "../../db/rows.ts";
@@ -59,7 +59,6 @@ function refreshMembershipCache() {
   const settings = readPlaylistSettingsVersion();
   const revision = downloadTracker.getRevision();
   if (settings !== cachedSettings) {
-    dbOps.invalidateSettingsCache();
     invalidateFlowPlaylistConfigCache();
   }
   if (settings !== cachedSettings || revision !== cachedJobRevision) {
@@ -310,12 +309,17 @@ export function getPlaylistStatusSnapshot({ user = null }: { user?: RequestUser 
   const staticStats = aggregateStats(staticPlaylistStatsById, staticPlaylistIds);
   const reviewCount = stats.blocked + Number(scopedStats.library?.blocked || 0);
   const nextRunMessage = formatNextRunMessage(flowsWithOwners);
-  const operationQueue = playlistOperationQueue.getStatus();
   const operationWorker = workerStatus?.operationWorker || getPlaylistOperationWorkerStatus();
-  const queueLabel = String(operationQueue?.currentLabel || operationWorker?.currentLabel || "");
+  const queueStatus = playlistOperationQueue.getStatus();
+  const queueLabel = String(queueStatus.currentLabel || operationWorker?.currentLabel || "");
+  const operationQueue = {
+    ...queueStatus,
+    processing: queueStatus.processing || queueLabel !== "",
+    currentLabel: queueLabel || null,
+  };
   let phase = "idle";
   let message = "Idle";
-  if (operationQueue?.processing || operationWorker?.currentLabel) {
+  if (operationQueue.processing) {
     phase = "preparing";
     if (queueLabel.startsWith("enable:") || queueLabel.startsWith("scheduled:")) {
       message = "Generating playlist";

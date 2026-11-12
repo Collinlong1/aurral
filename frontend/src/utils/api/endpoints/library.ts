@@ -10,18 +10,17 @@ import { libraryAlbumsClient } from "../clients/libraryAlbums.ts";
 import { libraryArtistsClient } from "../clients/libraryArtists.ts";
 import type { libraryArtworkClient } from "../clients/libraryArtwork.ts";
 import { libraryDownloadsClient } from "../clients/libraryDownloads.ts";
+import { libraryMatchesClient } from "../clients/libraryMatches.ts";
 import { libraryMiscClient } from "../clients/libraryMisc.ts";
 import { libraryTracksClient } from "../clients/libraryTracks.ts";
 import { bumpLibraryPageGeneration, queryClient, queryKeys } from "../../../queryClient.ts";
-import { getLibraryOwnerConflict } from "../../libraryDestination.ts";
-import type { buildAlbumRequestPayload, buildArtistAddPayload } from "../../libraryDestination.ts";
-import type { buildAurralAlbumRetryPayload } from "../../aurralAlbumStatus.ts";
 import {
   addActiveDownload,
   normalizeActiveDownloads,
   type ActiveDownloads,
 } from "../../activeDownloads.ts";
 import type { requestLibraryTrack } from "../../../../../backend/services/libraryTrackRequests.ts";
+import type { LibraryStatus } from "../../../../../lib/libraryStatus.ts";
 
 type SignalOptions = { signal?: AbortSignal };
 
@@ -36,6 +35,7 @@ type LibraryPageOptions = {
   pageSize?: number;
   query?: string;
   genre?: string;
+  status?: LibraryStatus | null;
   sort?: string;
   direction?: string;
   artistId?: string | number;
@@ -65,7 +65,7 @@ export type LibraryPageResponse = InferResponseType<typeof libraryClient.$get, 2
 export type LibraryFavoritesResponse = InferResponseType<typeof libraryClient.favorites.$get, 200>;
 export type ArtistsInLibrary = InferResponseType<typeof libraryMiscClient.lookup.batch.$post, 200>;
 
-export type AurralMonitoringResult = {
+export type MonitoringResult = {
   monitored: boolean;
   cancelledJobIds?: string[];
   cleanupFailed?: boolean;
@@ -95,6 +95,7 @@ const libraryPageParams = (options: LibraryPageOptions = {}) =>
       pageSize: options.pageSize,
       query: options.query,
       genre: options.genre,
+      status: options.status,
       sort: options.sort,
       direction: options.direction,
       artistId: options.artistId,
@@ -208,18 +209,69 @@ export const clearLibraryPageCache = () => {
   });
 };
 
-export const settleLibraryOwnerConflict = (error: unknown) => {
-  const conflict = getLibraryOwnerConflict(error);
-  if (!conflict) return null;
+export const updateLibraryArtistMbid = async (artistId: string | number, mbid: string | null) => {
+  const result = await parseResponse(
+    libraryMatchesClient.artists[":id"].mbid.$put({
+      param: { id: encodeURIComponent(artistId) },
+      json: { mbid },
+    }),
+  );
   clearLibraryPageCache();
-  queryClient.invalidateQueries({ queryKey: queryKeys.libraryPrefix });
-  return conflict;
+  void queryClient.invalidateQueries({ queryKey: queryKeys.libraryPrefix });
+  return result;
 };
 
-export const updateLibraryArtistMbid = async (artistId: number, mbid: string | null) => {
+export const fetchLibraryArtistMatches = (
+  artistId: string | number,
+  q: string,
+  { signal }: SignalOptions,
+) =>
+  parseResponse(
+    libraryMatchesClient.artists[":id"].matches.$get(
+      { param: { id: encodeURIComponent(artistId) }, query: { q } },
+      { init: { signal } },
+    ),
+  );
+
+export const fetchLibraryAlbumMatches = (
+  albumId: string | number,
+  q: string,
+  { signal }: SignalOptions,
+) =>
+  parseResponse(
+    libraryMatchesClient.albums[":id"].matches.$get(
+      { param: { id: encodeURIComponent(albumId) }, query: { q } },
+      { init: { signal } },
+    ),
+  );
+
+export const updateLibraryAlbumReleaseGroup = async (
+  albumId: string | number,
+  mbid: string | null,
+) => {
   const result = await parseResponse(
-    libraryArtistsClient.artists[":id"].mbid.$put({
-      param: { id: encodeURIComponent(artistId) },
+    libraryMatchesClient.albums[":id"]["release-group"].$put({
+      param: { id: encodeURIComponent(albumId) },
+      json: { mbid },
+    }),
+  );
+  clearLibraryPageCache();
+  void queryClient.invalidateQueries({ queryKey: queryKeys.libraryPrefix });
+  return result;
+};
+
+export const fetchLibraryTrackMatches = (trackId: string | number, { signal }: SignalOptions) =>
+  parseResponse(
+    libraryMatchesClient.tracks[":id"].matches.$get(
+      { param: { id: encodeURIComponent(trackId) } },
+      { init: { signal } },
+    ),
+  );
+
+export const updateLibraryTrackRecording = async (trackId: string | number, mbid: string) => {
+  const result = await parseResponse(
+    libraryMatchesClient.tracks[":id"].recording.$put({
+      param: { id: encodeURIComponent(trackId) },
       json: { mbid },
     }),
   );
@@ -258,6 +310,19 @@ export const libraryFavoritesQueryOptions = queryOptions({
   queryFn: ({ signal }) => fetchLibraryFavorites({ signal }),
   staleTime: 30_000,
 });
+
+export const libraryArtistPlaysQueryOptions = (artistId: string) =>
+  queryOptions({
+    queryKey: queryKeys.libraryArtistPlays(artistId),
+    queryFn: ({ signal }) =>
+      parseResponse(
+        libraryClient.artists[":artistId"].plays.$get(
+          { param: { artistId } },
+          { init: { signal } },
+        ),
+      ).then(({ plays }) => plays),
+    staleTime: 15_000,
+  });
 
 const waitForLibraryFavoritesRefresh = async () => {
   let waited = false;
@@ -477,23 +542,10 @@ const refreshActiveDownloadsAfter = async <T>(request: Promise<T>): Promise<T> =
   }
 };
 
-export const addArtistToLibrary = async (artistData: ReturnType<typeof buildArtistAddPayload>) => {
-  const result = await refreshActiveDownloadsAfter(
-    parseResponse(libraryArtistsClient.artists.$post({ json: artistData })),
-  );
-  const mbid =
-    result?.artist?.foreignArtistId || result?.foreignArtistId || artistData?.foreignArtistId;
-  if (mbid) queryClient.setQueryData(queryKeys.libraryLookup(mbid), true);
-  return result;
-};
-
-const fetchLibraryAlbums = async (
-  artistId: string | number,
-  { signal, managedBy = null }: SignalOptions & { managedBy?: "aurral" | "lidarr" | null } = {},
-) => {
+const fetchLibraryAlbums = async (artistId: string | number, { signal }: SignalOptions = {}) => {
   const albums = await parseResponse(
     libraryAlbumsClient.albums.$get(
-      { query: { artistId: String(artistId), ...(managedBy && { managedBy }) } },
+      { query: { artistId: String(artistId) } },
       { init: { signal } },
     ),
   );
@@ -505,24 +557,22 @@ const fetchLibraryAlbums = async (
 
 export const getLibraryAlbums = (
   artistId: string | number,
-  {
-    signal,
-    bypassCache = false,
-    managedBy = null,
-  }: SignalOptions & { bypassCache?: boolean; managedBy?: "aurral" | "lidarr" | null } = {},
+  { signal, bypassCache = false }: SignalOptions & { bypassCache?: boolean } = {},
 ) => {
-  if (signal && !bypassCache) return fetchLibraryAlbums(artistId, { signal, managedBy });
+  if (signal && !bypassCache) return fetchLibraryAlbums(artistId, { signal });
   return queryClient.fetchQuery({
-    queryKey: [...queryKeys.libraryAlbums(artistId), managedBy],
-    queryFn: ({ signal: querySignal }) =>
-      fetchLibraryAlbums(artistId, { signal: querySignal, managedBy }),
+    queryKey: queryKeys.libraryAlbums(artistId),
+    queryFn: ({ signal: querySignal }) => fetchLibraryAlbums(artistId, { signal: querySignal }),
     staleTime: bypassCache ? 0 : 15_000,
   });
 };
 
-type AlbumRequestPayload =
-  | ReturnType<typeof buildAlbumRequestPayload>
-  | ReturnType<typeof buildAurralAlbumRetryPayload>;
+type AlbumRequestPayload = {
+  albumMbid: string;
+  albumName: string | null | undefined;
+  artistMbid?: string | null;
+  artistName?: string | null;
+};
 
 const postAlbumRequest = (payload: AlbumRequestPayload) =>
   parseResponse(
@@ -568,7 +618,7 @@ export const requestAlbumFromSearch = async (
 
 export const updateLibraryArtist = (
   mbid: string,
-  data: { monitorOption?: string; monitoring?: ArtistMonitoringInput; artistName?: string },
+  data: { monitoring?: ArtistMonitoringInput; artistName?: string },
 ) =>
   refreshActiveDownloadsAfter(
     parseResponse(
@@ -624,11 +674,6 @@ export const reSearchLibraryTrack = (
     ),
   );
 
-export const triggerAlbumSearch = (albumId: string | number) =>
-  refreshActiveDownloadsAfter(
-    parseResponse(libraryDownloadsClient.downloads.album.search.$post({ json: { albumId } })),
-  );
-
 const fetchDownloadStatus = (ids: string[], signal: AbortSignal | undefined) =>
   parseResponse(
     libraryDownloadsClient.downloads.status.$get(
@@ -655,35 +700,35 @@ export const getDownloadStatus = async (
   });
 };
 
-export const cancelAurralAlbum = (albumId: string | number) =>
+export const cancelAlbum = (albumId: string | number) =>
   refreshActiveDownloadsAfter(
     parseResponse(
-      libraryAlbumsClient.albums.aurral[":albumId"].cancel.$post({
+      libraryAlbumsClient.albums[":albumId"].cancel.$post({
         param: { albumId: encodeURIComponent(albumId) },
       }),
     ),
   );
 
-export const setAurralAlbumMonitoring = (
+export const setAlbumMonitoring = (
   albumId: string | number,
   monitored: boolean,
-): Promise<AurralMonitoringResult> =>
+): Promise<MonitoringResult> =>
   refreshActiveDownloadsAfter(
     parseResponse(
-      libraryAlbumsClient.albums.aurral[":albumId"].$put({
+      libraryAlbumsClient.albums[":albumId"].$put({
         param: { albumId: encodeURIComponent(albumId) },
         json: { monitored },
       }),
     ),
   );
 
-export const setAurralTrackMonitoring = async (
+export const setTrackMonitoring = async (
   trackId: string | number,
   monitored: boolean,
-): Promise<AurralMonitoringResult> => {
+): Promise<MonitoringResult> => {
   const result = await refreshActiveDownloadsAfter(
     parseResponse(
-      libraryTracksClient.tracks.aurral[":trackId"].$put({
+      libraryTracksClient.tracks[":trackId"].$put({
         param: { trackId: encodeURIComponent(trackId) },
         json: { monitored },
       }),

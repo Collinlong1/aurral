@@ -6,7 +6,7 @@ import type { PluginPageData } from "../../../backend/services/plugins/pluginPag
 import PluginAdminPage from "./PluginAdminPage.tsx";
 import { pluginsClient } from "../utils/api/clients/plugins.ts";
 import { useAuth } from "../contexts/AuthContext.tsx";
-import { readApiError } from "./Settings/utils/apiError.ts";
+import { readApiError } from "../utils/api/errors.ts";
 import "./PluginPage.css";
 
 type PageForm = PluginPageData["forms"][number];

@@ -3,6 +3,7 @@ import path from "path";
 import fs from "fs";
 import { SCHEMA_VERSION, missingUpgradeSteps } from "./upgrade-gate.ts";
 import { migrateToJobQueue } from "./job-queue-migration.ts";
+import { convertLidarrLibrary } from "./lidarr-conversion.ts";
 import { migrate } from "./migrations.ts";
 import { initializeLibrarySearchIndex } from "./library-search-index.ts";
 import { initializeLibraryGenreIndex } from "./library-genre-index.ts";
@@ -77,6 +78,18 @@ db.prepare(
 ).run(String(SCHEMA_VERSION));
 
 migrateToJobQueue(db, DATA_DIR);
+try {
+  convertLidarrLibrary(db, DATA_DIR);
+} catch (error) {
+  console.error(
+    [
+      "Aurral 3 couldn't convert the Library that Lidarr ran, so it stopped before changing anything.",
+      `A copy of the database from before is in ${DATA_DIR}. Report this at https://github.com/lklynet/aurral/issues with the error below.`,
+    ].join("\n"),
+    error,
+  );
+  process.exit(1);
+}
 migrate(db);
 
 db.exec(`
@@ -125,10 +138,15 @@ export const dbHelpers = {
   },
 };
 
-const existingDownloadFolder = db
-  .prepare<[string], { value: string }>("SELECT value FROM settings WHERE key = ?")
-  .get("downloadFolderPath");
-syncDownloadFolderPath(existingDownloadFolder?.value || null);
+const downloadFolderStmt = db.prepare<[], { value: string }>(
+  "SELECT value FROM settings WHERE key = 'downloadFolderPath'",
+);
+
+export function loadDownloadFolderPath() {
+  syncDownloadFolderPath(downloadFolderStmt.get()?.value || null);
+}
+
+loadDownloadFolderPath();
 
 const databaseRevisionStmt = db.prepare<[], { data_version: number; changes: number }>(
   "SELECT data_version, total_changes() AS changes FROM pragma_data_version",

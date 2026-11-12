@@ -28,12 +28,12 @@ const [
   "json-contract",
   () => import("../../backend/config/db-sqlite.ts"),
   () => import("../../backend/db/helpers/index.ts"),
-  () => import("../../backend/middleware/passwordHash.ts"),
+  () => import("../../backend/services/passwordHash.ts"),
   () => import("../../backend/app.ts"),
   () => import("../../backend/services/libraryMediaStore.ts"),
   () => import("../../backend/services/libraryManagementStore.ts"),
   () => import("../../backend/services/discovery/persistence.ts"),
-  () => import("../../backend/services/discovery/provider.ts"),
+  () => import("../../backend/services/discovery/userRefreshRequests.ts"),
   () => import("../../backend/services/downloadJobs/downloadTracker.ts"),
   () => import("../../backend/services/downloadJobs/downloadWorker.ts"),
 );
@@ -223,13 +223,11 @@ beforeAll(async () => {
   setLibraryManagement({
     entityKind: "artist",
     entityId: artist.id,
-    managedBy: "aurral",
     monitorMode: "none",
   });
   setLibraryManagement({
     entityKind: "album",
     entityId: album.id,
-    managedBy: "aurral",
     monitorMode: "all",
   });
   server = await listen(app);
@@ -534,8 +532,6 @@ test("library pages, lookups, album requests, and track requests preserve their 
   fields(albums[albumMbid], {
     inLibrary: "boolean",
     fromLibraryIndex: "boolean",
-    providerAlbumId: "string|null",
-    providerArtistId: "string|null",
     libraryAlbumId: "string|null",
     libraryArtistId: "string|null",
     status: "string",
@@ -545,10 +541,6 @@ test("library pages, lookups, album requests, and track requests preserve their 
     ownedTrackMbids: "array",
   });
   assert.deepEqual(albums[albumMbid].ownedTrackMbids, [trackMbid]);
-  assert.deepEqual(
-    [albums[albumMbid].providerAlbumId, albums[albumMbid].providerArtistId],
-    [null, null],
-  );
   const requested = await call("/api/library/albums/request", {
     method: "POST",
     status: 201,
@@ -557,7 +549,7 @@ test("library pages, lookups, album requests, and track requests preserve their 
       albumName: album.title,
       artistMbid,
       artistName: artist.name,
-      managedBy: "aurral",
+      managed: true,
     },
   });
   fields(requested, {
@@ -567,7 +559,6 @@ test("library pages, lookups, album requests, and track requests preserve their 
     createdArtist: "boolean",
     createdAlbum: "boolean",
     status: "string",
-    managedBy: "string",
     queued: "boolean",
   });
   assert.equal(requested.success, true);

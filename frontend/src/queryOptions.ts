@@ -5,7 +5,7 @@ import { artistsClient } from "./utils/api/clients/artists.ts";
 import { discoveryClient } from "./utils/api/clients/discovery.ts";
 import type { BrowseProvider } from "../../lib/browsePlaylists.ts";
 import type { ShelfScope } from "../../backend/services/importLists/deezerPlaylists.ts";
-import { normalizeDiscoveryData } from "./pages/discoverUtils.ts";
+import { normalizeDiscoveryData } from "./utils/discoverUtils.ts";
 import { playlistJobsClient } from "./utils/api/clients/playlistJobs.ts";
 import { pluginsClient } from "./utils/api/clients/plugins.ts";
 import { settingsClient } from "./utils/api/clients/settings.ts";
@@ -56,15 +56,6 @@ export const spotifyHistoryQueryOptions = (userId: MaybeId) =>
     staleTime: 30_000,
   });
 
-export const lidarrPreferencesQueryOptions = (userId: MaybeId) =>
-  queryOptions({
-    queryKey: queryKeys.lidarrPreferences(userId),
-    queryFn: ({ signal }) =>
-      parseResponse(usersClient.me["lidarr-preferences"].$get({}, { init: { signal } })),
-    enabled: userId != null,
-    staleTime: 30_000,
-  });
-
 export const appSettingsQueryOptions = () =>
   queryOptions({
     queryKey: queryKeys.appSettings,
@@ -78,6 +69,7 @@ export const playlistShelfQueryOptions = (userId: MaybeId, scope: ShelfScope = "
     queryFn: ({ signal }) =>
       parseResponse(discoveryClient.playlists.$get({ query: { scope } }, { init: { signal } })),
     staleTime: 60 * 60 * 1000,
+    gcTime: 60 * 60 * 1000,
   });
 
 export const madeForYouQueryOptions = (userId: MaybeId) =>
@@ -88,6 +80,7 @@ export const madeForYouQueryOptions = (userId: MaybeId) =>
         discoveryClient.playlists["made-for-you"].$get(undefined, { init: { signal } }),
       ),
     staleTime: 10 * 60 * 1000,
+    gcTime: 10 * 60 * 1000,
   });
 
 export const browsePlaylistQueryOptions = (

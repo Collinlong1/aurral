@@ -1,16 +1,13 @@
 import { asAppError } from "../../../lib/errors.ts";
-import {
-  cancelTrackDownload,
-  cancelTrackDownloads,
-  retryTrackDownload,
-} from "../aurralAlbumJobs.ts";
+import { cancelTrackDownload, cancelTrackDownloads, retryTrackDownload } from "../albumJobs.ts";
 import { syncStaticPlaylistImportHere } from "../importLists/importListSync.ts";
 import { queueQualityUpgrade, runQualityUpgradeCheck } from "../qualityProfileService.ts";
 import { approveBlockedJob, denyBlockedJob } from "./blockedJobReview.ts";
 import { importDiskFileToJob } from "./importDiskFile.ts";
 import { runLinkLibraryFile } from "./linkLibraryFile.ts";
 import { downloadTracker } from "./downloadTracker.ts";
-import { DownloadWorker, downloadWorker } from "./downloadWorker.ts";
+import { followChangedLibraryFiles } from "./fileReuse.ts";
+import { DownloadWorker, downloadWorker, startWorkerIfPending } from "./downloadWorker.ts";
 
 type Worker = DownloadWorker;
 
@@ -23,6 +20,7 @@ const owner = () => {
 
 export const downloadOwnerCommands = {
   start: () => owner().start(),
+  startIfPending: () => startWorkerIfPending(),
   stop: () => owner().stop(),
   stopAndDrain: () => owner().stopAndDrain(),
   wake: (...args: Parameters<Worker["wake"]>) => owner().wake(...args),
@@ -60,6 +58,7 @@ export const downloadOwnerCommands = {
   enqueueManualReplacementSelection: (
     ...args: Parameters<typeof downloadTracker.enqueueManualReplacementSelection>
   ) => downloadTracker.enqueueManualReplacementSelection(...args),
+  followChangedLibraryFiles,
   approveBlockedJob,
   denyBlockedJob,
   cancelTrackDownload,
