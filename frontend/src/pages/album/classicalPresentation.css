@@ -1,55 +1,25 @@
-.classical-presentation {
+.classical-presentation__tabs {
   margin-top: 20px;
 }
-.classical-presentation__toggle {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 20px;
-}
 .classical-presentation__work {
-  border-bottom: 1px solid var(--aurral-border);
-  padding: 16px 0 24px;
-}
-.classical-presentation__work h2 {
-  font-size: var(--aurral-font-lg);
-  margin: 0;
-}
-.classical-presentation__work ol {
-  margin: 16px 0 0;
-}
-.classical-presentation__missing {
-  color: var(--aurral-text-muted);
-}
-.classical-presentation__work li {
-  margin: 0;
-}
-.classical-presentation__movement {
   display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  width: 100%;
-  padding: 6px 8px;
-  border: 0;
-  border-radius: var(--aurral-radius-sm);
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
 }
-.classical-presentation__movement:focus-visible {
-  background: var(--aurral-surface-hover);
+.classical-presentation__work-title {
+  color: var(--aurral-text);
+  font-size: var(--aurral-font-base);
+  font-weight: 600;
+  text-decoration: none;
 }
 @media (hover: hover) and (pointer: fine) {
-  .classical-presentation__movement:hover {
-    background: var(--aurral-surface-hover);
+  .classical-presentation__work-title:hover {
+    text-decoration: underline;
   }
 }
-.classical-presentation__time {
+.classical-presentation__work-detail {
   color: var(--aurral-text-muted);
-  font-variant-numeric: tabular-nums;
-}
-.classical-presentation__other {
-  font-size: var(--aurral-font-lg);
-  margin: 24px 0 8px;
+  font-size: var(--aurral-font-sm);
+  font-weight: 400;
 }

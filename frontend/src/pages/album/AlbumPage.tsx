@@ -82,6 +82,29 @@ import "./classicalPresentation.css";
 
 type AlbumPresentation = Awaited<ReturnType<typeof pluginAlbumPresentation>>;
 
+type AlbumPresentationGroup = NonNullable<AlbumPresentation>["groups"][number];
+
+const itemDurationMs = (item: AlbumPresentationGroup["items"][number]) =>
+  item.endMs != null ? item.endMs - item.startMs : item.durationMs;
+
+function ClassicalWorkHeading({ group }: { group: AlbumPresentationGroup }) {
+  return (
+    <span className="classical-presentation__work">
+      <RouteLink to={group.href} className="classical-presentation__work-title">
+        {group.title}
+      </RouteLink>
+      {group.composer ? (
+        <span className="classical-presentation__work-detail">{group.composer}</span>
+      ) : null}
+      {group.missing.length ? (
+        <span className="classical-presentation__work-detail">
+          Missing {group.missing.map((movement) => movement.title).join(", ")}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
 function AlbumPage() {
   const { ref: routeRef } = useParams();
   const location = useLocation();
@@ -91,7 +114,16 @@ function AlbumPage() {
   const { bootstrap, hasPermission, user } = useAuth();
   const { showError } = useToast();
   const share = useShareAction();
-  const { isShuffleEnabled, playQueue } = useAudioQueue();
+  const {
+    isShuffleEnabled,
+    playQueue,
+    currentTrack,
+    isPlaying,
+    isStarting,
+    isLoading,
+    togglePlayPause,
+    matchesSource,
+  } = useAudioQueue();
   const getQueueItems = useQueueTrackActions();
   const { isDiscoverSectionActive } = useDiscoverRecent();
   const canAddAlbum = hasPermission("addAlbum");
@@ -140,10 +172,7 @@ function AlbumPage() {
     setPresentationMode(mode);
     localStorage.setItem(presentationPreferenceKey, mode);
   };
-  const playClassicalGroup = (
-    group: NonNullable<AlbumPresentation>["groups"][number],
-    startTrackId: string | null = null,
-  ) =>
+  const playClassicalGroup = (group: AlbumPresentationGroup, startTrackId: string | null = null) =>
     playQueue(
       group.items.map((item) =>
         normalizeStreamQueueTrack({
@@ -152,7 +181,7 @@ function AlbumPage() {
           title: item.title,
           artist: item.artist,
           album: item.album,
-          durationMs: item.endMs != null ? item.endMs - item.startMs : item.durationMs,
+          durationMs: itemDurationMs(item),
           segmentStartMs: item.startMs,
           segmentEndMs: item.endMs,
           streamPath: item.streamPath,
@@ -424,7 +453,6 @@ function AlbumPage() {
   });
 
   const discHeadings = albumDiscHeadings(merged);
-  // Tracks outside every work group stay visible in By Work view.
   const groupedTrackIds = new Set(
     presentation?.groups.flatMap((group) => group.items.map((item) => item.trackId)) ?? [],
   );
@@ -489,6 +517,44 @@ function AlbumPage() {
     const id = merged[index]?.libraryTrack?.id;
     return id == null || !groupedTrackIds.has(String(id));
   });
+  // By Work reuses each track's album row, so menus, favorites and hover
+  // behave exactly as in By Track; only numbering, title, time and playback
+  // follow the work.
+  const rowByTrackId = new Map(
+    merged.flatMap((entry, index) =>
+      entry.libraryTrack && rows[index] ? [[String(entry.libraryTrack.id), rows[index]]] : [],
+    ),
+  );
+  const workRows: TrackListRow[] = (presentation?.groups ?? []).flatMap((group) =>
+    group.items.map((item, index) => {
+      const base = rowByTrackId.get(item.trackId);
+      const active =
+        String(currentTrack?.id) === item.id &&
+        matchesSource({ type: "plugin-work", id: group.id });
+      return {
+        ...base,
+        key: `${group.id}:${item.id}`,
+        section: index === 0 ? <ClassicalWorkHeading group={group} /> : null,
+        number: index + 1,
+        title: item.title,
+        time: formatDuration(itemDurationMs(item)) || base?.time,
+        timeMissing: false,
+        missing: false,
+        active,
+        playing: active && (isPlaying || isStarting),
+        loading: active && isLoading,
+        onPlay: () => (active ? togglePlayPause() : playClassicalGroup(group, item.id)),
+      };
+    }),
+  );
+  // Tracks outside every work stay in By Work view, after the works.
+  const byWorkRows = [
+    ...workRows,
+    ...ungroupedRows.map((row, index) => ({
+      ...row,
+      section: index === 0 ? "Other tracks" : null,
+    })),
+  ];
   const trackParam = searchParams.get("track") || "";
   const highlightKey = trackParam
     ? (merged.find(
@@ -498,6 +564,12 @@ function AlbumPage() {
           entry.releaseTrack?.mbid === trackParam ||
           entry.releaseTrack?.id === trackParam,
       )?.key ?? null)
+    : null;
+  const highlightedWorkItem = presentation?.groups
+    .flatMap((group) => group.items.map((item) => ({ group, item })))
+    .find(({ item }) => rowByTrackId.get(item.trackId)?.key === highlightKey);
+  const workHighlightKey = highlightedWorkItem
+    ? `${highlightedWorkItem.group.id}:${highlightedWorkItem.item.id}`
     : null;
 
   const trackCount = Math.max(merged.length, Number(availability?.total || 0));
@@ -806,83 +878,31 @@ function AlbumPage() {
         }
       />
       {presentation && (
-        <section className="classical-presentation" aria-label="Classical album view">
-          <div className="classical-presentation__toggle" role="group" aria-label="Album view">
+        <div
+          className="artist-tabs classical-presentation__tabs"
+          role="group"
+          aria-label="Album view"
+        >
+          {(["work", "track"] as const).map((mode) => (
             <button
+              key={mode}
               type="button"
-              className={presentationMode === "work" ? "btn btn-primary" : "btn btn-secondary"}
-              aria-pressed={presentationMode === "work"}
-              onClick={() => setMode("work")}
+              className={`artist-tab${presentationMode === mode ? " is-active" : ""}`}
+              aria-pressed={presentationMode === mode}
+              onClick={() => setMode(mode)}
             >
-              By Work
+              {mode === "work" ? "By work" : "By track"}
             </button>
-            <button
-              type="button"
-              className={presentationMode === "track" ? "btn btn-primary" : "btn btn-secondary"}
-              aria-pressed={presentationMode === "track"}
-              onClick={() => setMode("track")}
-            >
-              By Track
-            </button>
-          </div>
-          {presentationMode === "work" &&
-            presentation.groups.map((group) => (
-              <article className="classical-presentation__work" key={group.id}>
-                <div>
-                  <RouteLink to={group.href}>
-                    <h2>{group.title}</h2>
-                  </RouteLink>
-                  {group.composer && <p>{group.composer}</p>}
-                </div>
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  onClick={() => playClassicalGroup(group)}
-                >
-                  Play whole work
-                </button>
-                <ol>
-                  {group.items.map((item) => (
-                    <li key={item.id}>
-                      <button
-                        type="button"
-                        className="classical-presentation__movement"
-                        aria-label={`Play ${item.title}`}
-                        onClick={() => playClassicalGroup(group, item.id)}
-                      >
-                        <span>{item.title}</span>
-                        {formatDuration(
-                          item.endMs != null ? item.endMs - item.startMs : item.durationMs,
-                        ) && (
-                          <span className="classical-presentation__time">
-                            {formatDuration(
-                              item.endMs != null ? item.endMs - item.startMs : item.durationMs,
-                            )}
-                          </span>
-                        )}
-                      </button>
-                    </li>
-                  ))}
-                </ol>
-                {group.missing.length > 0 && (
-                  <p className="classical-presentation__missing">
-                    Missing: {group.missing.map((item) => item.title).join(", ")}
-                  </p>
-                )}
-              </article>
-            ))}
-        </section>
+          ))}
+        </div>
       )}
-      {presentation && presentationMode === "work" && ungroupedRows.length > 0 && (
-        <section aria-label="Other tracks">
-          <h2 className="classical-presentation__other">Other tracks</h2>
-          <TrackList
-            label={`${title || "Album"} other tracks`}
-            rows={ungroupedRows}
-            variant="release"
-            highlightKey={highlightKey}
-          />
-        </section>
+      {presentation && presentationMode === "work" && (
+        <TrackList
+          label={`${title || "Album"} works`}
+          rows={byWorkRows}
+          variant="release"
+          highlightKey={workHighlightKey ?? highlightKey}
+        />
       )}
       {(!presentation || presentationMode === "track") &&
         (rows.length ? (
