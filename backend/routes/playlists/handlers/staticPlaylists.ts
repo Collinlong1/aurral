@@ -15,16 +15,13 @@ import {
   normalizePlaylistTrack,
 } from "../../../services/playlists/playlistTracks.ts";
 import { playlistOperationQueue } from "../../../services/playlists/playlistOperationQueue.ts";
+import { reorderStaticPlaylistTracks } from "../../../services/playlists/playlistOperations.ts";
 import { syncStaticPlaylistImport } from "../../../services/importLists/importListSync.ts";
 import {
   enqueueResearchTrack,
   getAccessibleStaticPlaylist,
   requirePlaylistAccess,
 } from "./utils.ts";
-import {
-  PlaylistOrderError,
-  reorderStaticPlaylistTracks,
-} from "../../../services/playlists/playlistTrackOrder.ts";
 import { asAppError } from "../../../../lib/errors.ts";
 import { validate } from "../../../middleware/validate.ts";
 import { errorStatus } from "../../shared/errorStatus.ts";
@@ -78,6 +75,12 @@ const playlistInput = v.object({
 });
 const enabledInput = v.object({ enabled: v.boolean() });
 const bulkInput = v.object({ jobIds: v.array(v.string()) });
+const orderInput = v.object({
+  jobIds: v.pipe(
+    v.array(v.string()),
+    v.check((ids) => new Set(ids).size === ids.length, "jobIds must not repeat"),
+  ),
+});
 const moveInput = v.object({
   jobIds: v.array(v.string()),
   target: v.nullish(v.object({ playlistId: v.optional(v.string()), name: v.optional(v.string()) })),
@@ -308,26 +311,6 @@ const staticPlaylistRoutes = new Hono<AppEnv>()
     },
   )
   .put(
-    "/:playlistId/track-order",
-    requirePlaylistAccess,
-    validate("json", v.object({ jobIds: v.array(v.string()) })),
-    (c) => {
-      const playlistId = c.req.param("playlistId");
-      if (!getAccessibleStaticPlaylist(c.var.user, playlistId)) {
-        return c.json({ error: "Playlist not found" }, 404);
-      }
-      try {
-        reorderStaticPlaylistTracks(playlistId, c.req.valid("json").jobIds);
-        return c.json({ success: true }, 200);
-      } catch (error) {
-        if (error instanceof PlaylistOrderError) {
-          return c.json({ error: error.message }, 409);
-        }
-        throw error;
-      }
-    },
-  )
-  .put(
     "/:playlistId/track-availability",
     requirePlaylistAccess,
     validate("json", enabledInput),
@@ -340,6 +323,28 @@ const staticPlaylistRoutes = new Hono<AppEnv>()
         showTrackAvailability: c.req.valid("json").enabled,
       });
       return c.json({ success: true, showTrackAvailability: playlist!.showTrackAvailability }, 200);
+    },
+  )
+  .put(
+    "/:playlistId/track-order",
+    requirePlaylistAccess,
+    validate("json", orderInput),
+    async (c) => {
+      const playlistId = c.req.param("playlistId");
+      if (!getAccessibleStaticPlaylist(c.var.user, playlistId)) {
+        return c.json({ error: "Playlist not found" }, 404);
+      }
+      try {
+        if (!(await reorderStaticPlaylistTracks(playlistId, c.req.valid("json").jobIds))) {
+          return c.json({ error: "Playlist not found" }, 404);
+        }
+        return c.json({ success: true }, 200);
+      } catch (error) {
+        return c.json(
+          { error: "Failed to reorder playlist", message: asAppError(error)?.message },
+          500,
+        );
+      }
     },
   )
   .put(

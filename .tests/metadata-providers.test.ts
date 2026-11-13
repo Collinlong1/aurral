@@ -71,25 +71,28 @@ test("default settings and unset backend config use BrainzMash metadata", async 
   vi.unstubAllEnvs();
 });
 
-test("entity request failures back off for one hour, six hours, then one day", () => {
+test("entity request failures back off for one minute, ten minutes, then one hour", () => {
   const key = "backoff:test";
-  const hour = 60 * 60 * 1000;
+  const minute = 60 * 1000;
   let now = 1_000_000;
   clearMetadataRequestStates();
 
   const first = acquireMetadataRequest(key, 120_000, now);
   assert.equal(first.acquired, true);
-  assert.equal(failMetadataRequest(key, first.acquired ? first.token : "", now), now + hour);
+  assert.equal(failMetadataRequest(key, first.acquired ? first.token : "", now), now + minute);
 
-  now += hour;
+  now += minute;
   const second = acquireMetadataRequest(key, 120_000, now);
   assert.equal(second.acquired, true);
-  assert.equal(failMetadataRequest(key, second.acquired ? second.token : "", now), now + 6 * hour);
+  assert.equal(
+    failMetadataRequest(key, second.acquired ? second.token : "", now),
+    now + 10 * minute,
+  );
 
-  now += 6 * hour;
+  now += 10 * minute;
   const third = acquireMetadataRequest(key, 120_000, now);
   assert.equal(third.acquired, true);
-  assert.equal(failMetadataRequest(key, third.acquired ? third.token : "", now), now + 24 * hour);
+  assert.equal(failMetadataRequest(key, third.acquired ? third.token : "", now), now + 60 * minute);
   clearMetadataRequestStates();
 });
 
@@ -101,7 +104,7 @@ test("an abandoned entity request enters cooldown when its lease expires", () =>
 
   const recovered = acquireMetadataRequest(key, 1_000, now + 1_001);
   assert.equal(recovered.acquired, false);
-  assert.equal(recovered.retryAfter, now + 1_001 + 60 * 60 * 1000);
+  assert.equal(recovered.retryAfter, now + 1_001 + 60 * 1000);
   clearMetadataRequestStates();
 });
 
@@ -431,6 +434,72 @@ test("artist album refreshes can bypass the long-lived metadata cache", async ()
   }
 });
 
+test("an artist's album list refreshes a cached album only while it is not out yet", async () => {
+  const previousSettings = dbOps.getSettings();
+  const fetched: string[] = [];
+  let upcomingRefreshed!: () => void;
+  const upcomingRefresh = new Promise<void>((resolve) => {
+    upcomingRefreshed = resolve;
+  });
+  const releaseDates = { out: "2000-01-01", soon: "2999-01-01" };
+  const server = await createMockHttpServer((request, response) => {
+    const id = requireFixture(request.url).split("/").at(-1);
+    response.setHeader("content-type", "application/json");
+    if (request.url?.startsWith("/artist/")) {
+      response.end(
+        JSON.stringify({
+          id,
+          artistname: "List Artist",
+          Albums: [
+            { Id: "out", Title: "Out", Type: "Album" },
+            { Id: "soon", Title: "Soon", Type: "Album" },
+          ],
+        }),
+      );
+      return;
+    }
+    fetched.push(String(id));
+    response.end(JSON.stringify({ id, title: id, releasedate: releaseDates.soon }));
+    upcomingRefreshed();
+  });
+
+  try {
+    dbOps.updateSettings({
+      ...previousSettings,
+      integrations: {
+        ...(previousSettings.integrations || {}),
+        metadata: {
+          ...(previousSettings.integrations?.metadata || {}),
+          provider: "brainzmash",
+          baseUrl: server.url,
+          enableNarrowFallbacks: false,
+        },
+      },
+    });
+    clearMetadataProviderCaches();
+    for (const [id, releasedate] of Object.entries(releaseDates)) {
+      await dbOps.setMetadataResponseAsync(`${server.url}/album/${id}:{}`, {
+        value: { id, title: id, releasedate },
+        freshUntil: Date.now() - 1000,
+        staleUntil: Date.now() + 60_000,
+      });
+    }
+
+    const albums = await listArtistAlbums("list-artist");
+    await upcomingRefresh;
+
+    assert.deepEqual(
+      albums.map((album) => album.firstReleaseDate),
+      Object.values(releaseDates),
+    );
+    assert.deepEqual(fetched, ["soon"]);
+  } finally {
+    clearMetadataProviderCaches();
+    dbOps.updateSettings(previousSettings);
+    await server.close();
+  }
+});
+
 test("missing entity metadata is negatively cached for repeated lookups", async () => {
   const previousSettings = dbOps.getSettings();
   let requests = 0;
@@ -506,6 +575,88 @@ test("transient entity failures use a persistent cooldown instead of redownloadi
     clearMetadataProviderCaches();
     dbOps.updateSettings(previousSettings);
     await server.close();
+  }
+});
+
+test("an album request already sent finishes and is cached after its caller leaves", async () => {
+  const previousSettings = dbOps.getSettings();
+  let requests = 0;
+  const arrived = Promise.withResolvers<void>();
+  const answer = Promise.withResolvers<void>();
+  const server = await createMockHttpServer(async (_request, response) => {
+    requests += 1;
+    arrived.resolve();
+    await answer.promise;
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify({ id: "left-album", title: "Left Album" }));
+  });
+  const caller = new AbortController();
+
+  try {
+    dbOps.updateSettings({
+      ...previousSettings,
+      integrations: {
+        ...(previousSettings.integrations || {}),
+        metadata: {
+          ...(previousSettings.integrations?.metadata || {}),
+          provider: "brainzmash",
+          baseUrl: server.url,
+          enableNarrowFallbacks: false,
+        },
+      },
+    });
+    clearMetadataProviderCaches();
+
+    const left = getAlbumByMbid("left-album", { signal: caller.signal });
+    await arrived.promise;
+    caller.abort();
+    await assert.rejects(left);
+    answer.resolve();
+
+    assert.equal((await getAlbumByMbid("left-album")).title, "Left Album");
+    assert.equal(requests, 1);
+  } finally {
+    answer.resolve();
+    clearMetadataProviderCaches();
+    dbOps.updateSettings(previousSettings);
+    await server.close();
+  }
+});
+
+test("a request that waited its turn is sent with its full timeout", async () => {
+  const previousSettings = dbOps.getSettings();
+  const timeouts: (number | undefined)[] = [];
+  const get = vi.spyOn(http, "get").mockImplementation(async (url, options) => {
+    timeouts.push(options?.timeoutMs);
+    return {
+      status: 200,
+      statusText: "OK",
+      headers: {},
+      data: { id: url.split("/").at(-1), title: "In Line" },
+    };
+  });
+
+  try {
+    dbOps.updateSettings({
+      ...previousSettings,
+      integrations: {
+        ...(previousSettings.integrations || {}),
+        metadata: {
+          ...(previousSettings.integrations?.metadata || {}),
+          provider: "brainzmash",
+          baseUrl: "http://metadata.test",
+          enableNarrowFallbacks: false,
+        },
+      },
+    });
+    clearMetadataProviderCaches();
+
+    await Promise.all([getAlbumByMbid("first-in-line"), getAlbumByMbid("second-in-line")]);
+    assert.deepEqual(timeouts, [8000, 8000]);
+  } finally {
+    get.mockRestore();
+    clearMetadataProviderCaches();
+    dbOps.updateSettings(previousSettings);
   }
 });
 

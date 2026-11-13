@@ -59,8 +59,12 @@ const [
 
 const { downloadTracker } = trackerModule;
 const { flowPlaylistConfig, invalidateFlowPlaylistConfigCache } = playlistConfigModule;
-const { markLatestPlaylistOperationToken, processPlaylistOperation, updateStaticPlaylist } =
-  operationsModule;
+const {
+  markLatestPlaylistOperationToken,
+  processPlaylistOperation,
+  reorderStaticPlaylistTracks,
+  updateStaticPlaylist,
+} = operationsModule;
 const { downloadWorker, DownloadWorker } = workerModule;
 assert.ok(downloadWorker instanceof DownloadWorker);
 const { flowTrackSource } = flowTrackSourceModule;
@@ -342,13 +346,13 @@ test("external import routes log fetch failures with the provider reason", async
   const failures = vi.spyOn(logger, "error").mockImplementation(() => {});
   const providers = [
     {
-      route: "/import/spotify",
+      provider: "spotify-playlist",
       reason: "Spotify timed out",
       fail: (reason: string) =>
         vi.spyOn(spotifyClient, "listPlaylistTracks").mockRejectedValue(new Error(reason)),
     },
     {
-      route: "/import/listenbrainz",
+      provider: "listenbrainz-playlist",
       reason: "ListenBrainz timed out",
       fail: (reason: string) =>
         vi
@@ -356,19 +360,20 @@ test("external import routes log fetch failures with the provider reason", async
           .mockRejectedValue(new Error(reason)),
     },
     {
-      route: "/import/lastfm",
+      provider: "lastfm-station",
       reason: "Last.fm timed out",
       fail: (reason: string) =>
         vi.spyOn(lastfmStationClient, "getStationTracks").mockRejectedValue(new Error(reason)),
     },
   ];
 
-  for (const { route, reason, fail } of providers) {
+  for (const { provider, reason, fail } of providers) {
     fail(reason);
-    const response = await requestAs(7, route, {
-      playlistId: "external-playlist",
+    const response = await requestAs(7, "/import", {
+      provider,
+      externalId: "external-playlist",
+      externalUsername: "listener",
       name: "Test Mix",
-      username: "listener",
     });
     assert.equal(response.status, 500);
     const logged = failures.mock.calls.at(-1);
@@ -401,8 +406,9 @@ test("YouTube Music preview and import trust the refetched source title", async 
       queued: true,
       operationId: 71,
     }));
-  const previewResponse = await requestAs(7, "/import/youtube-music/preview", {
-    url: "https://music.youtube.com/playlist?list=PLabcdefghij_123",
+  const previewResponse = await requestAs(7, "/import/preview", {
+    provider: "youtube-music-playlist",
+    externalId: "https://music.youtube.com/playlist?list=PLabcdefghij_123",
   });
   assert.equal(previewResponse.status, 200);
   assert.deepEqual(previewResponse.body, {
@@ -412,8 +418,9 @@ test("YouTube Music preview and import trust the refetched source title", async 
     previewTracks: sourceTracks,
   });
 
-  const importResponse = await requestAs(7, "/import/youtube-music", {
-    playlistId: "PLabcdefghij_123",
+  const importResponse = await requestAs(7, "/import", {
+    provider: "youtube-music-playlist",
+    externalId: "PLabcdefghij_123",
     name: "My imported mix",
     externalName: "Spoofed client title",
     syncEnabled: true,
@@ -437,8 +444,9 @@ test("YouTube Music preview and import trust the refetched source title", async 
   });
   assert.equal(JSON.stringify(queued).includes("Spoofed client title"), false);
 
-  const invalidIntervalResponse = await requestAs(7, "/import/youtube-music", {
-    playlistId: "PLabcdefghij_123",
+  const invalidIntervalResponse = await requestAs(7, "/import", {
+    provider: "youtube-music-playlist",
+    externalId: "PLabcdefghij_123",
     name: "Invalid schedule",
     syncIntervalHours: "not-a-number",
   });
@@ -460,8 +468,9 @@ test("YouTube Music route maps provider failures without logging submitted refer
   });
   const warnings = vi.spyOn(logger, "warn").mockImplementation(() => {});
   const failures = vi.spyOn(logger, "error").mockImplementation(() => {});
-  const response = await requestAs(7, "/import/youtube-music/preview", {
-    url: "https://music.youtube.com/playlist?list=PLsecretUnlisted_123",
+  const response = await requestAs(7, "/import/preview", {
+    provider: "youtube-music-playlist",
+    externalId: "https://music.youtube.com/playlist?list=PLsecretUnlisted_123",
   });
 
   assert.equal(response.status, 504);
@@ -913,6 +922,34 @@ test("deleting a track keeps remaining import order in config", async () => {
     assert.deepEqual(
       jobsAfter.map((job) => job.trackName),
       ["One", "Three", "Four"],
+    );
+  } finally {
+    downloadWorker.start = originalStart;
+    downloadWorker.stop();
+  }
+});
+
+test("reordering moves only the listed tracks, within the slots they held", async () => {
+  const originalStart = downloadWorker.start;
+  downloadWorker.start = async () => {};
+  try {
+    const playlist = flowPlaylistConfig.createStaticPlaylist({ name: "Reorder", tracks: [] });
+    await appendTracks(
+      playlist.id,
+      ["One", "Two", "Three", "Four"].map((trackName) => ({
+        artistName: "A",
+        trackName,
+        albumName: "Album",
+      })),
+    );
+    const [one, two, three] = playlistJobs(playlist.id).map((job) => job.id);
+    assert.ok(one && two && three);
+
+    await reorderStaticPlaylistTracks(playlist.id, [three, "removed-elsewhere", one, two]);
+
+    assert.deepEqual(
+      playlistJobs(playlist.id).map((job) => job.trackName),
+      ["Three", "One", "Two", "Four"],
     );
   } finally {
     downloadWorker.start = originalStart;
