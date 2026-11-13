@@ -1754,7 +1754,7 @@ export function getSubsonicPlaylists(user: SubsonicUser) {
       created: new Date(playlist.createdAt || Date.now()).toISOString(),
       changed: new Date(
         Math.max(
-          epochMs(playlist.importedAt || playlist.createdAt),
+          playlist.updatedAt,
           artworkChangedAt,
           artworkRevision,
           coverRevisions.get(playlist.id) || 0,
@@ -1800,8 +1800,8 @@ export function getSubsonicPlaylist(value: string, user: SubsonicUser) {
         epochMs(
           (kind === "flow" && "lastRunAt" in playlist
             ? playlist.lastRunAt
-            : "importedAt" in playlist
-              ? playlist.importedAt
+            : "updatedAt" in playlist
+              ? playlist.updatedAt
               : undefined) || playlist.createdAt,
         ),
         artworkChangedAt,
