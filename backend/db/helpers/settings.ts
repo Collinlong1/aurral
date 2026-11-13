@@ -9,10 +9,7 @@ import {
 } from "../../services/downloadFolderConfig.ts";
 import { normalizeDateTimeFormat } from "../../config/constants.ts";
 import type { defaultData } from "../../config/constants.ts";
-import {
-  normalizeIntervalDays,
-  normalizeQualityProfile,
-} from "../../services/qualityProfileModel.ts";
+import { normalizeQualityProfile } from "../../services/qualityProfileModel.ts";
 import type { SettingsRow } from "../rows.ts";
 import type { CacheOps } from "./cache.ts";
 import type { DiscoveryCacheOps } from "./discovery.ts";
@@ -24,13 +21,11 @@ import {
   warnUnreadableIntegrationSettings,
   type StoredIntegrations,
 } from "./integrationSettings.ts";
-import { lenient, listOf } from "./storedSchemas.ts";
+import { lenient } from "./storedSchemas.ts";
 
 export type { StoredIntegrations } from "./integrationSettings.ts";
 
 export type SettingsPlaylistWorker = ReturnType<typeof normalizePlaylistWorkerSettings>;
-
-type SettingsMissingTrackSearch = ReturnType<typeof normalizeMissingTrackSearchSettings>;
 
 type SettingsInbox = typeof defaultData.settings.inbox;
 
@@ -38,7 +33,6 @@ const flag = lenient(v.boolean());
 
 const securitySchema = v.looseObject({
   localNetworkBypass: lenient(v.looseObject({ enabled: flag })),
-  ssoOnly: flag,
   defaultPermissions: lenient(v.record(v.string(), v.boolean())),
 });
 
@@ -49,13 +43,7 @@ export interface StoredPlaylistWorker {
   retryPausedPlaylistIds?: unknown;
 }
 
-interface StoredMissingTrackSearch {
-  enabled?: unknown;
-  intervalDays?: unknown;
-}
-
 const inboxSchema = v.looseObject({
-  enabled: flag,
   releases: flag,
   shows: flag,
   news: flag,
@@ -69,39 +57,27 @@ export type QualityProfile = ReturnType<typeof normalizeQualityProfile>;
 
 export interface AppSettings {
   integrations: StoredIntegrations;
-  quality: string;
   dateTimeFormat: string;
   qualityProfile: QualityProfile;
-  queueCleaner: Record<string, unknown>;
   security: StoredSecurity;
   downloadFolderPath: string | null;
   pathMappings: ReturnType<typeof normalizePathMappings>;
-  releaseTypes: string[];
-  subsonic: typeof defaultData.settings.subsonic;
   playlistWorker: SettingsPlaylistWorker;
-  missingTrackSearch: SettingsMissingTrackSearch;
-  reviewTimeoutHours: number;
   inbox: SettingsInbox;
   onboardingComplete: boolean;
 }
 
 export interface SettingsUpdate {
   integrations?: StoredIntegrations;
-  quality?: string;
   dateTimeFormat?: string | null;
   qualityProfile?: unknown;
-  queueCleaner?: Record<string, unknown>;
   security?: StoredSecurity;
   inbox?: StoredInbox;
   downloadFolderPath?: string | null;
   pathMappings?: unknown;
-  releaseTypes?: string[];
   flows?: unknown;
   staticPlaylists?: unknown;
-  subsonic?: { favoriteAutoKeep?: boolean };
   playlistWorker?: StoredPlaylistWorker;
-  missingTrackSearch?: StoredMissingTrackSearch;
-  reviewTimeoutHours?: number | string;
   onboardingComplete?: boolean;
 }
 
@@ -143,22 +119,6 @@ const deleteSettingsByPrefixStmt = db.prepare<[string]>(
 
 const readStoredSettingJson = <Schema extends v.GenericSchema>(schema: Schema, key: string) =>
   dbHelpers.readJSON(schema, getSettingStmt.get(key)?.value, key);
-
-function normalizeMissingTrackSearchSettings(raw: StoredMissingTrackSearch | null | undefined) {
-  const search: StoredMissingTrackSearch = raw && typeof raw === "object" ? raw : {};
-  return {
-    enabled: search.enabled === true,
-    intervalDays: normalizeIntervalDays(search.intervalDays, 1),
-  };
-}
-
-export const MAX_REVIEW_TIMEOUT_HOURS = 720;
-
-// Hours a song may wait in review before it is denied; 0 waits indefinitely.
-export function normalizeReviewTimeoutHours(value: unknown): number {
-  const hours = Number(value);
-  return Number.isInteger(hours) && hours >= 0 && hours <= MAX_REVIEW_TIMEOUT_HOURS ? hours : 0;
-}
 
 function normalizePlaylistWorkerSettings(raw: StoredPlaylistWorker | null | undefined) {
   const worker: StoredPlaylistWorker = raw && typeof raw === "object" ? raw : {};
@@ -253,13 +213,7 @@ export const dbOps = {
       decryptIntegrations(dbHelpers.parseJSON(getSettingStmt.get("integrations")?.value), encKey),
     );
     warnUnreadableIntegrationSettings(unreadable);
-    const quality = getSettingStmt.get("quality")?.value;
     const dateTimeFormat = getSettingStmt.get("dateTimeFormat")?.value;
-    const queueCleaner = dbHelpers.readJSON(
-      v.record(v.string(), v.unknown()),
-      getSettingStmt.get("queueCleaner")?.value,
-      "queueCleaner",
-    );
     const security = dbHelpers.readJSON(
       securitySchema,
       getSettingStmt.get("security")?.value,
@@ -271,21 +225,8 @@ export const dbOps = {
       dbHelpers.parseJSON(getSettingStmt.get("pathMappings")?.value) || [],
     );
     syncPathMappings(pathMappings);
-    const releaseTypes = dbHelpers.readJSON(
-      listOf(v.string()),
-      getSettingStmt.get("releaseTypes")?.value,
-      "releaseTypes",
-    );
-    const subsonic =
-      readStoredSettingJson(v.looseObject({ favoriteAutoKeep: flag }), "subsonic") || {};
     const playlistWorker = normalizePlaylistWorkerSettings(
       readStoredSettingJson(v.looseObject({}), "playlistWorker"),
-    );
-    const missingTrackSearch = normalizeMissingTrackSearchSettings(
-      readStoredSettingJson(v.looseObject({}), "missingTrackSearch"),
-    );
-    const reviewTimeoutHours = normalizeReviewTimeoutHours(
-      getSettingStmt.get("reviewTimeoutHours")?.value,
     );
     const inbox =
       dbHelpers.readJSON(inboxSchema, getSettingStmt.get("inbox")?.value, "inbox") || {};
@@ -301,22 +242,13 @@ export const dbOps = {
     }
     const result = {
       integrations: decryptedIntegrations,
-      quality: quality || "standard",
       dateTimeFormat: normalizeDateTimeFormat(dateTimeFormat),
       qualityProfile,
-      queueCleaner: queueCleaner || {},
       security: security ?? { localNetworkBypass: { enabled: false } },
       downloadFolderPath: downloadFolderPath || null,
       pathMappings,
-      releaseTypes: releaseTypes || [],
-      subsonic: {
-        favoriteAutoKeep: subsonic.favoriteAutoKeep !== false,
-      },
       playlistWorker,
-      missingTrackSearch,
-      reviewTimeoutHours,
       inbox: {
-        enabled: inbox.enabled !== false,
         releases: inbox.releases !== false,
         shows: inbox.shows !== false,
         news: inbox.news !== false,
@@ -352,9 +284,6 @@ export const dbOps = {
           dbHelpers.stringifyJSON(encryptIntegrations(savedIntegrations, encKey)),
         );
       }
-      if (settings.quality) {
-        upsertSettingStmt.run("quality", settings.quality);
-      }
       if (settings.dateTimeFormat !== undefined) {
         upsertSettingStmt.run("dateTimeFormat", normalizeDateTimeFormat(settings.dateTimeFormat));
       }
@@ -366,9 +295,6 @@ export const dbOps = {
           ),
         );
       }
-      if (settings.queueCleaner) {
-        upsertSettingStmt.run("queueCleaner", dbHelpers.stringifyJSON(settings.queueCleaner));
-      }
       if (settings.security !== undefined) {
         upsertSettingStmt.run("security", dbHelpers.stringifyJSON(settings.security));
       }
@@ -376,7 +302,6 @@ export const dbOps = {
         upsertSettingStmt.run(
           "inbox",
           dbHelpers.stringifyJSON({
-            enabled: settings.inbox.enabled !== false,
             releases: settings.inbox.releases !== false,
             shows: settings.inbox.shows !== false,
             news: settings.inbox.news !== false,
@@ -406,39 +331,16 @@ export const dbOps = {
         upsertSettingStmt.run("pathMappings", dbHelpers.stringifyJSON(normalizedMappings));
         syncPathMappings(normalizedMappings);
       }
-      if (settings.releaseTypes) {
-        upsertSettingStmt.run("releaseTypes", dbHelpers.stringifyJSON(settings.releaseTypes));
-      }
       if (settings.flows !== undefined) {
         upsertSettingStmt.run("flows", dbHelpers.stringifyJSON(settings.flows));
       }
       if (settings.staticPlaylists !== undefined) {
         upsertSettingStmt.run("staticPlaylists", dbHelpers.stringifyJSON(settings.staticPlaylists));
       }
-      if (settings.subsonic !== undefined) {
-        upsertSettingStmt.run(
-          "subsonic",
-          dbHelpers.stringifyJSON({
-            favoriteAutoKeep: settings.subsonic.favoriteAutoKeep !== false,
-          }),
-        );
-      }
       if (settings.playlistWorker !== undefined) {
         upsertSettingStmt.run(
           "playlistWorker",
           dbHelpers.stringifyJSON(normalizePlaylistWorkerSettings(settings.playlistWorker)),
-        );
-      }
-      if (settings.missingTrackSearch !== undefined) {
-        upsertSettingStmt.run(
-          "missingTrackSearch",
-          dbHelpers.stringifyJSON(normalizeMissingTrackSearchSettings(settings.missingTrackSearch)),
-        );
-      }
-      if (settings.reviewTimeoutHours !== undefined) {
-        upsertSettingStmt.run(
-          "reviewTimeoutHours",
-          String(normalizeReviewTimeoutHours(settings.reviewTimeoutHours)),
         );
       }
       if (settings.onboardingComplete !== undefined) {

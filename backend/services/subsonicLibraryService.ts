@@ -123,7 +123,7 @@ type SubsonicGenreFields = { genre?: string; genres?: { name: string }[] };
 type SubsonicRatingFields = { userRating?: number; averageRating?: number };
 type SubsonicSong = {
   id: string;
-  parent: string;
+  parent?: string;
   isDir: boolean;
   isVideo: boolean;
   title: string | null;
@@ -349,15 +349,16 @@ const toSong = (
       ? protocolArtist(null, trackArtistName)
       : artistValue;
   const format = String(file?.format || "mp3").toLowerCase();
+  const albumId = album ? idFor("album", album.identityKey) : undefined;
   const song: LibrarySong = {
     id: idFor("song", track.identityKey),
-    parent: album ? idFor("album", album.identityKey) : idFor("album", "unknown"),
+    parent: albumId,
     isDir: false,
     isVideo: false,
     title: track.title,
     album: album?.title || "Unknown Album",
     artist: trackArtistValue.name,
-    albumId: album ? idFor("album", album.identityKey) : undefined,
+    albumId,
     artistId: artistValue.id,
     albumArtists: [artistValue],
     artists: [trackArtistValue],
@@ -544,7 +545,6 @@ function toPlaylistSong(
         { ...owned.library, starredAt: viewer.starredAt, ratings: viewer.ratings },
         owned.track,
       ),
-      parent: idFor(kind, playlist.id),
       ...(customCoverArt && { coverArt: customCoverArt }),
     };
   }
@@ -559,7 +559,6 @@ function toPlaylistSong(
   const albumMbid = String(job.albumMbid || "").trim();
   const song: SubsonicSong = {
     id,
-    parent: idFor(kind, playlist.id),
     isDir: false,
     isVideo: false,
     title: job.trackName,
@@ -1051,8 +1050,6 @@ const resolveSubsonicTrack = (user: SubsonicUser, value: string) => {
   return normalized ? { kind: "song", track: normalized, libraryTrack: track } : null;
 };
 
-const favoriteAutoKeepEnabled = () => dbOps.getSettings()?.subsonic?.favoriteAutoKeep !== false;
-
 const playlistSongKind = (playlistId: string) =>
   flowPlaylistConfig.getFlow(playlistId) ? "flow-song" : "shared-song";
 
@@ -1311,17 +1308,15 @@ export async function starMany(
     )
   )
     return false;
-  if (favoriteAutoKeepEnabled()) {
-    const linked = await linkTracksToLibrary(
-      playlistSongs.flatMap((song) => (song ? [song.track] : [])),
-      { startedByPlaylist: null },
-    );
-    if (linked.tracks.some((track) => !track.canonicalJobId)) {
-      await discardLibraryJobs(linked.createdJobIds);
-      return false;
-    }
-    keepSongsInLibrary(parsed.flatMap((target) => (target.kind === "song" ? [target.key] : [])));
+  const linked = await linkTracksToLibrary(
+    playlistSongs.flatMap((song) => (song ? [song.track] : [])),
+    { startedByPlaylist: null },
+  );
+  if (linked.tracks.some((track) => !track.canonicalJobId)) {
+    await discardLibraryJobs(linked.createdJobIds);
+    return false;
   }
+  keepSongsInLibrary(parsed.flatMap((target) => (target.kind === "song" ? [target.key] : [])));
   const addStars = db.transaction(() => {
     let changed = false;
     for (const target of parsed) {

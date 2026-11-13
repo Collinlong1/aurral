@@ -1,9 +1,7 @@
-import PillToggle from "../../../components/PillToggle";
 import { DotLoader } from "../../../components/DotLoader";
 import { useDiscoveryStatus } from "../../../hooks/useDiscoveryStatus";
 import { formatDateTime } from "../../../utils/dateTime.ts";
 import { SettingsInput } from "../components/SettingsField";
-import { Select } from "../../../components/Select";
 import { useServerSettings } from "../SettingsProviders";
 import { SettingsLink } from "../../../navigation/settingsRoute";
 import type { SettingsState } from "../utils";
@@ -21,18 +19,6 @@ import {
 import { NewsDetail } from "./discovery/NewsDetail";
 
 type Integrations = SettingsState["integrations"];
-
-const AUTO_REFRESH_OPTIONS = [
-  { value: 24, label: "Daily" },
-  { value: 168, label: "Weekly" },
-  { value: 720, label: "Monthly" },
-];
-
-const MODE_OPTIONS = [
-  { value: "safer", label: "Safer" },
-  { value: "balanced", label: "Balanced" },
-  { value: "deeper", label: "Deeper" },
-];
 
 const clamp = (raw: string, min: number, max: number, fallback: number) => {
   const value = Number(raw);
@@ -137,70 +123,7 @@ function TicketmasterDetail() {
           />
         </SettingsRow>
       </SettingsGroup>
-      <SettingsGroup title="Local shows">
-        <SettingsRow label="Recommended artists" htmlFor="ticketmaster-recommended">
-          <PillToggle
-            id="ticketmaster-recommended"
-            checked={ticketmaster.localDiscoveryIncludeRecommendations !== false}
-            aria-label="Recommended artists"
-            onChange={(event) =>
-              update({ localDiscoveryIncludeRecommendations: event.target.checked })
-            }
-          />
-        </SettingsRow>
-        <SettingsRow label="Trending artists" htmlFor="ticketmaster-trending">
-          <PillToggle
-            id="ticketmaster-trending"
-            checked={ticketmaster.localDiscoveryIncludeTrending !== false}
-            aria-label="Trending artists"
-            onChange={(event) => update({ localDiscoveryIncludeTrending: event.target.checked })}
-          />
-        </SettingsRow>
-      </SettingsGroup>
     </SettingsPage>
-  );
-}
-
-function RecommendationsGroup() {
-  const [lastfm, update] = useIntegration("lastfm");
-  return (
-    <SettingsGroup title="Recommendations">
-      <SettingsRow label="Refresh" htmlFor="discovery-refresh">
-        <Select
-          id="discovery-refresh"
-          value={lastfm.discoveryAutoRefreshHours || 168}
-          onChange={(discoveryAutoRefreshHours) => update({ discoveryAutoRefreshHours })}
-          options={AUTO_REFRESH_OPTIONS}
-        />
-      </SettingsRow>
-      <SettingsRow
-        label="Mode"
-        htmlFor="discovery-mode"
-        help="Safer favors familiar artists. Balanced adds variety. Deeper explores further."
-      >
-        <Select
-          id="discovery-mode"
-          value={lastfm.discoveryMode || "balanced"}
-          onChange={(discoveryMode) => update({ discoveryMode })}
-          options={MODE_OPTIONS}
-        />
-      </SettingsRow>
-      <SettingsRow label="Artists per refresh" htmlFor="discovery-count" help="50 to 500.">
-        <SettingsInput
-          id="discovery-count"
-          type="number"
-          min={50}
-          max={500}
-          step={10}
-          value={lastfm.discoveryRecommendationsPerRefresh ?? 200}
-          onChange={(event) =>
-            update({
-              discoveryRecommendationsPerRefresh: clamp(event.target.value, 50, 500, 200),
-            })
-          }
-        />
-      </SettingsRow>
-    </SettingsGroup>
   );
 }
 
@@ -295,7 +218,6 @@ export function DiscoverySection() {
 
   return (
     <SettingsPage title="Discovery">
-      <RecommendationsGroup />
       <CacheGroup />
       <SettingsGroup title="Sources">
         <SettingsServiceRow

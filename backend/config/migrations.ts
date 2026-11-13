@@ -1,5 +1,7 @@
 import type Database from "better-sqlite3";
 import { createAurral3Schema } from "./aurral-3-schema.ts";
+import { NOTIFICATION_EVENTS } from "../../lib/notificationEvents.ts";
+import { isRecord } from "../../lib/isRecord.ts";
 
 type Migration = (db: Database.Database) => void;
 
@@ -139,6 +141,79 @@ const nameUsenetDownloadsBySource: Migration = (db) => {
   }
 };
 
+// These settings became fixed behavior. Each user keeps the discovery mode
+// the server used.
+const dropFixedSettings: Migration = (db) =>
+  db.exec(`
+    INSERT OR IGNORE INTO settings (key, value)
+      SELECT 'user:' || users.id || ':discoveryMode', json_quote(integrations.value ->> '$.lastfm.discoveryMode')
+      FROM users, settings AS integrations
+      WHERE integrations.key = 'integrations' AND json_valid(integrations.value)
+        AND integrations.value ->> '$.lastfm.discoveryMode' IN ('safer', 'deeper');
+    UPDATE settings SET value = json_remove(value,
+        '$.lastfm.discoveryMode', '$.lastfm.discoveryAutoRefreshHours',
+        '$.lastfm.discoveryRecommendationsPerRefresh', '$.slskd.cleanupAfterRuns',
+        '$.prowlarr.categories', '$.prowlarr.maxResults', '$.nzbget.nzbPriority',
+        '$.nzbget.addPaused', '$.nzbget.deleteLeftovers', '$.sabnzbd.addPaused',
+        '$.sabnzbd.deleteLeftovers')
+      WHERE key = 'integrations' AND json_valid(value);
+    UPDATE settings SET value = json_remove(value, '$.ssoOnly')
+      WHERE key = 'security' AND json_valid(value);
+    DELETE FROM settings WHERE key IN ('missingTrackSearch', 'reviewTimeoutHours', 'subsonic', 'playlistFiles');
+  `);
+
+// These settings had no reader or no way to change them. A turned-off Inbox
+// keeps every item off, which is how Inbox is turned off now.
+const dropUnusedSettings: Migration = (db) =>
+  db.exec(`
+    DELETE FROM settings WHERE key IN ('quality', 'releaseTypes', 'queueCleaner');
+    UPDATE settings SET value = json_remove(value,
+        '$.lastfm.discoveryPeriod',
+        '$.ticketmaster.localDiscoveryIncludeRecommendations',
+        '$.ticketmaster.localDiscoveryIncludeTrending',
+        '$.metadata.provider',
+        '$.metadata.userAgentSuffix',
+        '$.metadata.enableNarrowFallbacks')
+      WHERE key = 'integrations' AND json_valid(value);
+    UPDATE settings SET value = json_set(value,
+        '$.releases', json('false'), '$.shows', json('false'), '$.news', json('false'),
+        '$.recommendedNews', json('false'), '$.discoveries', json('false'))
+      WHERE key = 'inbox' AND json_valid(value) AND json_type(value, '$.enabled') = 'false';
+    UPDATE settings SET value = json_remove(value, '$.enabled')
+      WHERE key = 'inbox' AND json_valid(value);
+  `);
+
+// Gotify is a webhook to its /message endpoint. Its token is stored encrypted
+// the same way webhook header values are, so it moves over as it is.
+const moveGotifyToWebhook: Migration = (db) => {
+  const row = db
+    .prepare<[], string>("SELECT value FROM settings WHERE key = 'integrations'")
+    .pluck()
+    .get();
+  let integrations: unknown;
+  try {
+    integrations = JSON.parse(row ?? "");
+  } catch {
+    return;
+  }
+  if (!isRecord(integrations) || !("gotify" in integrations)) return;
+  const { gotify, ...rest } = integrations;
+  const url = isRecord(gotify) && typeof gotify.url === "string" ? gotify.url.trim() : "";
+  const token = isRecord(gotify) && typeof gotify.token === "string" ? gotify.token.trim() : "";
+  const webhooks = Array.isArray(rest.webhooks) ? rest.webhooks : [];
+  if (isRecord(gotify) && url && token) {
+    webhooks.push({
+      url: `${url.replace(/\/+$/, "")}/message`,
+      headers: [{ key: "X-Gotify-Key", value: token }],
+      body: '{"title":"$title","message":"$message","priority":5}',
+      events: NOTIFICATION_EVENTS.filter((event) => gotify[event] === true),
+    });
+  }
+  db.prepare("UPDATE settings SET value = ? WHERE key = 'integrations'").run(
+    JSON.stringify({ ...rest, webhooks }),
+  );
+};
+
 export const migrations: Migration[] = [
   createAurral3Schema,
   indexFinishedDownloadNames,
@@ -149,6 +224,9 @@ export const migrations: Migration[] = [
   failUnreadableDownloadJobs,
   clearMetadataFailureBackoff,
   nameUsenetDownloadsBySource,
+  dropFixedSettings,
+  dropUnusedSettings,
+  moveGotifyToWebhook,
 ];
 
 export function migrate(db: Database.Database, steps: readonly Migration[] = migrations) {
