@@ -778,6 +778,25 @@ test("album and track actions get the Library's album and tracks", async (t) => 
   assert.equal((await routes(owner).request("/plugins/views/resources/work/work-1")).status, 404);
 });
 
+const searchItemSchema = v.object({
+  title: v.string(),
+  href: v.nullable(v.string()),
+  filters: v.nullable(v.record(v.string(), v.array(v.string()))),
+});
+const searchAnswerSchema = v.object({
+  providers: v.array(
+    v.object({
+      pluginId: v.string(),
+      pluginName: v.string(),
+      ok: v.boolean(),
+      best: v.optional(v.nullable(searchItemSchema)),
+      sections: v.optional(v.array(v.object({ items: v.array(searchItemSchema) })), []),
+    }),
+  ),
+});
+const searchAnswer = async (url: string) =>
+  v.parse(searchAnswerSchema, await (await routes(owner).request(url)).json());
+
 test("search providers answer the search page with typed results; a failing one is reported alone", async () => {
   await install(
     "finder",
@@ -802,40 +821,37 @@ test("search providers answer the search page with typed results; a failing one 
   );
   await turnOn("finder");
   await turnOn("broken");
-  const answer = await (
-    await routes(owner).request("/plugins/search?q=moon&filters=composer%3Dc1%2Cc2%3Bbad%20key%3Dx")
-  ).json();
-  const finder = answer.providers.find((p: { pluginId: string }) => p.pluginId === "finder");
-  assert.equal(finder.ok, true);
-  assert.equal(finder.sections[0].items[0].title, 'moon {"composer":["c1","c2"]} user 4');
+  const answer = await searchAnswer(
+    "/plugins/search?q=moon&filters=composer%3Dc1%2Cc2%3Bbad%20key%3Dx",
+  );
+  const finder = answer.providers.find((p) => p.pluginId === "finder");
+  const items = finder?.sections[0]?.items ?? [];
+  assert.equal(finder?.ok, true);
+  assert.equal(items[0]?.title, 'moon {"composer":["c1","c2"]} user 4');
   assert.deepEqual(
-    finder.sections[0].items.map((i: { href: string | null }) => i.href),
+    items.map((i) => i.href),
     ["/plugins/finder/work/w1", "/album/9", null],
   );
-  assert.deepEqual(finder.sections[0].items[2].filters, { performer: ["p"] });
-  assert.equal(finder.best.href, "/plugins/finder/work/w1");
-  assert.deepEqual(
-    answer.providers.find((p: { pluginId: string }) => p.pluginId === "broken"),
-    { pluginId: "broken", pluginName: "Plugin broken", ok: false },
-  );
+  assert.deepEqual(items[2]?.filters, { performer: ["p"] });
+  assert.equal(finder?.best?.href, "/plugins/finder/work/w1");
+  const broken = answer.providers.find((p) => p.pluginId === "broken");
+  assert.deepEqual([broken?.ok, broken?.pluginName], [false, "Plugin broken"]);
   assert.equal(
-    answer.providers.some((p: { pluginId: string }) => p.pluginId === "quiet"),
+    answer.providers.some((p) => p.pluginId === "quiet"),
     false,
   );
   // Opening one provider lists more, and only that provider answers.
-  const focused = await (
-    await routes(owner).request("/plugins/search?q=moon&plugin=finder")
-  ).json();
+  const focused = await searchAnswer("/plugins/search?q=moon&plugin=finder");
   assert.deepEqual(
-    focused.providers.map((p: { pluginId: string }) => p.pluginId),
+    focused.providers.map((p) => p.pluginId),
     ["finder"],
   );
-  assert.match(focused.providers[0].sections[0].items[0].title, / 20$/);
+  assert.match(focused.providers[0]?.sections[0]?.items[0]?.title ?? "", / 20$/);
   // The capability turns off like any other.
   await turnOn("finder", { capabilities: { search: false } });
-  const off = await (await routes(owner).request("/plugins/search?q=moon")).json();
+  const off = await searchAnswer("/plugins/search?q=moon");
   assert.equal(
-    off.providers.some((p: { pluginId: string }) => p.pluginId === "finder"),
+    off.providers.some((p) => p.pluginId === "finder"),
     false,
   );
 });
