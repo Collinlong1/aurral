@@ -396,12 +396,17 @@ function RowItem({
   row,
   active = false,
   disabled,
+  ticked,
+  onTick,
   onSelect,
   onAction,
 }: {
   row: Row;
   active?: boolean;
   disabled: boolean;
+  // Set when the section lets a person tick rows for bulk actions.
+  ticked?: boolean;
+  onTick?: (ticked: boolean) => void;
   onSelect: (selection: string) => void;
   onAction: (action: PluginPageV2Action) => void;
 }) {
@@ -416,6 +421,16 @@ function RowItem({
   );
   return (
     <div className={`plugin-admin__row${active ? " is-active" : ""}`}>
+      {onTick ? (
+        <input
+          type="checkbox"
+          className="plugin-admin__tick"
+          aria-label={`Select ${row.label}`}
+          checked={Boolean(ticked)}
+          disabled={disabled}
+          onChange={(event) => onTick(event.target.checked)}
+        />
+      ) : null}
       {row.selection ? (
         <button
           type="button"
@@ -476,6 +491,65 @@ function Group({
   );
 }
 
+type RowsSelect = Extract<Section, { type: "rows" }>["select"];
+
+// Ticks rows and runs an action on them: "3 selected · Select all · Clear".
+function BulkBar({
+  select,
+  rows,
+  ticked,
+  disabled,
+  onTick,
+  onAction,
+}: {
+  select: NonNullable<RowsSelect>;
+  rows: Row[];
+  ticked: string[];
+  disabled: boolean;
+  onTick: (ids: string[]) => void;
+  onAction: (action: PluginPageV2Action, ids: string[]) => void;
+}) {
+  const all = rows.map((row) => row.id);
+  return (
+    <div className="plugin-admin__bulk" role="group" aria-label="Selected items">
+      <span className="plugin-admin__bulk-count">
+        {ticked.length ? `${ticked.length} selected` : "None selected"}
+      </span>
+      <button
+        type="button"
+        className="plugin-admin__link"
+        disabled={disabled || ticked.length === all.length}
+        onClick={() => onTick(all)}
+      >
+        Select all {all.length}
+      </button>
+      {ticked.length ? (
+        <button
+          type="button"
+          className="plugin-admin__link"
+          disabled={disabled}
+          onClick={() => onTick([])}
+        >
+          Clear
+        </button>
+      ) : null}
+      <div className="plugin-admin__bulk-actions">
+        {select.actions.map((action) => (
+          <button
+            key={action.command + action.label}
+            type="button"
+            className={`btn btn-sm ${action.tone === "danger" ? "btn-ghost plugin-admin__danger" : "btn-secondary"}`}
+            disabled={disabled || !ticked.length}
+            onClick={() => onAction(action, ticked)}
+          >
+            {action.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ActionButtons({
   actions,
   disabled,
@@ -525,6 +599,18 @@ export default function PluginAdminPage({
   const [dirtyForms, setDirtyForms] = useState<Record<string, boolean>>({});
   const [pending, setPending] = useState<Partial<AdminParams> | null>(null);
   const [confirming, setConfirming] = useState<PluginPageV2Action | null>(null);
+  // Ticked rows, per section ("list" for the browse list).
+  const [ticked, setTicked] = useState<Record<string, string[]>>({});
+  const tickedIn = (id: string, rows: Row[]) => {
+    const shown = new Set(rows.map((row) => row.id));
+    return (ticked[id] ?? []).filter((rowId) => shown.has(rowId));
+  };
+  const tick = (id: string, ids: string[]) => setTicked((current) => ({ ...current, [id]: ids }));
+  const toggle = (id: string, rowId: string, on: boolean) =>
+    setTicked((current) => {
+      const rest = (current[id] ?? []).filter((entry) => entry !== rowId);
+      return { ...current, [id]: on ? [...rest, rowId] : rest };
+    });
   const dirty = Object.values(dirtyForms).some(Boolean);
   const detailRef = useRef<HTMLDivElement>(null);
   const dirtySetters = useRef(new Map<string, (dirty: boolean) => void>());
@@ -551,6 +637,7 @@ export default function PluginAdminPage({
     setMessage("");
     setError(null);
     setDirtyForms({});
+    setTicked({});
     onNavigate(next);
     detailRef.current?.scrollTo?.({ top: 0 });
   };
@@ -569,17 +656,16 @@ export default function PluginAdminPage({
     },
     onSuccess: async (result) => {
       setDirtyForms({});
+      setTicked({});
       const text = "message" in result ? result.message : "Saved";
       if (
         "selection" in result &&
         typeof result.selection === "string" &&
         result.selection !== params.selection
       )
-        onNavigate(
-          result.selection
-            ? { selection: result.selection, tab: "", q: "", offset: "0" }
-            : { selection: "" },
-        );
+        // The list keeps its tab, search and page: resolving one review
+        // item opens the next without losing the person's place.
+        onNavigate({ selection: result.selection });
       // Report the result once the updated page is on screen.
       else await onRefetch();
       setMessage(text);
@@ -598,6 +684,12 @@ export default function PluginAdminPage({
   const runAction = (action: PluginPageV2Action) => {
     if (action.confirm) setConfirming(action);
     else run(action.command, action.arguments);
+  };
+  const runBulk = (key: string) => (action: PluginPageV2Action, ids: string[]) => {
+    const withRows = { ...action, arguments: { ...action.arguments, [key]: ids } };
+    if (action.confirm)
+      setConfirming({ ...withRows, confirm: `${action.confirm} (${ids.length} selected)` });
+    else run(withRows.command, withRows.arguments);
   };
 
   const view = data.view;
@@ -680,6 +772,16 @@ export default function PluginAdminPage({
               <ActionButtons actions={data.list.actions} disabled={busy} onAction={runAction} />
             </div>
           ) : null}
+          {data.list.select && data.list.items.length ? (
+            <BulkBar
+              select={data.list.select}
+              rows={data.list.items}
+              ticked={tickedIn("list", data.list.items)}
+              disabled={busy}
+              onTick={(ids) => tick("list", ids)}
+              onAction={runBulk(data.list.select.key)}
+            />
+          ) : null}
           {data.list.items.length ? (
             <div className="settings-card plugin-admin__list-card">
               {data.list.items.map((item) => (
@@ -688,6 +790,10 @@ export default function PluginAdminPage({
                   row={item}
                   active={!!item.selection && item.selection === params.selection}
                   disabled={busy}
+                  {...(data.list.select && {
+                    ticked: tickedIn("list", data.list.items).includes(item.id),
+                    onTick: (on: boolean) => toggle("list", item.id, on),
+                  })}
                   onSelect={(selection) => go({ selection })}
                   onAction={runAction}
                 />
@@ -835,6 +941,16 @@ export default function PluginAdminPage({
                         {section.note ? (
                           <p className="settings-group__note">{section.note}</p>
                         ) : null}
+                        {section.select && section.rows.length ? (
+                          <BulkBar
+                            select={section.select}
+                            rows={section.rows}
+                            ticked={tickedIn(section.id, section.rows)}
+                            disabled={busy}
+                            onTick={(ids) => tick(section.id, ids)}
+                            onAction={runBulk(section.select.key)}
+                          />
+                        ) : null}
                         {section.rows.length ? (
                           <div className="settings-card">
                             {section.rows.map((row) => (
@@ -842,6 +958,10 @@ export default function PluginAdminPage({
                                 key={row.id}
                                 row={row}
                                 disabled={busy}
+                                {...(section.select && {
+                                  ticked: tickedIn(section.id, section.rows).includes(row.id),
+                                  onTick: (on: boolean) => toggle(section.id, row.id, on),
+                                })}
                                 onSelect={open}
                                 onAction={runAction}
                               />
@@ -850,6 +970,31 @@ export default function PluginAdminPage({
                         ) : (
                           <p className="settings-group__note">{section.empty || "None yet."}</p>
                         )}
+                        {section.pager ? (
+                          <div className="plugin-admin__pager">
+                            <span>{section.pager.label}</span>
+                            <TooltipButton
+                              label="Previous page"
+                              className="btn btn-ghost btn-icon btn-sm"
+                              disabled={!section.pager.previous}
+                              onClick={() =>
+                                section.pager?.previous && go({ selection: section.pager.previous })
+                              }
+                            >
+                              <ChevronLeft aria-hidden="true" />
+                            </TooltipButton>
+                            <TooltipButton
+                              label="Next page"
+                              className="btn btn-ghost btn-icon btn-sm"
+                              disabled={!section.pager.next}
+                              onClick={() =>
+                                section.pager?.next && go({ selection: section.pager.next })
+                              }
+                            >
+                              <ChevronRight aria-hidden="true" />
+                            </TooltipButton>
+                          </div>
+                        ) : null}
                       </Group>
                     );
                   return (

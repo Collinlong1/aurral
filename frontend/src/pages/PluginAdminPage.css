@@ -455,3 +455,32 @@ button.plugin-admin__row-main:focus-visible {
     padding: 0 1rem 0.625rem;
   }
 }
+
+.plugin-admin__tick {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-left: 0.75rem;
+  accent-color: var(--aurral-accent);
+}
+
+.plugin-admin__bulk {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin-bottom: 0.5rem;
+  color: var(--aurral-text-muted);
+  font-size: var(--aurral-font-sm);
+}
+
+.plugin-admin__bulk-count {
+  font-variant-numeric: tabular-nums;
+}
+
+.plugin-admin__bulk-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-left: auto;
+}

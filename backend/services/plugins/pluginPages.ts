@@ -93,6 +93,15 @@ const v2Field = v.object({
   ),
   actions: actions(4),
 });
+// Rows a person can tick, with actions that receive the ticked rows' IDs
+// under `key`, alongside their own arguments.
+const select = v.optional(
+  v.object({ key, actions: v.pipe(v.array(action), v.minLength(1), v.maxLength(6)) }),
+);
+// Pages of a long section: the plugin names the selections before and after.
+const pager = v.optional(
+  v.object({ label: text(200), previous: v.optional(selection), next: v.optional(selection) }),
+);
 const row = v.object({
   id: text(200),
   label: text(500),
@@ -120,6 +129,8 @@ const section = v.variant("type", [
     empty: v.optional(text(500)),
     rows: v.pipe(v.array(row), v.maxLength(500)),
     actions: actions(4),
+    select,
+    pager,
   }),
   v.object({
     type: v.literal("details"),
@@ -154,6 +165,7 @@ export const pluginPageV2Schema = v.object({
     offset: v.pipe(v.number(), v.integer(), v.minValue(0)),
     empty: v.optional(text(500)),
     actions: actions(4),
+    select,
   }),
   view: v.nullable(
     v.object({

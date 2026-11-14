@@ -265,3 +265,7 @@ Set `"search": true` and export `search(input)` to add results to Aurral's searc
 Return `SearchResult` from the TypeScript reference: version 1, `total`, an optional `best` result, up to ten `sections` of up to 50 items, and optional `facets` to filter by. An item has `id`, `kind`, `title`, optional `subtitle` and `detail`, and an optional `link`: a `resource` page of the plugin, an `album` by its Library ID, or the same search with other `filters`. Aurral builds every path; plugins never send URLs or markup.
 
 `GET /api/plugins/search?q=&filters=&plugin=&section=&offset=` calls every provider at once with 3 seconds each. Filters are written `name=value1,value2;name2=value`. A provider that fails or times out is listed with `ok: false` and the rest of search still renders.
+
+### Admin pages v2: selection and pages (classical fork)
+
+A `rows` section and the browse `list` may add `select: { key, actions }`. Each row then gets a checkbox, with "Select all" and "Clear"; an action runs with its own `arguments` plus `key`: the ticked rows' IDs (only rows on screen). An action's `confirm` text is shown with the number selected. A `rows` section may add `pager: { label, previous?, next? }`, where `previous` and `next` are selections the host opens, so a plugin can page a long section (an album of 600 tracks) without passing the 500-row limit. After a mutation that returns a `selection`, the list keeps its tab, search and page.

@@ -178,13 +178,16 @@ test("admin pages v2 and lookups pass validated data; plugins learn the host ren
       ? ({version:2,title:'Bad',revision:'1',tabs:[],list:{items:[],total:0,offset:0},view:{crumbs:[],title:'x',sections:[{type:'script',id:'x'}]}})
       : ({version:2,title:'Editor v'+input.capabilities.adminForms,revision:'1',tab:input.query.tab,
           tabs:[{id:'works',label:'Works',count:1}],
-          list:{items:[{id:'w1',label:'Symphony No. 5',selection:'w1',badge:{label:'Complete',tone:'success'}}],total:1,offset:0},
+          list:{items:[{id:'w1',label:'Symphony No. 5',selection:'w1',badge:{label:'Complete',tone:'success'}}],total:1,offset:0,
+            select:{key:'works',actions:[{label:'Delete',command:'delete-works',arguments:{},tone:'danger',confirm:'Delete?'}]}},
           view:{crumbs:[{label:'Beethoven',selection:'p1'}],title:'Symphony No. 5',sections:[
             {type:'form',id:'details',command:'save-entity',arguments:{target:'w1'},submitLabel:'Save',fields:[
               {key:'title',label:'Title',type:'text',value:'Symphony No. 5',meta:{source:'MusicBrainz',pinned:false},actions:[{label:'Mark blank',command:'set-blank',arguments:{target:'w1',field:'title'}}]},
               {key:'composer',label:'Composer',type:'lookup',lookup:'composers',value:'',valueLabel:''},
               {key:'mapping',label:'Movement',type:'mapping',value:['m1'],rows:[{label:'1. Allegro'}],options:[{value:'',label:'Skip'},{value:'m1',label:'I. Allegro'}]}]},
-            {type:'rows',id:'movements',rows:[{id:'m1',label:'I. Allegro',actions:[{label:'Delete',command:'delete-movement',arguments:{},tone:'danger',confirm:'Sure?'}]}]},
+            {type:'rows',id:'movements',rows:[{id:'m1',label:'I. Allegro',actions:[{label:'Delete',command:'delete-movement',arguments:{},tone:'danger',confirm:'Sure?'}]}],
+              select:{key:'tracks',actions:[{label:'Send to Classical',command:'set-classification',arguments:{state:'classical'}}]},
+              pager:{label:'1–100 of 640',next:'album:1~1'}},
             {type:'details',id:'file',items:[{label:'File',value:'1.flac'}]}]}})}}`;
   await install("pages2", { pages: [{ id: "editor", label: "Editor" }] }, code);
   await turnOn("pages2");
@@ -197,6 +200,24 @@ test("admin pages v2 and lookups pass validated data; plugins learn the host ren
     body,
   );
   assert.deepEqual(parsed, { version: 2, title: "Editor v2", tab: "works" });
+  // Bulk selection and section pages pass through.
+  const extras = v.parse(
+    v.object({
+      list: v.object({ select: v.object({ key: v.string() }) }),
+      view: v.object({
+        sections: v.array(
+          v.looseObject({
+            select: v.optional(v.object({ key: v.string() })),
+            pager: v.optional(v.object({ label: v.string(), next: v.optional(v.string()) })),
+          }),
+        ),
+      }),
+    }),
+    body,
+  );
+  assert.equal(extras.list.select.key, "works");
+  assert.deepEqual(extras.view.sections[1]?.pager, { label: "1–100 of 640", next: "album:1~1" });
+  assert.equal(extras.view.sections[1]?.select?.key, "tracks");
   const lookup = await routes(admin).request(`${route}?lookup=works&q=symphony`);
   assert.equal(lookup.status, 200);
   const options: unknown = await lookup.json();
