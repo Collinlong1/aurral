@@ -6,7 +6,11 @@ import { cacheFor, noCache } from "../../../middleware/cacheHeaders.ts";
 import { requireStreamAuth } from "../../../middleware/guards.ts";
 import type { AppEnv } from "../../../middleware/requestUser.ts";
 import { validate } from "../../../middleware/validate.ts";
-import { fetchReleaseGroupCoverUrl } from "../../../services/releaseGroupCoverService.ts";
+import {
+  fetchReleaseGroupCoverUrl,
+  savedReleaseGroupCoverUrl,
+} from "../../../services/releaseGroupCoverService.ts";
+import { selectAlbumCover } from "../../../services/imageRanking.ts";
 import { enrichTracksWithDeezerPreviews } from "../../../services/apiClients/index.ts";
 import {
   getArtistByMbid,
@@ -122,8 +126,7 @@ export default new Hono<AppEnv>()
           ...toLegacyReleaseGroupSummary(album, primaryArtist),
           genres: Array.isArray(album?.genres) ? album.genres : [],
           overview: album?.overview || "",
-          coverUrl:
-            Array.isArray(album?.images) && album.images[0]?.url ? album.images[0].url : null,
+          coverUrl: savedReleaseGroupCoverUrl(mbid) || selectAlbumCover(album.images)?.url || null,
         },
         200,
       );

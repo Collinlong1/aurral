@@ -28,8 +28,11 @@ export function isImportSourceDue(importSource: ImportSource | null | undefined,
   const intervalHours = Number(importSource.syncIntervalHours);
   const intervalMs =
     Number.isFinite(intervalHours) && intervalHours > 0 ? intervalHours * HOUR_MS : 24 * HOUR_MS;
-  const lastSyncAt = Number(importSource.lastSyncAt || 0);
-  return !lastSyncAt || now - lastSyncAt >= intervalMs;
+  const lastAttemptAt = Math.max(
+    Number(importSource.lastSyncAt || 0),
+    Number(importSource.lastSyncFailedAt || 0),
+  );
+  return !lastAttemptAt || now - lastAttemptAt >= intervalMs;
 }
 
 export async function syncStaticPlaylistImport(options: SyncStaticPlaylistImportOptions) {
@@ -79,20 +82,39 @@ export async function syncStaticPlaylistImportHere({
   const ownerUserId = playlist.ownerUserId ?? user?.id;
   try {
     const externalPlaylistId = String(playlist.importSource?.externalId || "").trim();
-    const {
-      tracks,
-      stats,
-      excluded = [],
-      artworkUrl,
-    } = await requireImportList(playlist.importSource.provider).fetch({
-      userId: ownerUserId,
-      externalId: externalPlaylistId,
-      externalUsername: playlist.importSource?.externalUsername,
-      forceRefresh: true,
-    });
+    const list = requireImportList(playlist.importSource.provider);
+    const source = await list
+      .fetch({
+        userId: ownerUserId,
+        externalId: externalPlaylistId,
+        externalUsername: playlist.importSource?.externalUsername,
+        forceRefresh: true,
+      })
+      .catch((error: unknown) => {
+        if (list.rotating && asAppError(error)?.code === "PLAYLIST_NOT_FOUND") return null;
+        throw error;
+      });
+    if (!source) {
+      flowPlaylistConfig.updateStaticPlaylist(playlist.id, {
+        importSource: {
+          ...playlist.importSource,
+          lastSyncAt: Date.now(),
+          lastSyncFailedAt: null,
+          lastSyncError: null,
+        },
+      });
+      logger.info("playlist-import", "Playlist source is empty for now, so its tracks stay", {
+        provider: playlist.importSource.provider,
+        playlistId: playlist.id,
+        externalPlaylistId,
+      });
+      return { skipped: true, reason: "source-empty" };
+    }
+    const { tracks, stats, excluded = [], artworkUrl } = source;
     const syncImportSource = {
       ...(artworkUrl && { artworkUrl }),
       lastSyncAt: Date.now(),
+      lastSyncFailedAt: null,
       lastSyncError: null,
       lastSyncTrackCount: tracks.length,
     };
@@ -173,11 +195,13 @@ export async function syncStaticPlaylistImportHere({
     });
     const lastSyncError = String(asAppError(error)?.message || "").trim() || "Playlist sync failed";
     const latestPlaylist = flowPlaylistConfig.getStaticPlaylist(playlist.id);
-    if (latestPlaylist?.importSource?.lastSyncError !== lastSyncError) {
+    const disconnected = asAppError(error)?.statusCode === 401;
+    if (!disconnected || latestPlaylist?.importSource?.lastSyncError !== lastSyncError) {
       flowPlaylistConfig.updateStaticPlaylist(playlist.id, {
         importSource: {
           ...(latestPlaylist?.importSource || playlist.importSource),
           lastSyncError,
+          ...(!disconnected && { lastSyncFailedAt: Date.now() }),
         },
       });
     }

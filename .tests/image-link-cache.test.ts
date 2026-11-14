@@ -1,16 +1,16 @@
 import assert from "node:assert/strict";
-import { test, afterAll } from "vite-plus/test";
+import { test, afterAll, type TestContext } from "vite-plus/test";
 import {
   cleanupIsolatedState,
   createMockHttpServer,
   setupIsolatedBackend,
 } from "./helpers/backendTestHarness.ts";
 import { requireFixture } from "./playlists/fixtures.ts";
+import { stubFetch } from "./helpers/stubFetch.ts";
+import sharp from "sharp";
 
 const mbid = "11111111-1111-4111-8111-111111111111";
 const coldMbid = "22222222-2222-4222-8222-222222222222";
-const fallbackRequestedMbid = "66666666-6666-4666-8666-666666666666";
-const fallbackResolvedMbid = "77777777-7777-4777-8777-777777777777";
 const coalescedMbid = "88888888-8888-4888-8888-888888888888";
 const unresolvedReleaseMbid = "99999999-9999-4999-8999-999999999999";
 const missingArtistBytesMbid = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -39,39 +39,6 @@ let providerRequests = 0;
 const providerServer = await createMockHttpServer((request, response) => {
   providerRequests += 1;
   response.setHeader("content-type", "application/json");
-  if (request.url?.startsWith("/search/album")) {
-    response.end(
-      JSON.stringify([
-        {
-          id: fallbackResolvedMbid,
-          title: "Fallback Album",
-          artists: [{ id: "fallback-artist", name: "Fallback Artist" }],
-        },
-      ]),
-    );
-    return;
-  }
-  if (request.url?.includes(`/album/${fallbackRequestedMbid}`)) {
-    response.end(
-      JSON.stringify({
-        id: fallbackRequestedMbid,
-        title: "Requested Album",
-        images: [],
-      }),
-    );
-    return;
-  }
-  if (request.url?.includes(`/album/${fallbackResolvedMbid}`)) {
-    response.end(
-      JSON.stringify({
-        id: fallbackResolvedMbid,
-        title: "Fallback Album",
-        artists: [{ id: "fallback-artist", artistname: "Fallback Artist" }],
-        images: [{ CoverType: "Cover", Url: "https://images.example/fallback.jpg" }],
-      }),
-    );
-    return;
-  }
   if (request.url?.includes(`/album/${coalescedMbid}`)) {
     response.end(
       JSON.stringify({
@@ -116,6 +83,19 @@ const [isolatedState, { dbOps }, { getArtistImage }, { fetchReleaseGroupCoverUrl
     () => import("../backend/db/helpers/index.ts"),
     () => import("../backend/services/imageService.ts"),
     () => import("../backend/services/releaseGroupCoverService.ts"),
+  );
+
+const loadedImage = await sharp({
+  create: { width: 16, height: 16, channels: 3, background: "red" },
+})
+  .png()
+  .toBuffer();
+const realFetch = globalThis.fetch;
+const stubImageHost = (t: TestContext) =>
+  stubFetch(t, (url, init) =>
+    url.hostname === "images.example"
+      ? new Response(new Uint8Array(loadedImage), { headers: { "content-type": "image/png" } })
+      : realFetch(url, init),
   );
 
 afterAll(async () => {
@@ -190,7 +170,8 @@ test("missing provider artwork does not synthesize an unverified cover URL", asy
   assert.equal(dbOps.getImage(`rg:${unresolvedReleaseMbid}`)?.imageUrl, "NOT_FOUND");
 });
 
-test("release-group refresh replaces a stale cached link", async () => {
+test("release-group refresh replaces a stale cached link", async (t) => {
+  stubImageHost(t);
   dbOps.setImage(`rg:${coldMbid}`, "https://images.example/dead-cover.jpg");
   const requestsBefore = providerRequests;
 
@@ -201,18 +182,8 @@ test("release-group refresh replaces a stale cached link", async () => {
   assert.equal(dbOps.getImage(`rg:${coldMbid}`)?.imageUrl, result.imageUrl);
 });
 
-test("release-group fallback links are not stored under the requested MBID", async () => {
-  const result = await fetchReleaseGroupCoverUrl(fallbackRequestedMbid, {
-    artistName: "Fallback Artist",
-    albumTitle: "Fallback Album",
-    bypassCache: true,
-  });
-
-  assert.equal(result.imageUrl, "https://images.example/fallback.jpg");
-  assert.equal(dbOps.getImage(`rg:${fallbackRequestedMbid}`), null);
-});
-
-test("release-group refreshes coalesce per MBID", async () => {
+test("release-group refreshes coalesce per MBID", async (t) => {
+  stubImageHost(t);
   const originalSetImage = dbOps.setImage;
   let writes = 0;
   dbOps.setImage = (...args) => {

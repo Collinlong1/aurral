@@ -50,6 +50,7 @@ import {
 import type {
   LibraryAlbum,
   LibraryArtist,
+  LibraryFavorites,
   LibraryTrack,
   LibraryTrackFile,
 } from "./libraryQueryService.ts";
@@ -63,7 +64,6 @@ import type {
 } from "../db/rows.ts";
 import { libraryNameKey, subsonicId as idFor } from "./libraryMediaStore.ts";
 import { buildRadio, type RadioSeed } from "./radio.ts";
-import { getUserMix, getUserMixes, type Mix } from "./discovery/mixes.ts";
 import { withLock } from "./jobs/queue.ts";
 import { discSubtitle, discTitles } from "../../lib/discTitles.ts";
 import { withPlaylistMutationLock } from "./downloadJobs/downloadLocks.ts";
@@ -98,8 +98,7 @@ type ParsedKind =
   | "art-album"
   | "art-track"
   | "art-playlist"
-  | "art-playlist-track"
-  | "mix";
+  | "art-playlist-track";
 type ParsedId = { [K in ParsedKind]: { kind: K; key: string } }[ParsedKind];
 type StarredResult = { artist: SubsonicArtist[]; album: SubsonicAlbum[]; song: SubsonicSong[] };
 type SubsonicQuery = {
@@ -191,7 +190,7 @@ type SubsonicPlaylist = {
 
 const parseId = (value: unknown): ParsedId | null => {
   const match =
-    /^(artist|album|song|flow|flow-song|shared|shared-song|art-album|art-track|art-playlist|art-playlist-track|mix):(.+)$/.exec(
+    /^(artist|album|song|flow|flow-song|shared|shared-song|art-album|art-track|art-playlist|art-playlist-track):(.+)$/.exec(
       String(value || ""),
     );
   const [, kind, key] = match ?? [];
@@ -924,7 +923,7 @@ export function getGenres() {
 }
 
 const getStarsStmt = db.prepare<[number], StarRow>(
-  "SELECT entity_kind, entity_key, created_at FROM subsonic_stars WHERE user_id = ? ORDER BY created_at, entity_kind, entity_key",
+  "SELECT entity_kind, entity_key, created_at FROM subsonic_stars WHERE user_id = ? ORDER BY created_at DESC, entity_kind, entity_key",
 );
 const preparePlayedAlbumsStmt = (orderBy: string) =>
   db.prepare<[number, number, number], Pick<LibraryAlbumsRow, "identity_key">>(`
@@ -1220,9 +1219,6 @@ export async function updateSubsonicPlaylist(
     if (parseId(playlistId)?.kind === "flow" && playlistFromId(user, playlistId)) {
       throw playlistEditError("SUBSONIC_PLAYLIST_READ_ONLY", "Flows are read-only");
     }
-    if (parseId(playlistId)?.kind === "mix") {
-      throw playlistEditError("SUBSONIC_PLAYLIST_READ_ONLY", "Mixes are read-only");
-    }
     const playlist = flowPlaylistConfig.getStaticPlaylistForUser(
       user,
       normalizeStaticPlaylistId(playlistId),
@@ -1508,8 +1504,8 @@ export function importFavorites(userId: number, favorites: ImportedFavorite[]) {
 const starredRows = (user: SubsonicUser): StarRow[] => (user?.id ? getStarsStmt.all(user.id) : []);
 
 const starredAtFromRows = (rows: StarRow[]) => {
-  const starredAt = new Map();
-  for (const row of rows) {
+  const starredAt = new Map<string, string>();
+  for (const row of rows.toReversed()) {
     const key = `${row.entity_kind}:${row.entity_key}`;
     if (!starredAt.has(key)) {
       starredAt.set(key, new Date(Number(row.created_at) || Date.now()).toISOString());
@@ -1551,10 +1547,16 @@ const viewerFor = (user: SubsonicUser): Viewer => ({
   ratings: ratingsFor(user),
 });
 
-export function getStarredIdentityKeys(user: SubsonicUser) {
-  return new Set(
-    libraryStarRows(user, starredRows(user)).map((row) => `${row.entity_kind}:${row.entity_key}`),
-  );
+export function getLibraryStars(user: SubsonicUser) {
+  const keys = new Set<string>();
+  const favorites: LibraryFavorites = { artist: new Map(), album: new Map(), song: new Map() };
+  for (const row of libraryStarRows(user, starredRows(user)).toReversed()) {
+    keys.add(`${row.entity_kind}:${row.entity_key}`);
+    const kind = row.entity_kind;
+    if (kind !== "artist" && kind !== "album" && kind !== "song") continue;
+    if (!favorites[kind].has(row.entity_key)) favorites[kind].set(row.entity_key, row.created_at);
+  }
+  return { keys, favorites };
 }
 
 const buildStarred = (library: IndexedLibrary, rows: StarRow[], user: SubsonicUser) => {
@@ -1598,10 +1600,13 @@ export function getStarredWithLibrary(
   const resolved = libraryStarRows(user, stored);
   // Several playlist-song stars can resolve to the same library track; render it once.
   const seen = new Set();
-  const rows = resolved.filter((row) => {
-    const key = `${row.entity_kind}:${row.entity_key}`;
-    return seen.has(key) ? false : seen.add(key);
-  });
+  const rows = resolved
+    .toReversed()
+    .filter((row) => {
+      const key = `${row.entity_kind}:${row.entity_key}`;
+      return seen.has(key) ? false : seen.add(key);
+    })
+    .toReversed();
   // A playlist song stays favorited under the id it was starred with after it resolves to the Library.
   const songIds = [
     ...new Set(
@@ -1819,59 +1824,6 @@ export function getSubsonicPlaylist(value: string, user: SubsonicUser) {
       ),
     ),
   };
-}
-
-const userMixes = async (user: SubsonicUser) => (user && user.id > 0 ? getUserMixes(user.id) : []);
-
-function toMixPlaylists(user: SubsonicUser, mixes: Mix[]) {
-  const library = indexFocusedLibrary(
-    getLibraryForTrackIds({
-      ids: mixes.flatMap((mix) => mix.trackIds),
-      source: "all",
-      availableOnly: true,
-    }),
-    viewerFor(user),
-  );
-  const changed = new Date(Math.floor(Date.now() / 86_400_000) * 86_400_000).toISOString();
-  return mixes.map((mix) => {
-    const entry = mix.trackIds.flatMap((trackId) => {
-      const track = library.tracksById.get(trackId);
-      return track ? [toSong(library, track)] : [];
-    });
-    const playlist: SubsonicPlaylist = {
-      id: idFor("mix", mix.id),
-      name: mix.name,
-      comment: mix.description,
-      owner: user?.username || "",
-      coverArt: entry[0]?.coverArt || idFor("mix", mix.id),
-      songCount: entry.length,
-      duration: entry.reduce((total, song) => total + song.duration, 0),
-      public: false,
-      created: changed,
-      changed,
-    };
-    return { playlist, entry };
-  });
-}
-
-const mixPlaylistSummaries = new WeakMap<Mix[], SubsonicPlaylist[]>();
-
-export async function getSubsonicMixPlaylists(user: SubsonicUser) {
-  const mixes = await userMixes(user);
-  const cached = mixPlaylistSummaries.get(mixes);
-  if (cached) return cached;
-  const playlists = toMixPlaylists(user, mixes).map(({ playlist }) => playlist);
-  mixPlaylistSummaries.set(mixes, playlists);
-  return playlists;
-}
-
-export async function getSubsonicMixPlaylist(value: string, user: SubsonicUser) {
-  const parsed = parseId(value);
-  if (parsed?.kind !== "mix" || !user || user.id <= 0) return null;
-  const mix = await getUserMix(user.id, parsed.key);
-  if (!mix) return null;
-  const [found] = toMixPlaylists(user, [mix]);
-  return found ? { ...found.playlist, entry: found.entry } : null;
 }
 
 export function resolveStreamPath(value: string, user: SubsonicUser) {

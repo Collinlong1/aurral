@@ -1,15 +1,11 @@
 import { queryOptions } from "@tanstack/react-query";
 import {
   fetchLibraryPage,
-  getLibraryFavorites,
   getLibraryPage,
-  type LibraryFavoritesResponse,
   type LibraryPageResponse,
 } from "./api/endpoints/library.ts";
 import {
-  EMPTY_LIBRARY,
   favoriteId,
-  favoriteLibraryFromResponse,
   normalizeLibraryPages,
   type LibraryAlbum,
   type LibraryArtist,
@@ -32,22 +28,31 @@ import type { SelectOption } from "../components/Select.tsx";
 export const LIBRARY_PAGE_SIZE = 100;
 // Page sizes a Library list offers; the server serves at most 100 a page.
 export const LIBRARY_PAGE_SIZES = [25, 50, 100] as const;
-export const LIBRARY_DEFAULT_SORT = "name";
 
-const NAME_SORT = { value: LIBRARY_DEFAULT_SORT, label: "Name" };
-const ARTIST_SORT = { value: "artist", label: "Artist" };
-const NEWEST_SORT = { value: "newest", label: "Recently added" };
-const PLAYED_SORT = { value: "played", label: "Recently played" };
-const PLAYS_SORT = { value: "plays", label: "Most played" };
-const RELEASED_SORT = { value: "released", label: "Release date" };
+const SORTS = [
+  { value: "name", label: "Name" },
+  { value: "artist", label: "Artist" },
+  { value: "newest", label: "Recently added" },
+  { value: "played", label: "Recently played" },
+  { value: "plays", label: "Most played" },
+  { value: "released", label: "Release date" },
+] satisfies SelectOption<string>[];
 
-export const LIBRARY_SORT_OPTIONS: Partial<Record<LibraryViewId, (typeof NAME_SORT)[]>> = {
-  albums: [NAME_SORT, ARTIST_SORT, NEWEST_SORT, PLAYED_SORT, PLAYS_SORT, RELEASED_SORT],
-  tracks: [NAME_SORT, ARTIST_SORT, NEWEST_SORT],
-  artists: [NAME_SORT, NEWEST_SORT],
-  "album-artists": [NAME_SORT, NEWEST_SORT],
-  genres: [NAME_SORT],
+const ARTIST_SORTS = SORTS.filter((sort) => sort.value !== "artist");
+
+const LIBRARY_SORT_OPTIONS: Partial<Record<LibraryViewId, SelectOption<string>[]>> = {
+  favorites: [{ value: "favorited", label: "Date favorited" }, ...SORTS],
+  albums: SORTS,
+  tracks: SORTS,
+  artists: ARTIST_SORTS,
+  "album-artists": ARTIST_SORTS,
+  genres: SORTS.slice(0, 1),
 };
+
+export const librarySortOptions = (section: LibraryViewId) => LIBRARY_SORT_OPTIONS[section] ?? [];
+
+export const libraryDefaultSort = (section: LibraryViewId) =>
+  librarySortOptions(section)[0]?.value ?? "name";
 
 export const LIBRARY_STATUS_LABELS = {
   monitored: "Monitored",
@@ -81,26 +86,22 @@ export const HOME_ALBUM_RAILS = [
   path?: string;
 }[];
 
-export const librarySectionHasStatus = (section: LibraryViewId) =>
-  section === "albums" || libraryTabForSection(section) === "artists";
-
 export const libraryListParams = (section: LibraryViewId, searchParams: URLSearchParams) => {
   const requestedSort = searchParams.get("sort");
   const requestedPage = Number(searchParams.get("page"));
   const requestedSize = Number(searchParams.get("size"));
   const requestedStatus = searchParams.get("status");
   return {
-    sort: (LIBRARY_SORT_OPTIONS[section] || []).some((option) => option.value === requestedSort)
-      ? requestedSort!
-      : LIBRARY_DEFAULT_SORT,
+    sort:
+      librarySortOptions(section).find((option) => option.value === requestedSort)?.value ??
+      libraryDefaultSort(section),
     direction: searchParams.get("dir") === "desc" ? "desc" : "asc",
     pageIndex: Number.isSafeInteger(requestedPage) && requestedPage > 1 ? requestedPage : 1,
     pageSize: (LIBRARY_PAGE_SIZES as readonly number[]).includes(requestedSize)
       ? requestedSize
       : LIBRARY_PAGE_SIZE,
     artist: section === "tracks" ? searchParams.get("artist") || "" : "",
-    status:
-      librarySectionHasStatus(section) && isLibraryStatus(requestedStatus) ? requestedStatus : null,
+    status: section !== "genres" && isLibraryStatus(requestedStatus) ? requestedStatus : null,
   };
 };
 
@@ -129,9 +130,6 @@ const favoriteIdsFromPages = (pages: LibraryPage[]) =>
         ),
     ),
   );
-
-const favoriteIdsFromFavorites = (favorites: LibraryFavoritesResponse) =>
-  new Set([...favorites.artistIds, ...favorites.albumIds, ...favorites.songIds]);
 
 // The address for a new page size: the page that keeps the first item of the
 // current page in view.
@@ -229,6 +227,27 @@ const fetchLibraryPages = async (
       ),
     ]);
   }
+  if (section === "favorites") {
+    return Promise.all(
+      (["artists", "albums", "tracks"] as const).map((kind) =>
+        fetchLibraryPage(
+          {
+            kind,
+            page: pageIndex,
+            pageSize: listPageSize,
+            query,
+            genre,
+            status,
+            sort,
+            direction,
+            favorite: true,
+            availableOnly: kind === "tracks" ? true : undefined,
+          },
+          { signal },
+        ),
+      ),
+    );
+  }
   return fetchLibraryPage(
     {
       kind: tab,
@@ -251,7 +270,7 @@ const fetchLibraryPages = async (
 export type LibraryViewLibrary = ReturnType<typeof normalizeLibraryPages>;
 
 export type LibraryViewData = {
-  nextData?: LibraryPageResponse | LibraryPageResponse[] | LibraryFavoritesResponse;
+  nextData?: LibraryPageResponse | LibraryPageResponse[];
   pageResults?: (LibraryPage & { total?: number })[];
   isPreview?: boolean;
   library?: LibraryViewLibrary;
@@ -322,15 +341,6 @@ export function libraryViewQueryOptions({
     enabled: !preview,
     staleTime: 15_000,
     queryFn: async ({ signal }) => {
-      if (view.section === "favorites") {
-        const favorites = await getLibraryFavorites({ signal });
-        return finishLibraryView(view, {
-          nextData: favorites,
-          pageResults: [favorites?.library || EMPTY_LIBRARY],
-          library: favoriteLibraryFromResponse(favorites),
-          favoriteIds: favoriteIdsFromFavorites(favorites),
-        });
-      }
       const [nextData, genres] = await Promise.all([
         fetchLibraryPages(view, signal),
         getLibraryPage({ kind: "genres", page: 1, pageSize: 1 }),
