@@ -178,7 +178,7 @@ export default function PluginResourcePage() {
       <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigate(-1)}>
         Back
       </button>
-      <h1>{workTitle}</h1>
+      <h1 className="page-title plugin-resource__title">{workTitle}</h1>
       <p className="plugin-resource__meta">
         {[
           composers.map((credit) => credit.name).join(", "),
@@ -194,7 +194,8 @@ export default function PluginResourcePage() {
       <div className="plugin-resource__actions">
         <button
           type="button"
-          className={data.favourite ? "btn btn-primary" : "btn btn-secondary"}
+          className="btn btn-secondary"
+          aria-pressed={data.favourite}
           disabled={mutation.isPending}
           onClick={() => mutation.mutate({ command: "favourite", value: !data.favourite })}
         >

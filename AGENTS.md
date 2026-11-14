@@ -1,15 +1,15 @@
 # Project instructions
 
-Status, November 12, 2026 (America/Chicago): Phase 4 (authorized November 10) is complete for review, followed by the v0.1 bug-fix pass the user requested on November 11–12. Later-release scope (search/Discover, composer pages, the Scope v3 transition) is not authorized. Read HANDOFF.md first (newest entry on top), then PHASE_4_REPORT.md.
+Status, November 14, 2026 (America/Chicago): v0.2 (authorized by the user on November 14) is implemented for review; the plugin's V0_2_REPORT.md has the details. v0.3 and later scope is not authorized. Read HANDOFF.md first (newest entry on top).
 
 Branches and sync:
 
-- `aurral-classical` is fork `main` plus the generic classical hooks. It last synced on November 12 with upstream lklynet/aurral through #1828 (core `55e7fa1`); the previous head is kept as `aurral-classical-backup-2026-11-12`.
+- `aurral-classical` is fork `main` plus the generic classical hooks. It last synced on November 14 with fork `main` at upstream lklynet/aurral #1889 (merge `2c43f44`); the previous head is kept as `aurral-classical-backup-2026-11-14`.
 - Sync order is upstream → fork `main` → `aurral-classical`. Never merge upstream straight into the classical branch, and never merge classical work into `main`.
 - Fork `main` changes only to follow upstream, and only when the user asks. Upstream's pre-commit hook blocks commits on `main`: commit the sync on a short-lived branch, keep upstream as a merge parent (do not switch branches mid-merge; that drops it), then fast-forward `main`.
 - After a sync, rerun the companion plugin's Compose and Chromium workflow: its fixtures (`dev/seed.mjs`, `dev/smoke.mjs`) import core internals that upstream may move.
 
-Tooling: Node 26.12, pnpm 12.15. `pnpm check` must show zero type errors and stay at or below the unsafe-any baseline (1139 since the November 12 sync, inherited from upstream).
+Tooling: Node 26.12, pnpm 12.15. `pnpm check` must show zero type errors and stay at or below the unsafe-any baseline (1089 since the November 14 sync, inherited from upstream). Don't pipe it into `tail` without `set -o pipefail`: a pipe hides its failure.
 
 Rules:
 
