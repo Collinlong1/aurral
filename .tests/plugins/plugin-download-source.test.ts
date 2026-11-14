@@ -79,7 +79,8 @@ export default { downloadSource: {
 
 const ALBUM_SOURCE = `const kept = {};
 export default { downloadSource: {
-  searchAlbum: ({ album }) => ["a1", "a2"].map((id) => ({ id, title: album.title, artist: album.artist })),
+  // Manual Search passes manual: true; a3 is one only a person may pick.
+  searchAlbum: ({ album, manual }) => ["a1", "a2", ...(manual ? ["a3"] : [])].map((id) => ({ id, title: album.title, artist: album.artist })),
   downloadAlbum: ({ result }) => ({ pending: result.id }),
   listFiles: () => [
     { path: "Lowlands/01 Tide.flac", size: 30000000 },
@@ -391,6 +392,7 @@ test("manual Search lists a plugin's results, or an album-only plugin's albums, 
   assert.deepEqual(
     results.map(({ title, subtitle }) => [title, subtitle]),
     [
+      ["Lowlands", "Glass Coast"],
       ["Lowlands", "Glass Coast"],
       ["Lowlands", "Glass Coast"],
     ],

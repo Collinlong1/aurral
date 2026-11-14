@@ -200,7 +200,7 @@ export default {
 
 Set `"downloadSource": { "albums": true }` and export `searchAlbum` and `downloadAlbum` to download whole albums.
 
-`searchAlbum` receives `album` and `upgrade`. `album` has `artist`, `title`, `releaseMbid`, `releaseGroupMbid`, and `tracks`, each with `title`, `trackNumber`, `discNumber`, and `durationMs`. Return up to 50 results. Each needs `id`, `title`, and `artist`, and can have `year`, `trackCount`, `format`, `bitrate`, and `data`. Aurral tries results whose title matches the album.
+`searchAlbum` receives `album` and `upgrade`. `album` has `artist`, `title`, `releaseMbid`, `releaseGroupMbid`, and `tracks`, each with `title`, `trackNumber`, `discNumber`, and `durationMs`. Return up to 50 results. Each needs `id`, `title`, and `artist`, and can have `year`, `trackCount`, `format`, `bitrate`, and `data`. Aurral tries results whose title matches the album. On the classical fork, Manual Search also passes `manual: true`: a person picks from the list, so a plugin may include results it would not take on its own.
 
 `downloadAlbum` receives `result`, `album`, and an empty `directory`. Save the album's audio files anywhere inside `directory` and return nothing. Aurral matches the files to the release's tracks and files each one.
 

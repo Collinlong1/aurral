@@ -54,8 +54,15 @@ function pluginSource(plugin: InstalledPlugin): DownloadSource {
     }
   };
   const manifest = plugin.manifest.downloadSource;
-  const searchAlbum = (album: AlbumQuery, upgrade: Upgrade) =>
-    call("downloadSource.searchAlbum", { album, upgrade }, albumResults, SEARCH_TIMEOUT_MS);
+  // `manual`: a person picks from the results, so a plugin may offer ones it
+  // would not take on its own.
+  const searchAlbum = (album: AlbumQuery, upgrade: Upgrade, manual = false) =>
+    call(
+      "downloadSource.searchAlbum",
+      { album, upgrade, ...(manual && { manual: true }) },
+      albumResults,
+      SEARCH_TIMEOUT_MS,
+    );
   return {
     id: `${PLUGIN_SOURCE_PREFIX}${plugin.id}`,
     staging: `plugins/${plugin.id}`,
@@ -84,7 +91,7 @@ function pluginSource(plugin: InstalledPlugin): DownloadSource {
           (await searchAlbum(album, upgrade)).filter((result) =>
             isSameCoreAlbum(result.title, album.title),
           ),
-        manualSearch: (album) => searchAlbum(album, null),
+        manualSearch: (album) => searchAlbum(album, null, true),
         download: ({ result, album, directory }) =>
           call(
             "downloadSource.downloadAlbum",
