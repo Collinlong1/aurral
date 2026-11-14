@@ -1,7 +1,7 @@
 // Host renderer for generic plugin admin pages (v2). Plugins send bounded data;
 // everything here is Aurral's own markup, components and design tokens.
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { parseResponse } from "hono/client";
 import type {
   PluginPageV2Action,
@@ -26,6 +26,8 @@ type FieldValue = PluginPageV2Field["value"];
 type Values = Record<string, FieldValue>;
 type Tone = "default" | "muted" | "success" | "warning" | "error";
 export type AdminParams = { selection: string; q: string; offset: string; tab: string };
+export type AdminNavigation = { preserveScroll?: boolean };
+type GoOptions = AdminNavigation & { force?: boolean; focus?: string };
 
 const PAGE_SIZE = 100;
 
@@ -465,17 +467,24 @@ function RowItem({
 }
 
 function Group({
+  id,
   title,
   actions,
   children,
 }: {
+  // The plugin's section id: a command result can bring it into view.
+  id?: string;
   title?: string;
   actions?: ReactNode;
   children: ReactNode;
 }) {
   const headingId = useId();
   return (
-    <section className="settings-group" aria-labelledby={title ? headingId : undefined}>
+    <section
+      id={id ? `plugin-section-${id}` : undefined}
+      className="settings-group plugin-admin__group"
+      aria-labelledby={title ? headingId : undefined}
+    >
       {title || actions ? (
         <div className="settings-group__head">
           {title ? (
@@ -550,6 +559,46 @@ function BulkBar({
   );
 }
 
+// "1–100 of 640 ‹ ›", shown above and below a long list so nobody scrolls
+// to the end to change pages.
+function Pager({
+  label,
+  previous,
+  next,
+  disabled = false,
+  onPrevious,
+  onNext,
+}: {
+  label: string;
+  previous: boolean;
+  next: boolean;
+  disabled?: boolean;
+  onPrevious: () => void;
+  onNext: () => void;
+}) {
+  return (
+    <div className="plugin-admin__pager">
+      <span>{label}</span>
+      <TooltipButton
+        label="Previous page"
+        className="btn btn-ghost btn-icon btn-sm"
+        disabled={disabled || !previous}
+        onClick={onPrevious}
+      >
+        <ChevronLeft aria-hidden="true" />
+      </TooltipButton>
+      <TooltipButton
+        label="Next page"
+        className="btn btn-ghost btn-icon btn-sm"
+        disabled={disabled || !next}
+        onClick={onNext}
+      >
+        <ChevronRight aria-hidden="true" />
+      </TooltipButton>
+    </div>
+  );
+}
+
 function ActionButtons({
   actions,
   disabled,
@@ -590,14 +639,20 @@ export default function PluginAdminPage({
   data: PluginPageV2Data;
   params: AdminParams;
   fetching: boolean;
-  onNavigate: (next: Partial<AdminParams>) => void;
+  onNavigate: (next: Partial<AdminParams>, options?: AdminNavigation) => void;
   onRefetch: () => Promise<unknown>;
 }) {
   const [search, setSearch] = useState(params.q);
   const [message, setMessage] = useState("");
   const [error, setError] = useState<{ text: string; conflict: boolean } | null>(null);
   const [dirtyForms, setDirtyForms] = useState<Record<string, boolean>>({});
-  const [pending, setPending] = useState<Partial<AdminParams> | null>(null);
+  const [pending, setPending] = useState<{ next: Partial<AdminParams>; options: GoOptions } | null>(
+    null,
+  );
+  // A section to bring into view once the page shows it (a step of a task
+  // further down the page, or a section's next page).
+  const [focus, setFocus] = useState<string | null>(null);
+  const queryClient = useQueryClient();
   const [confirming, setConfirming] = useState<PluginPageV2Action | null>(null);
   // Ticked rows, per section ("list" for the browse list).
   const [ticked, setTicked] = useState<Record<string, string[]>>({});
@@ -612,7 +667,6 @@ export default function PluginAdminPage({
       return { ...current, [id]: on ? [...rest, rowId] : rest };
     });
   const dirty = Object.values(dirtyForms).some(Boolean);
-  const detailRef = useRef<HTMLDivElement>(null);
   const dirtySetters = useRef(new Map<string, (dirty: boolean) => void>());
   const dirtyFor = (id: string) => {
     let setter = dirtySetters.current.get(id);
@@ -627,20 +681,29 @@ export default function PluginAdminPage({
   useEffect(() => setSearch(params.q), [params.q]);
 
   // Links inside the detail view clear the tab so the plugin shows the list
-  // that matches the opened item.
-  const open = (selection: string) => go({ selection, tab: "", q: "", offset: "0" });
-  const go = (next: Partial<AdminParams>, force = false) => {
-    if (dirty && !force) {
-      setPending(next);
+  // that matches the opened item, and leave the list's page to the plugin
+  // (an empty offset): it shows the page that holds the opened item.
+  const open = (selection: string) => go({ selection, tab: "", q: "", offset: "" });
+  const go = (next: Partial<AdminParams>, options: GoOptions = {}) => {
+    if (dirty && !options.force) {
+      setPending({ next, options });
       return;
     }
     setMessage("");
     setError(null);
     setDirtyForms({});
     setTicked({});
-    onNavigate(next);
-    detailRef.current?.scrollTo?.({ top: 0 });
+    setFocus(options.focus ?? null);
+    onNavigate(next, { preserveScroll: Boolean(options.preserveScroll || options.focus) });
   };
+  // Bring the focused section into view once it is on screen.
+  useEffect(() => {
+    if (!focus || fetching) return;
+    const node = document.getElementById(`plugin-section-${focus}`);
+    if (!node) return;
+    setFocus(null);
+    node.scrollIntoView?.({ block: "start", behavior: "smooth" });
+  }, [focus, fetching, data]);
 
   const mutation = useMutation({
     mutationFn: async ({ command, values }: { command: string; values: Values }) =>
@@ -654,20 +717,34 @@ export default function PluginAdminPage({
       setMessage("");
       setError(null);
     },
-    onSuccess: async (result) => {
+    onSuccess: async (result, { command }) => {
       setDirtyForms({});
       setTicked({});
+      // Album pages and work pages read the catalogue the plugin just changed.
+      void queryClient.invalidateQueries({ queryKey: ["plugin-album-presentation"] });
+      void queryClient.invalidateQueries({ queryKey: ["plugin-resource", pluginId] });
       const text = "message" in result ? result.message : "Saved";
+      const target = "focus" in result && typeof result.focus === "string" ? result.focus : null;
       if (
         "selection" in result &&
         typeof result.selection === "string" &&
         result.selection !== params.selection
-      )
+      ) {
         // The list keeps its tab, search and page: resolving one review
-        // item opens the next without losing the person's place.
-        onNavigate({ selection: result.selection });
+        // item opens the next without losing the person's place. A step of
+        // the same task keeps the reader where they are (or brings its
+        // section into view); only "open" goes to the top of a new entry.
+        setFocus(target);
+        onNavigate(
+          { selection: result.selection },
+          { preserveScroll: command !== "open" || Boolean(target) },
+        );
+      }
       // Report the result once the updated page is on screen.
-      else await onRefetch();
+      else {
+        await onRefetch();
+        setFocus(target);
+      }
       setMessage(text);
     },
     onError: (failure: unknown) => {
@@ -695,6 +772,32 @@ export default function PluginAdminPage({
   const view = data.view;
   const total = data.list.total;
   const offset = data.list.offset;
+  // A section's pages are selections; the new page opens at the section.
+  const sectionPager = (section: Extract<Section, { type: "rows" }>) => {
+    const pager = section.pager;
+    if (!pager) return null;
+    return (
+      <Pager
+        label={pager.label}
+        previous={Boolean(pager.previous)}
+        next={Boolean(pager.next)}
+        onPrevious={() =>
+          pager.previous && go({ selection: pager.previous }, { focus: section.id })
+        }
+        onNext={() => pager.next && go({ selection: pager.next }, { focus: section.id })}
+      />
+    );
+  };
+  const listPager =
+    total > PAGE_SIZE ? (
+      <Pager
+        label={`${offset + 1}–${Math.min(offset + PAGE_SIZE, total)} of ${total}`}
+        previous={offset > 0}
+        next={offset + PAGE_SIZE < total}
+        onPrevious={() => go({ offset: String(Math.max(0, offset - PAGE_SIZE)) })}
+        onNext={() => go({ offset: String(offset + PAGE_SIZE) })}
+      />
+    ) : null;
 
   return (
     <div className="plugin-admin" data-view={view ? "detail" : "list"}>
@@ -772,6 +875,7 @@ export default function PluginAdminPage({
               <ActionButtons actions={data.list.actions} disabled={busy} onAction={runAction} />
             </div>
           ) : null}
+          {listPager}
           {data.list.select && data.list.items.length ? (
             <BulkBar
               select={data.list.select}
@@ -804,31 +908,9 @@ export default function PluginAdminPage({
               {data.list.empty || "Nothing here yet."}
             </p>
           )}
-          {total > PAGE_SIZE ? (
-            <div className="plugin-admin__pager">
-              <span>
-                {offset + 1}–{Math.min(offset + PAGE_SIZE, total)} of {total}
-              </span>
-              <TooltipButton
-                label="Previous page"
-                className="btn btn-ghost btn-icon btn-sm"
-                disabled={!offset}
-                onClick={() => go({ offset: String(Math.max(0, offset - PAGE_SIZE)) })}
-              >
-                <ChevronLeft aria-hidden="true" />
-              </TooltipButton>
-              <TooltipButton
-                label="Next page"
-                className="btn btn-ghost btn-icon btn-sm"
-                disabled={offset + PAGE_SIZE >= total}
-                onClick={() => go({ offset: String(offset + PAGE_SIZE) })}
-              >
-                <ChevronRight aria-hidden="true" />
-              </TooltipButton>
-            </div>
-          ) : null}
+          {listPager}
         </aside>
-        <div className="plugin-admin__detail" ref={detailRef}>
+        <div className="plugin-admin__detail">
           {view ? (
             <>
               <nav className="plugin-admin__crumbs" aria-label="Breadcrumb">
@@ -908,6 +990,7 @@ export default function PluginAdminPage({
                       // what the form edits; otherwise one entry's edits carry into the next.
                       <Group
                         key={`${section.id}:${data.revision}:${section.command}:${JSON.stringify(section.arguments)}`}
+                        id={section.id}
                         title={section.title}
                       >
                         <FormSection
@@ -927,6 +1010,7 @@ export default function PluginAdminPage({
                     return (
                       <Group
                         key={section.id}
+                        id={section.id}
                         title={section.title}
                         actions={
                           section.actions.length ? (
@@ -941,6 +1025,7 @@ export default function PluginAdminPage({
                         {section.note ? (
                           <p className="settings-group__note">{section.note}</p>
                         ) : null}
+                        {sectionPager(section)}
                         {section.select && section.rows.length ? (
                           <BulkBar
                             select={section.select}
@@ -970,35 +1055,11 @@ export default function PluginAdminPage({
                         ) : (
                           <p className="settings-group__note">{section.empty || "None yet."}</p>
                         )}
-                        {section.pager ? (
-                          <div className="plugin-admin__pager">
-                            <span>{section.pager.label}</span>
-                            <TooltipButton
-                              label="Previous page"
-                              className="btn btn-ghost btn-icon btn-sm"
-                              disabled={!section.pager.previous}
-                              onClick={() =>
-                                section.pager?.previous && go({ selection: section.pager.previous })
-                              }
-                            >
-                              <ChevronLeft aria-hidden="true" />
-                            </TooltipButton>
-                            <TooltipButton
-                              label="Next page"
-                              className="btn btn-ghost btn-icon btn-sm"
-                              disabled={!section.pager.next}
-                              onClick={() =>
-                                section.pager?.next && go({ selection: section.pager.next })
-                              }
-                            >
-                              <ChevronRight aria-hidden="true" />
-                            </TooltipButton>
-                          </div>
-                        ) : null}
+                        {sectionPager(section)}
                       </Group>
                     );
                   return (
-                    <Group key={section.id} title={section.title}>
+                    <Group key={section.id} id={section.id} title={section.title}>
                       <div className="settings-card">
                         {section.items.map((item) => (
                           <div className="settings-row" key={item.label}>
@@ -1044,7 +1105,7 @@ export default function PluginAdminPage({
         onConfirm={() => {
           const next = pending;
           setPending(null);
-          if (next) go(next, true);
+          if (next) go(next.next, { ...next.options, force: true });
         }}
       />
       <ConfirmModal

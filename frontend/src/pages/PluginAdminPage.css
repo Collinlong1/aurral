@@ -484,3 +484,8 @@ button.plugin-admin__row-main:focus-visible {
   gap: 0.5rem;
   margin-left: auto;
 }
+
+/* A section a command brings into view keeps a little room above it. */
+.plugin-admin__group {
+  scroll-margin-top: 1rem;
+}

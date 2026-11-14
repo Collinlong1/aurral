@@ -421,7 +421,14 @@ function Layout({ children, headerActions }: LayoutProps) {
     scrolledPageRef.current = { pathname: location.pathname, search: pageSearch };
     const samePath = previous?.pathname === location.pathname;
     const samePage = samePath && previous?.search === pageSearch;
-    if ((navigationType === "REPLACE" && samePath) || samePage) {
+    // A page can change its own query without moving the reader (an admin
+    // page opening the next step of the same task).
+    const keepPlace =
+      samePath &&
+      typeof location.state === "object" &&
+      location.state !== null &&
+      (location.state as { preserveScroll?: unknown }).preserveScroll === true;
+    if ((navigationType === "REPLACE" && samePath) || samePage || keepPlace) {
       if (node) scrollPositionsRef.current.set(location.key, node.scrollTop);
       return undefined;
     }
@@ -444,7 +451,14 @@ function Layout({ children, headerActions }: LayoutProps) {
     return () => {
       if (frameId) window.cancelAnimationFrame(frameId);
     };
-  }, [location.key, location.pathname, navigationType, pageSearch, updateMainScrollbar]);
+  }, [
+    location.key,
+    location.pathname,
+    location.state,
+    navigationType,
+    pageSearch,
+    updateMainScrollbar,
+  ]);
 
   useEffect(() => {
     const update = () => updateMainScrollbar();

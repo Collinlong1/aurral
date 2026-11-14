@@ -194,13 +194,20 @@ const pluginPageResponse = v.union([pluginPageSchema, pluginPageV2Schema, plugin
 export const pluginPageQuery = v.object({
   selection: v.optional(selection, ""),
   q: v.optional(text(200), ""),
-  offset: v.optional(v.pipe(v.string(), v.regex(/^\d{1,8}$/)), "0"),
+  // Empty: the plugin picks the page that holds the selection.
+  offset: v.optional(v.pipe(v.string(), v.regex(/^\d{0,8}$/)), "0"),
   tab: v.optional(v.pipe(v.string(), v.regex(/^[a-zA-Z0-9_-]{0,80}$/)), ""),
   lookup: v.optional(v.pipe(v.string(), v.regex(/^[a-zA-Z0-9_-]{0,80}$/)), ""),
 });
 export const pluginPageMutation = v.object({ revision: text(200), command: key, values });
 const mutationResult = v.variant("ok", [
-  v.object({ ok: v.literal(true), message: text(500), selection: v.optional(selection) }),
+  v.object({
+    ok: v.literal(true),
+    message: text(500),
+    selection: v.optional(selection),
+    // A section of the resulting page to bring into view.
+    focus: v.optional(key),
+  }),
   v.object({ ok: v.literal(false), status: v.picklist([400, 409]), message: text(500) }),
 ]);
 

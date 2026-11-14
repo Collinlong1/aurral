@@ -231,6 +231,45 @@ test("admin pages v2 and lookups pass validated data; plugins learn the host ren
   assert.equal((await routes(admin).request(`${route}?lookup=../x`)).status, 400);
 });
 
+test("admin pages may ask the plugin for the page holding a selection and bring a section into view", async () => {
+  const code = `export default {pages:{read:async input=>({version:2,title:'Offset '+JSON.stringify(input.query.offset),revision:'1',tabs:[],
+      list:{items:[],total:0,offset:0},view:null}),
+    mutate:async input=>input.mutation.command==='bad'
+      ? ({ok:true,message:'Bad',focus:'../x'})
+      : ({ok:true,message:'Moved',selection:'album:1@w2',focus:'assign'})}}`;
+  await install("pagesfocus", { pages: [{ id: "editor", label: "Editor" }] }, code);
+  await turnOn("pagesfocus");
+  const route = "/plugins/pagesfocus/pages/editor";
+  const title = async (query: string) =>
+    v.parse(
+      v.object({ title: v.string() }),
+      await (await routes(admin).request(route + query)).json(),
+    ).title;
+  // An empty offset reaches the plugin as empty; none means the first page.
+  assert.equal(await title("?selection=w1&offset="), 'Offset ""');
+  assert.equal(await title("?selection=w1"), 'Offset "0"');
+  assert.equal((await routes(admin).request(`${route}?offset=x`)).status, 400);
+  const result = await routes(admin).request(
+    route,
+    json("POST", { revision: "1", command: "move", values: {} }),
+  );
+  assert.equal(result.status, 200);
+  assert.deepEqual(
+    v.parse(v.object({ selection: v.string(), focus: v.string() }), await result.json()),
+    { selection: "album:1@w2", focus: "assign" },
+  );
+  // A focus that isn't a section id is refused.
+  assert.equal(
+    (
+      await routes(admin).request(
+        route,
+        json("POST", { revision: "1", command: "bad", values: {} }),
+      )
+    ).status,
+    502,
+  );
+});
+
 test("a slow call while another is still running fails alone and keeps the work alive", async () => {
   const { callPlugin } = await import("../../backend/services/plugins/pluginHost.ts");
   await install(

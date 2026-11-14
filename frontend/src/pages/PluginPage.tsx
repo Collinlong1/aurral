@@ -162,7 +162,8 @@ export default function PluginPage() {
   const [editingForm, setEditingForm] = useState<string | null>(null);
   const selection = params.get("selection") || "",
     q = params.get("q") || "",
-    offset = params.get("offset") || "0",
+    // Empty asks the plugin for the page that holds the selection.
+    offset = params.get("offset") ?? "0",
     tab = params.get("tab") || "";
   const query = useQuery({
     queryKey: ["plugins", "page", id, pageId, selection, q, offset, tab, user?.id],
@@ -186,10 +187,16 @@ export default function PluginPage() {
   });
   const loaded = query.data;
   const data = loaded?.version === 1 ? loaded : undefined;
-  const navigate = (next: { selection?: string; q?: string; offset?: string; tab?: string }) => {
+  const navigate = (
+    next: { selection?: string; q?: string; offset?: string; tab?: string },
+    { preserveScroll = false }: { preserveScroll?: boolean } = {},
+  ) => {
     setMessage("");
     setError("");
-    setParams({ ...{ selection, q, offset, tab }, ...next });
+    setParams(
+      { ...{ selection, q, offset, tab }, ...next },
+      preserveScroll ? { state: { preserveScroll: true } } : undefined,
+    );
   };
   const mutation = useMutation({
     mutationFn: async ({ command, values }: { command: string; values: Values }) => {
@@ -238,7 +245,7 @@ export default function PluginPage() {
         data={loaded}
         params={{ selection, q, offset, tab }}
         fetching={query.isFetching}
-        onNavigate={(next) => navigate(next)}
+        onNavigate={(next, options) => navigate(next, options)}
         onRefetch={() => query.refetch()}
       />
     );
