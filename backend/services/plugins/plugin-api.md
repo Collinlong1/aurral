@@ -257,3 +257,11 @@ A read receives `query: {selection,q,offset}` and returns `AdminPageData` from t
 A mutation receives `mutation: {revision,command,values}`. Validate commands, every field and target ownership in the plugin; compare the revision and commit changes in a single transaction. Return `{ok:true,message,selection?}`, or `{ok:false,status:400|409,message}`. A conflict should preserve newer data and tell the admin to reload. The renderer preserves a dirty form, avoids background refetch while editing, and requires saving or cancelling it before moving to another form. HTTP success is reported only after the plugin finishes the mutation.
 
 Authenticated transport is `GET /api/plugins/pages`, `GET /api/plugins/PLUGIN/pages/PAGE?selection=&q=&offset=0`, and `POST /api/plugins/PLUGIN/pages/PAGE`. Mutation requests use the host's usual authorization and same-origin protection. The JSON request limit is 64KB, validated response limit 512KB, and each call has a 15-second budget. Schema limits also bound forms, fields, choices and text. Plugin failures return a bounded error and do not interrupt playback. No plugin data is stored in core-owned tables by this bridge.
+
+## Search results (classical fork)
+
+Set `"search": true` and export `search(input)` to add results to Aurral's search page. It opts into the `search` capability, which an admin can turn off like any other. `input.query` has `q`, `filters` (`{ name: [values] }`, the facet values the person chose), `section` (set when they opened one section to see more), `offset` and `limit`. `input.user` is the person searching; results are for everyone, so check the role before showing anything admin-only.
+
+Return `SearchResult` from the TypeScript reference: version 1, `total`, an optional `best` result, up to ten `sections` of up to 50 items, and optional `facets` to filter by. An item has `id`, `kind`, `title`, optional `subtitle` and `detail`, and an optional `link`: a `resource` page of the plugin, an `album` by its Library ID, or the same search with other `filters`. Aurral builds every path; plugins never send URLs or markup.
+
+`GET /api/plugins/search?q=&filters=&plugin=&section=&offset=` calls every provider at once with 3 seconds each. Filters are written `name=value1,value2;name2=value`. A provider that fails or times out is listed with `ok: false` and the rest of search still renders.

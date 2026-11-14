@@ -48,6 +48,8 @@ import {
 } from "../services/plugins/pluginService.ts";
 import { setSafeMode } from "../services/plugins/pluginStore.ts";
 import { listPluginImportLists } from "../services/plugins/pluginImportList.ts";
+import { pluginSearch, pluginSearchQuery } from "../services/plugins/pluginSearch.ts";
+import { noCache } from "../middleware/cacheHeaders.ts";
 
 const pluginParam = v.object({ id: v.string() });
 const reference = v.union([v.pipe(v.string(), v.minLength(1)), v.number()]);
@@ -112,6 +114,14 @@ export default new Hono<AppEnv>()
           mutation: c.req.valid("json"),
         }),
       ),
+  )
+  .get(
+    "/search",
+    requireAuth,
+    requireUserAccount,
+    noCache,
+    validate("query", pluginSearchQuery),
+    (c) => answer(c, () => pluginSearch(c.var.user, c.req.valid("query"))),
   )
   .get("/album-presentation/:albumId", requireAuth, requireUserAccount, (c) =>
     answer(c, () => pluginAlbumPresentation(c.var.user, c.req.param("albumId"))),

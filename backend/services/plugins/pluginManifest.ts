@@ -78,6 +78,7 @@ export const pluginManifestSchema = v.object({
     [],
   ),
   albumPresentation: v.optional(v.boolean(), false),
+  search: v.optional(v.boolean(), false),
   events: v.optional(
     v.pipe(
       v.array(v.picklist(PLUGIN_EVENTS)),
@@ -145,6 +146,7 @@ export function pluginCapabilities(manifest: PluginManifest) {
     ...(manifest.albumPresentation
       ? [{ key: "albumPresentation", label: "Album presentation", kind: "Album page" }]
       : []),
+    ...(manifest.search ? [{ key: "search", label: "Search results", kind: "Search" }] : []),
     ...manifest.actions.map((action) => ({
       key: `action:${action.id}`,
       label: action.label,

@@ -1,7 +1,7 @@
 export type SettingValue = string | number | boolean;
 
 export interface Base {
-  capabilities?: { adminForms?: 1; resourceView?: 1; albumPresentation?: 1 };
+  capabilities?: { adminForms?: 1; resourceView?: 1; albumPresentation?: 1; search?: 1 };
   userOperations?: { version: 1; url: string; token: string };
   settings: Record<string, SettingValue>;
   libraryFolder: string;
@@ -25,6 +25,44 @@ export interface PresentationQueueItem {
 export interface AlbumPresentationInput extends Base {
   user: User;
   album: Album;
+}
+
+// `"search": true`: results for Aurral's search page. Core renders them and
+// builds each link; a result without a link is plain text.
+export interface SearchInput extends Base {
+  user: User;
+  query: {
+    q: string;
+    filters: Record<string, string[]>;
+    // Set when the person opened one section to see more of it.
+    section: string | null;
+    offset: number;
+    limit: number;
+  };
+}
+export type SearchLink =
+  | { type: "resource"; pageId: string; resourceId: string }
+  | { type: "album"; albumId: string }
+  | { type: "filter"; filters: Record<string, string[]> };
+export interface SearchItem {
+  id: string;
+  kind: string;
+  title: string;
+  subtitle?: string;
+  detail?: string;
+  link?: SearchLink | null;
+}
+export interface SearchResult {
+  version: 1;
+  best?: SearchItem | null;
+  total: number;
+  sections: { id: string; title: string; total: number; items: SearchItem[] }[];
+  facets?: {
+    key: string;
+    label: string;
+    selected?: string[];
+    options: { value: string; label: string; count: number }[];
+  }[];
 }
 
 export interface ResourcePageInput extends Base {

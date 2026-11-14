@@ -778,6 +778,68 @@ test("album and track actions get the Library's album and tracks", async (t) => 
   assert.equal((await routes(owner).request("/plugins/views/resources/work/work-1")).status, 404);
 });
 
+test("search providers answer the search page with typed results; a failing one is reported alone", async () => {
+  await install(
+    "finder",
+    { search: true },
+    `export default { search: (input) => ({
+      version: 1,
+      total: 3,
+      best: { id: "work:w1", kind: "work", title: "Moonlight Sonata", link: { type: "resource", pageId: "work", resourceId: "w1" } },
+      sections: [{ id: "work", title: "Works", total: 3, items: [
+        { id: "work:w1", kind: "work", title: input.query.q + " " + JSON.stringify(input.query.filters) + " " + input.user.role + " " + input.query.limit, link: { type: "resource", pageId: "work", resourceId: "w1" } },
+        { id: "release:9", kind: "release", title: "Album", subtitle: "Pianist", link: { type: "album", albumId: "9" } },
+        { id: "performer:p", kind: "performer", title: "Pianist", link: { type: "filter", filters: { performer: ["p"] } } },
+      ] }],
+      facets: [{ key: "composer", label: "Composer", options: [{ value: "c1", label: "Beethoven", count: 1 }] }],
+    }) }`,
+  );
+  await install("broken", { search: true }, `export default { search: () => ({ version: 2 }) }`);
+  await install(
+    "quiet",
+    { search: true },
+    `export default { search: () => { throw new Error("x"); } }`,
+  );
+  await turnOn("finder");
+  await turnOn("broken");
+  const answer = await (
+    await routes(owner).request("/plugins/search?q=moon&filters=composer%3Dc1%2Cc2%3Bbad%20key%3Dx")
+  ).json();
+  const finder = answer.providers.find((p: { pluginId: string }) => p.pluginId === "finder");
+  assert.equal(finder.ok, true);
+  assert.equal(finder.sections[0].items[0].title, 'moon {"composer":["c1","c2"]} user 4');
+  assert.deepEqual(
+    finder.sections[0].items.map((i: { href: string | null }) => i.href),
+    ["/plugins/finder/work/w1", "/album/9", null],
+  );
+  assert.deepEqual(finder.sections[0].items[2].filters, { performer: ["p"] });
+  assert.equal(finder.best.href, "/plugins/finder/work/w1");
+  assert.deepEqual(
+    answer.providers.find((p: { pluginId: string }) => p.pluginId === "broken"),
+    { pluginId: "broken", pluginName: "Plugin broken", ok: false },
+  );
+  assert.equal(
+    answer.providers.some((p: { pluginId: string }) => p.pluginId === "quiet"),
+    false,
+  );
+  // Opening one provider lists more, and only that provider answers.
+  const focused = await (
+    await routes(owner).request("/plugins/search?q=moon&plugin=finder")
+  ).json();
+  assert.deepEqual(
+    focused.providers.map((p: { pluginId: string }) => p.pluginId),
+    ["finder"],
+  );
+  assert.match(focused.providers[0].sections[0].items[0].title, / 20$/);
+  // The capability turns off like any other.
+  await turnOn("finder", { capabilities: { search: false } });
+  const off = await (await routes(owner).request("/plugins/search?q=moon")).json();
+  assert.equal(
+    off.providers.some((p: { pluginId: string }) => p.pluginId === "finder"),
+    false,
+  );
+});
+
 test("a background action answers right away and reports its result to the user who ran it", async () => {
   await install(
     "slow",

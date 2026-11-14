@@ -25,6 +25,11 @@ import SearchArtistResults from "../components/SearchArtistResults";
 import { TrackPlaylistMenu, type QueueMenuItem } from "../components/TrackPlaylistMenu";
 import { buildSearchSections, type SearchItem } from "../utils/searchNavigation";
 import SearchUnifiedResults, { hasUnifiedResults } from "./SearchUnifiedResults";
+import PluginSearchResults, {
+  readPluginFilters,
+  writePluginFilters,
+  type PluginSearchFilters,
+} from "./PluginSearchResults";
 import { useCollectionTint } from "../components/CollectionHeader";
 import { topResultArtwork } from "../components/SearchTopResult";
 import { useAuth } from "../contexts/AuthContext";
@@ -176,6 +181,7 @@ function SearchResults() {
   const updateUnifiedFilter = useCallback(
     (nextFilter: UnifiedFilter) => {
       const params = new URLSearchParams(searchParams);
+      for (const name of ["plugin", "pluginSection", "pf"]) params.delete(name);
       if (nextFilter === "all") {
         params.delete("filter");
       } else {
@@ -184,6 +190,33 @@ function SearchResults() {
       setSearchParams(params);
     },
     [searchParams, setSearchParams],
+  );
+
+  // Plugin search providers: `plugin` opens one provider's full results,
+  // `pluginSection` one of its sections, `pf` its filters.
+  const pluginFocus = searchParams.get("plugin") || "";
+  const pluginSection = searchParams.get("pluginSection") || "";
+  const pluginFilters = useMemo(
+    () => readPluginFilters(searchParams.get("pf") || ""),
+    [searchParams],
+  );
+  const updatePluginSearch = useCallback(
+    (next: { plugin?: string; section?: string; filters?: PluginSearchFilters }) => {
+      const params = new URLSearchParams(searchParams);
+      const set = (name: string, value: string | undefined) => {
+        if (value === undefined) return;
+        if (value) params.set(name, value);
+        else params.delete(name);
+      };
+      set("plugin", next.plugin);
+      set("pluginSection", next.section);
+      if (next.filters) {
+        set("pf", writePluginFilters(next.filters));
+        if (!next.plugin && !params.get("plugin")) set("plugin", pluginFocus);
+      }
+      setSearchParams(params);
+    },
+    [pluginFocus, searchParams, setSearchParams],
   );
 
   const filterPath = useCallback(
@@ -751,14 +784,25 @@ function SearchResults() {
                 type="button"
                 onClick={() => updateUnifiedFilter(option.value)}
                 className={`search-page__filter${
-                  activeFilter === option.value ? " is-active" : ""
+                  activeFilter === option.value && !pluginFocus ? " is-active" : ""
                 }`}
-                aria-pressed={activeFilter === option.value}
+                aria-pressed={activeFilter === option.value && !pluginFocus}
               >
                 {option.label}
               </button>
             ))}
           </div>
+        )}
+
+        {isUnifiedSearch && (activeFilter === "all" || pluginFocus) && (
+          <PluginSearchResults
+            query={trimmedQuery}
+            focus={pluginFocus}
+            section={pluginSection}
+            filters={pluginFilters}
+            onFocus={(plugin, section) => updatePluginSearch({ plugin, section })}
+            onFilters={(filters) => updatePluginSearch({ filters })}
+          />
         )}
 
         {catalogFailed && !loading && (
@@ -896,7 +940,7 @@ function SearchResults() {
         </SkeletonStatus>
       )}
 
-      {showContent && (
+      {showContent && !pluginFocus && (
         <div
           className={searchUpdating ? "query-pending" : undefined}
           aria-busy={searchUpdating || undefined}
