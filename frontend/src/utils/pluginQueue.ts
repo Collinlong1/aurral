@@ -1,9 +1,19 @@
-import type { pluginAlbumPresentation } from "../../../backend/services/plugins/pluginPresentation.ts";
 import { normalizeStreamQueueTrack } from "./audioQueue.ts";
 
-type PluginQueueItem = NonNullable<
-  Awaited<ReturnType<typeof pluginAlbumPresentation>>
->["groups"][number]["items"][number];
+// What a plugin's playable item needs to play: album and resource pages both
+// send these (pluginPresentation.ts).
+type PluginQueueItem = {
+  id: string;
+  trackId: string;
+  albumId: string;
+  title: string;
+  artist: string;
+  album: string;
+  durationMs: number | null;
+  startMs: number;
+  endMs: number | null;
+  streamPath: string;
+};
 
 export const pluginItemDurationMs = (item: PluginQueueItem) =>
   item.endMs != null ? item.endMs - item.startMs : item.durationMs;

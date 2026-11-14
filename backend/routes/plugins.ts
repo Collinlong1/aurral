@@ -12,7 +12,10 @@ import {
   pluginResourceMutation,
   readPluginResource,
   mutatePluginResource,
+  resourcePlaylistInput,
+  saveResourcePlaylist,
 } from "../services/plugins/pluginPresentation.ts";
+import { requirePlaylistAccess } from "./playlists/handlers/utils.ts";
 import {
   enqueueUserPlaylist,
   ownedLibrarySnapshot,
@@ -84,6 +87,8 @@ export default new Hono<AppEnv>()
   .use("/:id/pages/:pageId", pageOrigin)
   .use("/:id/resources/:pageId/:resourceId", bodyLimit({ maxSize: 64000 }))
   .use("/:id/resources/:pageId/:resourceId", pageOrigin)
+  .use("/:id/resources/:pageId/:resourceId/playlist", bodyLimit({ maxSize: 64000 }))
+  .use("/:id/resources/:pageId/:resourceId/playlist", pageOrigin)
   .get("/pages", requireAuth, requireAdmin, requireUserAccount, (c) =>
     c.json(listPluginPages(c.var.user), 200),
   )
@@ -135,6 +140,23 @@ export default new Hono<AppEnv>()
         c.req.param("resourceId"),
       ),
     ),
+  )
+  .post(
+    "/:id/resources/:pageId/:resourceId/playlist",
+    requireAuth,
+    requireUserAccount,
+    requirePlaylistAccess,
+    validate("json", resourcePlaylistInput),
+    (c) =>
+      answer(c, () =>
+        saveResourcePlaylist(
+          c.var.user,
+          c.req.param("id"),
+          c.req.param("pageId"),
+          c.req.param("resourceId"),
+          c.req.valid("json"),
+        ),
+      ),
   )
   .post(
     "/:id/resources/:pageId/:resourceId",

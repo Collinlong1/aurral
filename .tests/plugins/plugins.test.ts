@@ -685,7 +685,9 @@ test("album and track actions get the Library's album and tracks", async (t) => 
   const trackAt = (number: number) =>
     String(library.tracks.find((track) => track.albums[0]?.trackNumber === number)?.id);
   const firstTrack = trackAt(1);
-  const item = `{id:'item-1',trackId:${JSON.stringify(firstTrack)},fileId:'file-1',albumId:${JSON.stringify(albumId)},title:'I. First',artist:'Glass Coast',album:'Lowlands',durationMs:1000,startMs:100,endMs:900}`;
+  const firstFile = library.tracks.find((track) => String(track.id) === firstTrack)?.files[0];
+  assert.ok(firstFile?.path);
+  const item = `{id:'item-1',trackId:${JSON.stringify(firstTrack)},fileId:${JSON.stringify(String(firstFile.id))},albumId:${JSON.stringify(albumId)},title:'I. First',artist:'Glass Coast',album:'Lowlands',durationMs:1000,startMs:100,endMs:900}`;
   const itemOn = (id: string, trackNumber: number) =>
     `{id:'${id}',trackId:${JSON.stringify(trackAt(trackNumber))},fileId:'${id}-file',albumId:${JSON.stringify(albumId)},title:'${id}',artist:'Glass Coast',album:'Lowlands',durationMs:1000,startMs:0,endMs:null}`;
   const movement = `{id:'movement-1',title:'I. First',position:1}`;
@@ -736,6 +738,46 @@ test("album and track actions get the Library's album and tracks", async (t) => 
   assert.equal(ownerWork.status, 200);
   const workResponse = v.object({ work: v.object({ nickname: v.string() }) });
   assert.equal(v.parse(workResponse, await ownerWork.json()).work.nickname, `user-${owner.id}`);
+  // A comparison saved as the person's own playlist, pinned to exact files.
+  const enqueue = vi
+    .spyOn(playlistOperationQueue, "enqueuePayload")
+    .mockResolvedValue({ operationId: 1, queued: true } as never);
+  try {
+    const saved = await routes(owner).request(
+      "/plugins/views/resources/work/work-1/playlist",
+      json("POST", { name: "Compare: Fixture Work", itemIds: ["item-1"] }),
+    );
+    assert.equal(saved.status, 200);
+    const payload = v.parse(
+      v.object({
+        kind: v.string(),
+        name: v.string(),
+        ownerUserId: v.number(),
+        downloadMissing: v.boolean(),
+        tracks: v.array(v.object({ path: v.string(), trackName: v.string() })),
+      }),
+      enqueue.mock.calls[0]?.[0],
+    );
+    assert.deepEqual(
+      [payload.kind, payload.name, payload.ownerUserId, payload.downloadMissing],
+      ["static-playlist-create", "Compare: Fixture Work", owner.id, false],
+    );
+    assert.deepEqual(payload.tracks, [
+      { ...payload.tracks[0], path: firstFile.path, trackName: "I. First" },
+    ]);
+    // Only items the person's page shows can be saved.
+    assert.equal(
+      (
+        await routes(owner).request(
+          "/plugins/views/resources/work/work-1/playlist",
+          json("POST", { name: "Sneaky", itemIds: ["not-on-the-page"] }),
+        )
+      ).status,
+      400,
+    );
+  } finally {
+    enqueue.mockRestore();
+  }
   const strangerWork = await routes(stranger).request("/plugins/views/resources/work/work-1");
   assert.equal(
     v.parse(workResponse, await strangerWork.json()).work.nickname,

@@ -1,4 +1,7 @@
+import { randomUUID } from "node:crypto";
 import * as v from "valibot";
+import { getLibraryForTrackIds } from "../libraryQueryService.ts";
+import { playlistOperationQueue } from "../playlists/playlistOperationQueue.ts";
 import type { RequestUser } from "../../middleware/requestUser.ts";
 import { albumTarget } from "./pluginContext.ts";
 import { callPlugin, PluginError } from "./pluginHost.ts";
@@ -23,6 +26,8 @@ const queueItem = v.object({
   durationMs: v.nullable(v.pipe(v.number(), v.integer(), v.minValue(1))),
   startMs: v.pipe(v.number(), v.integer(), v.minValue(0)),
   endMs: v.nullable(v.pipe(v.number(), v.integer(), v.minValue(1))),
+  // The work's movements this item plays, for comparing one movement.
+  movementIds: v.optional(v.pipe(v.array(id), v.maxLength(50)), []),
 });
 const movement = v.object({ id, title: text(), position: v.pipe(v.number(), v.integer()) });
 const credit = v.object({
@@ -31,10 +36,31 @@ const credit = v.object({
   id,
   name: text(),
 });
+const positiveMs = v.nullable(v.pipe(v.number(), v.integer(), v.minValue(1)));
 const recording = v.object({
   id,
   label: text(),
   albumId: v.optional(v.nullable(id), null),
+  // Optional comparison details: who plays, when, on which label, how long
+  // each movement lasts, and every release the recording appears on.
+  performer: v.optional(text(), ""),
+  year: v.optional(
+    v.nullable(v.pipe(v.number(), v.integer(), v.minValue(1000), v.maxValue(3000))),
+    null,
+  ),
+  recordLabel: v.optional(text(200), ""),
+  durationMs: v.optional(positiveMs, null),
+  parts: v.optional(
+    v.pipe(v.array(v.object({ movementId: id, durationMs: positiveMs })), v.maxLength(200)),
+    [],
+  ),
+  releases: v.optional(
+    v.pipe(
+      v.array(v.object({ albumId: id, album: text(), realizationId: v.optional(id) })),
+      v.maxLength(50),
+    ),
+    [],
+  ),
   recordingIds: v.pipe(v.array(id), v.maxLength(100)),
   credits: v.pipe(v.array(credit), v.maxLength(100)),
   items: v.pipe(v.array(queueItem), v.maxLength(500)),
@@ -273,3 +299,62 @@ export async function pluginAlbumPresentation(user: RequestUser, albumId: string
 }
 
 export { mutationSchema as pluginResourceMutation };
+
+export const resourcePlaylistInput = v.object({
+  name: v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(200)),
+  itemIds: v.pipe(v.array(id), v.minLength(1), v.maxLength(500)),
+});
+
+// Saves items from a resource page (a comparison) as the signed-in person's
+// own playlist. The items are read again from the plugin as that person, so
+// only items their page shows can be saved, and each becomes the exact
+// Library file it plays: classical titles repeat across recordings, so a
+// playlist never matches them by name.
+export async function saveResourcePlaylist(
+  user: RequestUser,
+  pluginId: string,
+  pageId: string,
+  resourceId: string,
+  { name, itemIds }: v.InferOutput<typeof resourcePlaylistInput>,
+) {
+  const view = await readPluginResource(user, pluginId, pageId, resourceId);
+  const items = new Map(
+    view.recordings.flatMap((recording) => recording.items.map((item) => [item.id, item])),
+  );
+  const chosen = itemIds.map((itemId) => {
+    const item = items.get(itemId);
+    if (!item) throw new PluginRequestError(400, "That recording is no longer on this page");
+    return item;
+  });
+  const library = getLibraryForTrackIds({ ids: [...new Set(chosen.map((item) => item.trackId))] });
+  const tracks = chosen.flatMap((item, index) => {
+    // One file for a run of items on it (movements sharing an attacca track).
+    if (index > 0 && chosen[index - 1]?.fileId === item.fileId) return [];
+    const track = library.tracks.find((entry) => String(entry.id) === item.trackId);
+    const file = track?.files.find((entry) => String(entry.id) === item.fileId && entry.available);
+    if (!track || !file?.path)
+      throw new PluginRequestError(409, "A recording's file is no longer in the Library");
+    return [
+      {
+        path: file.path,
+        artistName: item.artist || track.artistName || "",
+        trackName: item.title,
+        albumName: item.album,
+        durationMs: file.durationMs ?? item.durationMs,
+      },
+    ];
+  });
+  const playlistId = randomUUID();
+  await playlistOperationQueue.enqueuePayload({
+    kind: "static-playlist-create",
+    label: "static-playlist:create",
+    playlistId,
+    name,
+    sourceName: view.work.title,
+    sourceFlowId: null,
+    tracks,
+    ownerUserId: user.id,
+    downloadMissing: false,
+  });
+  return { ok: true as const, playlistId, tracks: tracks.length };
+}

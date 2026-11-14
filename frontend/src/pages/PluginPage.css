@@ -102,20 +102,86 @@
 .plugin-resource section {
   margin-top: 28px;
 }
+.plugin-resource__meta {
+  margin: 0 0 8px;
+  color: var(--aurral-text-muted);
+  font-size: var(--aurral-font-sm);
+  line-height: 1.5;
+}
+.plugin-resource__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 12px 0;
+}
+.plugin-resource__heading {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+.plugin-resource__heading h2 {
+  margin: 0;
+  font-size: var(--aurral-font-xl);
+  font-weight: 700;
+  letter-spacing: var(--aurral-tracking-title);
+}
+.plugin-resource__select {
+  width: min(100%, 320px);
+}
+/* Recordings side by side; a narrow screen scrolls them sideways. */
+.plugin-resource__compare {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(260px, 1fr);
+  gap: 16px;
+  overflow-x: auto;
+  padding-bottom: 8px;
+  scroll-snap-type: x proximity;
+}
 .plugin-resource__recording {
-  border-bottom: 1px solid var(--aurral-border);
-  padding: 16px 0 24px;
+  min-width: 0;
+  padding: 16px;
+  border-radius: var(--aurral-radius-lg);
+  background: var(--aurral-surface-raised);
+  scroll-snap-align: start;
+}
+.plugin-resource__recording h3 {
+  margin: 0 0 4px;
+  font-size: var(--aurral-font-base);
+  font-weight: 600;
+}
+.plugin-resource__facts {
+  margin: 0 0 4px;
+  color: var(--aurral-text-muted);
+  font-size: var(--aurral-font-sm);
+}
+.plugin-resource__parts {
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
 }
 .plugin-resource__movement {
-  padding: 4px 8px;
-  margin-left: -8px;
+  display: flex;
+  width: 100%;
+  gap: 8px;
+  justify-content: space-between;
+  padding: 6px 8px;
   border: 0;
   border-radius: var(--aurral-radius-sm);
   background: transparent;
   color: inherit;
   font: inherit;
+  font-size: var(--aurral-font-sm);
   text-align: left;
   cursor: pointer;
+}
+.plugin-resource__time {
+  flex: none;
+  color: var(--aurral-text-muted);
+  font-variant-numeric: tabular-nums;
 }
 .plugin-resource__movement:focus-visible {
   background: var(--aurral-surface-hover);
@@ -124,9 +190,6 @@
   .plugin-resource__movement:hover {
     background: var(--aurral-surface-hover);
   }
-}
-.plugin-resource__recording .btn {
-  margin: 8px 8px 0 0;
 }
 @media (max-width: 640px) {
   .plugin-page {
