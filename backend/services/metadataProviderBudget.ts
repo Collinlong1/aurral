@@ -37,7 +37,7 @@ interface MetadataRequestStateRow {
   updated_at: number;
 }
 
-const TRANSIENT_BACKOFF_MS = [60 * 60 * 1000, 6 * 60 * 60 * 1000, 24 * 60 * 60 * 1000] as const;
+const TRANSIENT_BACKOFF_MS = [60_000, 10 * 60_000, 60 * 60_000] as const;
 const REQUEST_STATE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const REQUEST_STATE_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 let nextRequestStateCleanupAt = 0;
@@ -161,27 +161,27 @@ export function clearMetadataRequestStates() {
 const readBudget = db.prepare<[string], MetadataProviderBudgetRow>(
   "SELECT * FROM metadata_provider_budget WHERE base_url = ?",
 );
-const reserve = db.prepare(`
+const CLOCK_SLACK_MS = 2;
+
+const reserve = db.prepare<
+  [string, number, number],
+  Pick<MetadataProviderBudgetRow, "next_request_at">
+>(`
   INSERT INTO metadata_provider_budget(base_url, next_request_at) VALUES (?, ?)
   ON CONFLICT(base_url) DO UPDATE SET next_request_at = excluded.next_request_at
+  WHERE metadata_provider_budget.next_request_at <= ?
+  RETURNING next_request_at
 `);
 
 export function getMetadataProviderBudget(baseUrl: string): Partial<MetadataProviderBudgetRow> {
   return readBudget.get(baseUrl) || {};
 }
 
-const CLOCK_SLACK_MS = 2;
-
-const reserveRequest = db.transaction((baseUrl: string, intervalMs: number) => {
-  const now = Date.now();
-  const waitMs = Math.max(0, Number(readBudget.get(baseUrl)?.next_request_at || 0) - now);
-  if (waitMs > CLOCK_SLACK_MS) return waitMs;
-  reserve.run(baseUrl, now + intervalMs);
-  return 0;
-});
-
 export function reserveMetadataProviderRequest(baseUrl: string, intervalMs: number) {
-  return reserveRequest.immediate(baseUrl, intervalMs);
+  const now = Date.now();
+  if (reserve.get(baseUrl, now + intervalMs, now + CLOCK_SLACK_MS)) return 0;
+  const bookedUntil = Number(readBudget.get(baseUrl)?.next_request_at || 0);
+  return Math.max(1, bookedUntil - Date.now());
 }
 
 export function setMetadataProviderCooldown(baseUrl: string, status: number, until: number) {

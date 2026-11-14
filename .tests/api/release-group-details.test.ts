@@ -41,7 +41,7 @@ beforeAll(async () => {
     onboardingComplete: true,
     integrations: {
       general: { authUser: "test", authPassword: "password" },
-      metadata: { baseUrl: metadataServer.url, enableNarrowFallbacks: false },
+      metadata: { baseUrl: metadataServer.url },
     },
     security: { localNetworkBypass: { enabled: false } },
   });
@@ -62,11 +62,20 @@ afterAll(async () => {
   await cleanupIsolatedState(state);
 });
 
-test("an album MusicBrainz doesn't have is a 404, and an outage is an uncached 502", async () => {
+test("an album MusicBrainz doesn't have is a 404, and an outage is an uncached 502 then a 503 saying when to retry", async () => {
   const missing = await details(missingMbid);
   assert.equal(missing.status, 404);
 
   const outage = await details(outageMbid);
   assert.equal(outage.status, 502);
   assert.equal(outage.headers.get("cache-control"), "no-store");
+
+  const coolingDown = await details(outageMbid);
+  assert.equal(coolingDown.status, 503);
+  assert.equal(coolingDown.headers.get("cache-control"), "no-store");
+  assert.equal(coolingDown.headers.get("retry-after"), "60");
+  assert.deepEqual(await coolingDown.json(), {
+    error: "Metadata unavailable",
+    message: "Couldn’t reach the metadata service. Try again in a minute.",
+  });
 });

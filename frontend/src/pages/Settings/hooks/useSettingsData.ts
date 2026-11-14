@@ -8,7 +8,6 @@ import { downloadClientSettingsClient } from "../../../utils/api/clients/downloa
 import { refetchDiscoveryStatus } from "../../../hooks/useDiscoveryStatus";
 import { discoveryClient } from "../../../utils/api/clients/discovery.ts";
 import { DISCOVERY_MANUAL_REFRESH_KEY } from "../../../utils/discoverRecentNavigation.ts";
-import { allReleaseTypes } from "../constants";
 import { checkForChanges, normalizeSettings, type SettingsState } from "../utils";
 import { queryClient, queryKeys } from "../../../queryClient.ts";
 import { appSettingsQueryOptions } from "../../../queryOptions.ts";
@@ -19,12 +18,8 @@ type Toast = ReturnType<typeof useToast>["showSuccess"];
 
 const defaultSettings = {
   dateTimeFormat: "browser",
-  subsonic: {
-    favoriteAutoKeep: true,
-  },
   downloadFolderPath: "",
   pathMappings: [],
-  quality: "standard",
   qualityProfile: {
     order: [
       "flac-hires",
@@ -54,20 +49,10 @@ const defaultSettings = {
     automaticUpgrades: false,
     intervalDays: 2,
   },
-  missingTrackSearch: {
-    enabled: false,
-    intervalDays: 1,
-  },
-  reviewTimeoutHours: 0,
-  releaseTypes: allReleaseTypes,
   integrations: {
     lastfm: {
       apiKey: "",
       apiSecret: "",
-      discoveryPeriod: "1month",
-      discoveryAutoRefreshHours: 168,
-      discoveryRecommendationsPerRefresh: 200,
-      discoveryMode: "balanced",
     },
     slskd: {
       enabled: true,
@@ -76,36 +61,28 @@ const defaultSettings = {
       priority: 10,
       preferredFormat: "flac",
       preferredFormatStrict: false,
-      cleanupAfterRuns: false,
     },
     prowlarr: {
       enabled: false,
       url: "",
       apiKey: "",
       indexers: {},
-      categories: [3000],
-      maxResults: 60,
     },
     nzbget: {
-      deleteLeftovers: true,
       enabled: false,
       url: "",
       username: "",
       password: "",
       category: "aurral",
       priority: 20,
-      nzbPriority: 0,
-      addPaused: false,
       completedPath: "",
     },
     sabnzbd: {
-      deleteLeftovers: true,
       enabled: false,
       url: "",
       apiKey: "",
       category: "aurral",
       priority: 20,
-      addPaused: false,
     },
     tidarr: {
       enabled: false,
@@ -136,8 +113,6 @@ const defaultSettings = {
     ticketmaster: {
       apiKey: "",
       searchRadiusMiles: 250,
-      localDiscoveryIncludeRecommendations: true,
-      localDiscoveryIncludeTrending: true,
     },
     news: {
       enabled: true,
@@ -157,27 +132,11 @@ const defaultSettings = {
         concerts: true,
       },
     },
-    metadata: {
-      provider: "brainzmash",
-      baseUrl: "",
-      userAgentSuffix: "",
-      enableNarrowFallbacks: true,
-    },
+    metadata: { baseUrl: "" },
     general: {},
-    gotify: {
-      url: "",
-      token: "",
-      notifyDiscoveryUpdated: false,
-      notifyFlowDone: false,
-      notifyRequestMade: false,
-      notifyRequestAvailable: false,
-      notifyArtistAdded: false,
-      notifyTrackAdded: false,
-    },
     webhooks: [],
   },
   inbox: {
-    enabled: true,
     releases: true,
     shows: true,
     news: true,
@@ -355,7 +314,7 @@ export function useSettingsData(showSuccess: Toast, showError: Toast) {
         if (typeof window !== "undefined") {
           window.dispatchEvent(
             new CustomEvent("aurral:settings-updated", {
-              detail: { inboxEnabled: normalizedSettings.inbox?.enabled !== false },
+              detail: { inboxEnabled: Object.values(normalizedSettings.inbox).some(Boolean) },
             }),
           );
         }

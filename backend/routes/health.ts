@@ -319,7 +319,7 @@ function buildBootstrapPayload(req: CredentialRequest) {
     oidcEnabled: oidcInfo.oidcEnabled,
     oidcLogoutUrl: oidcInfo.oidcLogoutUrl,
     googleLoginEnabled: isGoogleLoginEnabled(),
-    ssoOnly: settings?.security?.ssoOnly === true,
+    ssoOnly: true,
     onboardingRequired: !onboardingDone,
     dateTimeFormat: settings.dateTimeFormat,
     timestamp: new Date().toISOString(),
@@ -343,7 +343,7 @@ function buildBootstrapPayload(req: CredentialRequest) {
     payload.rootFolderConfigured = Boolean(resolveDownloadRoot());
     payload.lastfmConfigured = !!getLastfmApiKey();
     payload.ticketmasterConfigured = !!getTicketmasterApiKey();
-    payload.inboxEnabled = settings.inbox?.enabled !== false;
+    payload.inboxEnabled = Object.values(settings.inbox).some(Boolean);
     const newsSettings = getNewsSettings();
     payload.newsConfigured =
       newsSettings.enabled &&

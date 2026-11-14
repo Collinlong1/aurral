@@ -4,6 +4,12 @@ Aurral welcomes contributions. We review every change against the project's dire
 
 Opening a pull request does not guarantee a review or a merge. We may close it, ask you to split it, defer it, or implement the idea in a different way.
 
+## Aurral's direction
+
+Aurral is opinionated. It is for people who want an easy, reliable way to get music and play it in a modern, Spotify-like app. It does not compete with Lidarr. Power users who want control over every release, profile, and setting already have Lidarr, and it serves them well.
+
+So we choose one good default over a new setting, and a feature needs a better reason than "Lidarr has it."
+
 ## Start with the right place
 
 Search existing issues and pull requests before starting work.
@@ -45,6 +51,8 @@ We are unlikely to accept:
 
 - Several new features bundled into one pull request.
 - Unapproved feature work.
+- New settings where one good default would do.
+- Features whose main case is matching Lidarr.
 - Large rewrites or opinionated refactors.
 - Drive-by formatting or unrelated cleanup.
 - New dependencies without a clear need.
@@ -97,7 +105,7 @@ An `any` that reaches code without a type error, such as a `JSON.parse` result, 
 
 To try a change against real services, run `pnpm eden dev`. It starts Aurral with a seeded Library and local copies of the services it connects to, and `pnpm eden test` runs the end-to-end journeys against them. See the [Eden test lab](https://docs.aurral.org/development/eden/).
 
-`.tests/perf/baseline.json` records the SQL queries, response size, full table scans, and outbound metadata calls of common page loads and Subsonic calls against a synthetic Library. Tests never reach the real metadata services: brainzmash is a local fake, and other hosts are blocked and counted. `pnpm test` fails when queries, size, or scans drift more than 5% either way, or when any call count changes. If the change is intended, run `pnpm run perf:baseline` and commit the file so the change shows in review. Pull requests also run the Perf workflow, which times the same page loads, server startup, and the initial frontend bundle on main and on the pull request in one job, and posts the results as a comment. It fails when a measurement is clearly slower. To compare locally, build the frontend in both checkouts and run `pnpm run perf compare <path to a main checkout>`. To accept an intended slowdown, a maintainer adds the `perf-accepted` label and re-runs the job.
+`.tests/perf/baseline.json` records the SQL queries, response size, full table scans, and outbound metadata calls of common page loads and Subsonic calls against a synthetic Library. Tests never reach the real metadata services: brainzmash and ListenBrainz are local fakes, and other hosts are blocked and counted. `pnpm test` fails when queries, size, or scans drift more than 5% either way, or when any call count changes. If the change is intended, run `pnpm run perf:baseline` and commit the file so the change shows in review. Pull requests also run the Perf workflow, which times the same page loads, server startup, and the initial frontend bundle on main and on the pull request in one job, and posts the results as a comment. It fails when a measurement is clearly slower. To compare locally, build the frontend in both checkouts and run `pnpm run perf compare <path to a main checkout>`. To accept an intended slowdown, a maintainer adds the `perf-accepted` label and re-runs the job.
 
 `backend/db/rows.ts` holds one row type per SQLite table, generated from the schema. Run `pnpm run db:types` after a schema change, and type queries with them, for example `db.prepare<[number], UsersRow>("SELECT * FROM users WHERE id = ?")`.
 

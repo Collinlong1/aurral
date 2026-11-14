@@ -26,17 +26,10 @@ export const normalizeDateTimeFormat = (value: string | null | undefined): strin
 export const defaultData = {
   settings: {
     dateTimeFormat: "browser",
-    subsonic: {
-      favoriteAutoKeep: true,
-    },
     integrations: {
       lastfm: {
         apiKey: "",
         apiSecret: "",
-        discoveryPeriod: "1month",
-        discoveryAutoRefreshHours: 168,
-        discoveryRecommendationsPerRefresh: 200,
-        discoveryMode: "balanced",
       },
       slskd: {
         enabled: false,
@@ -51,8 +44,6 @@ export const defaultData = {
         url: "",
         apiKey: "",
         indexers: {},
-        categories: [3000],
-        maxResults: 60,
       },
       nzbget: {
         enabled: false,
@@ -61,8 +52,6 @@ export const defaultData = {
         password: "",
         category: "aurral",
         priority: 20,
-        nzbPriority: 0,
-        addPaused: false,
         completedPath: "",
       },
       sabnzbd: {
@@ -70,9 +59,7 @@ export const defaultData = {
         url: "",
         apiKey: "",
         category: "aurral",
-        deleteLeftovers: true,
         priority: 20,
-        addPaused: false,
       },
       tidarr: {
         enabled: false,
@@ -103,51 +90,23 @@ export const defaultData = {
       ticketmaster: {
         apiKey: "",
         searchRadiusMiles: 250,
-        localDiscoveryIncludeRecommendations: true,
-        localDiscoveryIncludeTrending: true,
       },
       news: {
         enabled: true,
         feeds: [],
       },
       metadata: {
-        provider: "brainzmash",
         baseUrl: "",
-        userAgentSuffix: "",
-        enableNarrowFallbacks: true,
       },
       general: {},
-      gotify: {
-        url: "",
-        token: "",
-        notifyDiscoveryUpdated: false,
-        notifyFlowDone: false,
-        notifyRequestMade: false,
-        notifyRequestAvailable: false,
-        notifyArtistAdded: false,
-        notifyTrackAdded: false,
-      },
       webhooks: [],
     },
-    releaseTypes: [
-      "Album",
-      "EP",
-      "Single",
-      "Broadcast",
-      "Soundtrack",
-      "Spokenword",
-      "Remix",
-      "Live",
-      "Compilation",
-      "Demo",
-    ],
     security: {
       localNetworkBypass: {
         enabled: false,
       },
     },
     inbox: {
-      enabled: true,
       releases: true,
       shows: true,
       news: true,

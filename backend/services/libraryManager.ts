@@ -23,9 +23,14 @@ import { readRawLibraryMetadata, type LibraryMetadata } from "./libraryMetadata.
 import type { RequestUser } from "../middleware/requestUser.ts";
 import { selectCanonicalFile } from "./canonicalFileSelector.ts";
 import { scheduleLibraryScan } from "./libraryScanWorker.ts";
-import { downloadTracker, type DownloadJob } from "./downloadJobs/downloadTracker.ts";
+import {
+  downloadTracker,
+  type DownloadJob,
+  type JobCause,
+} from "./downloadJobs/downloadTracker.ts";
 import {
   buildIdentityKey,
+  chooseLibraryAlbumEdition,
   linkLibraryAlbumTrack,
   markLibraryMediaFilesUnavailable,
   removeLibraryAlbumTracksWithoutAvailableMedia,
@@ -89,7 +94,11 @@ import {
   setArtistMonitoringState,
 } from "./monitoringStore.ts";
 import { getArtistTopTracks } from "./musicDataSource/index.ts";
-import { getNormalizedText, selectAlbumRelease } from "./providers/brainzmashRanking.ts";
+import {
+  getNormalizedText,
+  listsEveryTrack,
+  selectAlbumRelease,
+} from "./providers/brainzmashRanking.ts";
 import { enqueueSystemTask } from "./jobs/systemTasks.ts";
 import { scheduleReleaseMetadataRefresh } from "./releaseMetadataSync.ts";
 import { mapWithConcurrency } from "./discovery/helpers.ts";
@@ -271,6 +280,8 @@ type AlbumAddOptions = {
   trackIds?: number[];
   skipCancelledTracks?: boolean;
   edition?: string | null;
+  releaseMbid?: string | null;
+  cause?: JobCause;
 };
 
 function resolveMonitoringRequest(
@@ -797,6 +808,9 @@ export class LibraryManager {
       ? new Set(options.trackIds.map(Number))
       : null;
     const requestKind = requestedTrackIds ? "track" : "album";
+    const cause =
+      options.cause ??
+      ({ kind: options.monitoringToken ? "monitoring" : "request", playlistId: null } as const);
     // A job kept from an earlier request asks for the edition asked for now.
     // One it restarts is the kind of request asked for now, and a queued job
     // a whole-album request covers becomes part of it.
@@ -904,6 +918,7 @@ export class LibraryManager {
           askForEdition(completedJob);
           return downloadTracker.setPending(completedJob.id, "Completed file is missing", {
             asRetryCycle: true,
+            cause,
           });
         }, track.id);
         if (retriedCompletedJob.skipped) return { status: "skipped" };
@@ -926,6 +941,7 @@ export class LibraryManager {
           askForEdition(retryJob);
           return downloadTracker.setPending(retryJob.id, "Retrying missing Aurral album track", {
             asRetryCycle: true,
+            cause,
           });
         }, track.id);
         if (retriedJob.skipped) return { status: "skipped" };
@@ -963,7 +979,7 @@ export class LibraryManager {
               reason: "Aurral album request",
             },
             "library",
-            { requestKind },
+            { requestKind, cause },
           ),
         track.id,
       );
@@ -1044,7 +1060,7 @@ export class LibraryManager {
     let releases: Awaited<ReturnType<typeof listArtistReleases>> = [];
     if (rules.catalog !== "none" || rules.newReleases) {
       try {
-        releases = await listArtistReleases(artist.mbid);
+        releases = await listArtistReleases(artist.mbid, rules);
       } catch (error) {
         const failure = asAppError(error);
         logger.warn("library", "Aurral monitoring could not load artist releases", {
@@ -1384,7 +1400,7 @@ export class LibraryManager {
     return libraryForAlbum(albumMbid).albums[0]?.metadata?.edition === "expanded";
   }
 
-  _albumEdition(artist: LibraryArtistProjection | null) {
+  _albumEdition(artist: { id: string | number } | null) {
     const effective = artist ? readArtistMonitoring(Number(artist.id)) : null;
     return (effective?.rules || getMonitoringDefaults().rules).edition;
   }
@@ -1769,7 +1785,10 @@ export class LibraryManager {
   async searchAlbumMissingTracks(canonicalId: string | number) {
     const albumId = Number(canonicalId);
     return serializeMonitoringUpdate(_albumMonitoringUpdates, albumId, () =>
-      this._finishAlbum(albumId, { skipCancelledTracks: true }),
+      this._finishAlbum(albumId, {
+        skipCancelledTracks: true,
+        cause: { kind: "missing", playlistId: null },
+      }),
     );
   }
 
@@ -1782,6 +1801,41 @@ export class LibraryManager {
       libraryId: mappedAlbum.id,
       ...result,
     };
+  }
+
+  async setAlbumEdition(albumId: string, releaseMbid: string) {
+    const id = Number(albumId);
+    const library = Number.isSafeInteger(id) ? libraryForAlbum(id) : null;
+    const album = library?.albums.find((entry) => entry.id === id);
+    if (!album?.releaseGroupMbid) {
+      return { error: "Album was not found in the library", statusCode: 404 };
+    }
+    let group;
+    try {
+      group = await metadataLookups.add(() => getMetadataAlbumByMbid(album.releaseGroupMbid!));
+    } catch {
+      return {
+        error: "Album metadata is unavailable; try again",
+        statusCode: 503,
+        code: "metadata_unavailable",
+      };
+    }
+    const wanted = releaseMbid.trim().toLowerCase();
+    const release = group.releases.find((entry) => entry.id.toLowerCase() === wanted);
+    if (!release || !listsEveryTrack(release)) {
+      return { error: "The album has no such edition", statusCode: 422 };
+    }
+    const artists = new Map<string | null | undefined, string>(
+      group.artists.map((artist) => [artist.id, artist.name]),
+    );
+    const compilation = isVariousArtistsCredit(artists.get(group.artistId), group.artistId);
+    chooseLibraryAlbumEdition(
+      album.id,
+      { ...release, title: release.title || group.title },
+      this._albumEdition(library?.artists.find((entry) => entry.id === album.artistId) || null),
+      (track) => (compilation && artists.get(track.artistId)) || null,
+    );
+    return { success: true, releaseMbid: release.id };
   }
 
   async deleteAlbum(canonicalId: unknown, deleteFiles = false) {
@@ -2000,9 +2054,10 @@ export class LibraryManager {
     // for again, whatever release its files later turn out to be.
     const selectedRelease = chooseRequestedRelease(metadata, {
       requestedRelease:
-        existingAlbum?.metadata?.edition === edition
+        options.releaseMbid ||
+        (existingAlbum?.metadata?.edition === edition
           ? existingAlbum.metadata.requestedRelease
-          : null,
+          : null),
       listedRelease: existingAlbum?.metadata?.trackList?.release,
       edition,
     });
@@ -2091,6 +2146,10 @@ export class LibraryManager {
           trackListComplete: true,
           edition,
           requestedRelease: selectedRelease?.id || null,
+          trackList: {
+            release: selectedRelease?.id || null,
+            recordings: tracks.map((track) => track.trackMbid),
+          },
           albumType: metadata?.type || "Album",
           secondaryTypes: metadata?.secondaryTypes || [],
           genres: metadata?.genres || [],
@@ -2189,12 +2248,14 @@ export class LibraryManager {
     albumName,
     artistMbid,
     artistName,
+    releaseMbid = null,
     user = null,
   }: {
     albumMbid?: string | null;
     albumName?: string | null;
     artistMbid?: string | null;
     artistName?: string | null;
+    releaseMbid?: string | null;
     user?: LibraryUser;
   } = {}) {
     const normalizedAlbumMbid = String(albumMbid || "").trim();
@@ -2249,7 +2310,7 @@ export class LibraryManager {
       artist.id,
       normalizedAlbumMbid,
       normalizedAlbumName,
-      { user },
+      { user, releaseMbid },
     );
     throwLibraryError(album);
     return {

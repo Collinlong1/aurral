@@ -95,6 +95,7 @@ WebSocket connections.
 | `PUT`    | `/api/library/albums/:albumId`                           | Monitor or stop monitoring an album and all of its tracks with `{ "monitored": true \| false }`                                                                                                                                                        |
 | `GET`    | `/api/library/albums/:albumId/status`                    | Get the download status of an album                                                                                                                                                                                                                    |
 | `POST`   | `/api/library/albums/:albumId/cancel`                    | Cancel queued and active downloads for an album                                                                                                                                                                                                        |
+| `PUT`    | `/api/library/albums/:albumId/edition`                   | Make an edition the Library album's                                                                                                                                                                                                                    |
 | `DELETE` | `/api/library/albums/:albumId?deleteFiles=true\|false`   | Remove an album                                                                                                                                                                                                                                        |
 | `GET`    | `/api/library/tracks`                                    | List album tracks                                                                                                                                                                                                                                      |
 | `DELETE` | `/api/library/tracks/:id`                                | Delete a library track file and prune Library records when no media remains. Returns `409` when its only file is in a read-only folder                                                                                                                 |
@@ -199,22 +200,23 @@ album, and responds with `monitored: true`.
 
 ## Artist metadata
 
-| Method | Path                                      | Purpose                                                           |
-| ------ | ----------------------------------------- | ----------------------------------------------------------------- |
-| `GET`  | `/api/artists/:mbid`                      | Artist details and releases                                       |
-| `GET`  | `/api/artists/:mbid/overrides`            | Get metadata-provider overrides                                   |
-| `PUT`  | `/api/artists/:mbid/overrides`            | Set metadata-provider overrides                                   |
-| `GET`  | `/api/artists/:mbid/similar`              | Similar artists                                                   |
-| `GET`  | `/api/artists/:mbid/video`                | Find a video for a named artist and track                         |
-| `GET`  | `/api/artists/:mbid/cover`                | Artist image metadata; `refresh=true` retries a stale link        |
-| `GET`  | `/api/artists/:mbid/image`                | Artist image: Library art, or a redirect; `w` picks a width       |
-| `GET`  | `/api/artists/:mbid/preview`              | Deezer top tracks and preview URLs                                |
-| `GET`  | `/api/deezer/preview/:trackId.mp3`        | Redirect to a current Deezer preview for a track                  |
-| `POST` | `/api/artists/:mbid/appears-on`           | Find releases that include an artist                              |
-| `POST` | `/api/artists/release-groups/ratings`     | Batch release ratings                                             |
-| `GET`  | `/api/artists/release-group/:mbid`        | Release-group details                                             |
-| `GET`  | `/api/artists/release-group/:mbid/cover`  | Release-group cover metadata; `refresh=true` retries a stale link |
-| `GET`  | `/api/artists/release-group/:mbid/tracks` | Release-group tracks                                              |
+| Method | Path                                        | Purpose                                                           |
+| ------ | ------------------------------------------- | ----------------------------------------------------------------- |
+| `GET`  | `/api/artists/:mbid`                        | Artist details and releases                                       |
+| `GET`  | `/api/artists/:mbid/overrides`              | Get metadata-provider overrides                                   |
+| `PUT`  | `/api/artists/:mbid/overrides`              | Set metadata-provider overrides                                   |
+| `GET`  | `/api/artists/:mbid/similar`                | Similar artists                                                   |
+| `GET`  | `/api/artists/:mbid/video`                  | Find a video for a named artist and track                         |
+| `GET`  | `/api/artists/:mbid/cover`                  | Artist image metadata; `refresh=true` retries a stale link        |
+| `GET`  | `/api/artists/:mbid/image`                  | Artist image: Library art, or a redirect; `w` picks a width       |
+| `GET`  | `/api/artists/:mbid/preview`                | Deezer top tracks and preview URLs                                |
+| `GET`  | `/api/deezer/preview/:trackId.mp3`          | Redirect to a current Deezer preview for a track                  |
+| `POST` | `/api/artists/:mbid/appears-on`             | Find releases that include an artist                              |
+| `POST` | `/api/artists/release-groups/ratings`       | Batch release ratings                                             |
+| `GET`  | `/api/artists/release-group/:mbid`          | Release-group details                                             |
+| `GET`  | `/api/artists/release-group/:mbid/cover`    | Release-group cover metadata; `refresh=true` retries a stale link |
+| `GET`  | `/api/artists/release-group/:mbid/tracks`   | Release-group tracks; `release=` picks an edition                 |
+| `GET`  | `/api/artists/release-group/:mbid/editions` | The album's editions and the one the Library lists                |
 
 `GET /api/artists` returns `404`. Use `/api/search` or an artist
 detail route instead.
@@ -280,8 +282,8 @@ include `albumGrab.libraryAlbumId`.
 | `GET`    | `/api/discover/spotify-import`                | The current user's imported Spotify history summary, or `null`                                                   |
 | `PUT`    | `/api/discover/spotify-import`                | Replace the current user's imported Spotify history with `{ artists }` totals                                    |
 | `DELETE` | `/api/discover/spotify-import`                | Remove the current user's imported Spotify history                                                               |
-| `GET`    | `/api/discover/preferences`                   | Discovery preferences                                                                                            |
-| `POST`   | `/api/discover/preferences`                   | Update discovery preferences                                                                                     |
+| `GET`    | `/api/discover/preferences`                   | Your discovery mode and the server's local show preferences                                                      |
+| `POST`   | `/api/discover/preferences`                   | Update the fields you send: your discovery mode, or the local show preferences                                   |
 | `POST`   | `/api/discover/preferences/reset`             | Reset discovery preferences                                                                                      |
 | `POST`   | `/api/discover/refresh`                       | Refresh discovery data                                                                                           |
 | `POST`   | `/api/discover/clear`                         | Clear artwork links, cached image files, Library artwork copies, and metadata-provider caches                    |
@@ -387,42 +389,27 @@ once the client is back. A finished job returns `409`.
 Searching again for a cancelled song from an album returns `409`. Request the
 album again to retry it. Other cancelled songs can be searched again.
 
-### Spotify import
+### Playlist import
 
-| Method   | Path                                           | Purpose                   |
-| -------- | ---------------------------------------------- | ------------------------- |
-| `GET`    | `/api/playlists/import/spotify/status`         | Spotify connection status |
-| `POST`   | `/api/playlists/import/spotify/oauth/start`    | Start Spotify OAuth       |
-| `POST`   | `/api/playlists/import/spotify/oauth/complete` | Complete Spotify OAuth    |
-| `DELETE` | `/api/playlists/import/spotify`                | Disconnect Spotify        |
-| `GET`    | `/api/playlists/import/spotify/playlists`      | List Spotify playlists    |
-| `POST`   | `/api/playlists/import/spotify/preview`        | Preview a Spotify import  |
-| `POST`   | `/api/playlists/import/spotify`                | Import Spotify playlists  |
+Every import source, including plugins, uses the same two routes. `provider` names the source: `spotify-playlist`, `listenbrainz-playlist`, `listenbrainz-createdfor`, `lastfm-station`, `youtube-music-playlist`, `deezer-playlist`, `aurral-share`, or `plugin:<id>`. `externalId` is the playlist on that source, or a link for YouTube Music and plugins. A Last.fm station also takes `externalUsername`. Preview returns the playlist's ID on the source, and import fetches the source again and stores the title the source returns.
 
-### ListenBrainz import
+| Method | Path                            | Purpose                                                         |
+| ------ | ------------------------------- | --------------------------------------------------------------- |
+| `POST` | `/api/playlists/import/preview` | Preview a playlist from an import source                        |
+| `POST` | `/api/playlists/import`         | Import and optionally schedule synchronization for the playlist |
 
-| Method | Path                                           | Purpose                                            |
-| ------ | ---------------------------------------------- | -------------------------------------------------- |
-| `GET`  | `/api/playlists/import/listenbrainz/playlists` | List playlists for the linked ListenBrainz account |
-| `POST` | `/api/playlists/import/listenbrainz/preview`   | Preview a ListenBrainz import                      |
-| `POST` | `/api/playlists/import/listenbrainz`           | Import a ListenBrainz playlist                     |
+Spotify, ListenBrainz, and Last.fm list the playlists of an account:
 
-### YouTube Music import
-
-These routes retrieve public playlists anonymously. Preview accepts a supported playlist URL. Import accepts the validated playlist ID returned by preview, fetches the source again, and stores the source title returned by YouTube Music.
-
-| Method | Path                                          | Purpose                                                         |
-| ------ | --------------------------------------------- | --------------------------------------------------------------- |
-| `POST` | `/api/playlists/import/youtube-music/preview` | Preview a public YouTube or YouTube Music playlist              |
-| `POST` | `/api/playlists/import/youtube-music`         | Import and optionally schedule synchronization for the playlist |
-
-### Last.fm import
-
-| Method | Path                                     | Purpose                                             |
-| ------ | ---------------------------------------- | --------------------------------------------------- |
-| `GET`  | `/api/playlists/import/lastfm/playlists` | List Last.fm Library, Mix, and Recommended stations |
-| `POST` | `/api/playlists/import/lastfm/preview`   | Preview a Last.fm station import                    |
-| `POST` | `/api/playlists/import/lastfm`           | Import a Last.fm station                            |
+| Method   | Path                                           | Purpose                                             |
+| -------- | ---------------------------------------------- | --------------------------------------------------- |
+| `GET`    | `/api/playlists/import/spotify/status`         | Spotify connection status                           |
+| `POST`   | `/api/playlists/import/spotify/oauth/start`    | Start Spotify OAuth                                 |
+| `POST`   | `/api/playlists/import/spotify/oauth/complete` | Complete Spotify OAuth                              |
+| `DELETE` | `/api/playlists/import/spotify`                | Disconnect Spotify                                  |
+| `GET`    | `/api/playlists/import/spotify/playlists`      | List Spotify playlists                              |
+| `GET`    | `/api/playlists/import/listenbrainz/playlists` | List playlists for the linked ListenBrainz account  |
+| `GET`    | `/api/playlists/import/lastfm/playlists`       | List Last.fm Library, Mix, and Recommended stations |
+| `GET`    | `/api/plugins/import-lists`                    | List the plugins that import playlists from links   |
 
 ## Lidarr feed
 
@@ -468,10 +455,8 @@ Every route in this section requires an administrator.
 | `POST` | `/api/settings/ytdlp/test`                 | Test yt-dlp                                                                    |
 | `GET`  | `/api/settings/download-clients`           | Read download client settings metadata                                         |
 | `POST` | `/api/settings/download-clients/:key/test` | Test a download client                                                         |
-| `POST` | `/api/settings/gotify/test`                | Test Gotify                                                                    |
 | `POST` | `/api/settings/webhook/test`               | Test one webhook configuration                                                 |
-| `GET`  | `/api/settings/playlist-files`             | Read the playlist file folder and naming setting                               |
-| `PUT`  | `/api/settings/playlist-files`             | Change the owner prefix in playlist file names                                 |
+| `GET`  | `/api/settings/playlist-files`             | Read the playlist file folder                                                  |
 | `GET`  | `/api/backup`                              | Download a backup zip. Requires a password entered in the last 15 minutes      |
 | `POST` | `/api/backup/restore`                      | Restore a backup zip sent as the request body, then restart                    |
 

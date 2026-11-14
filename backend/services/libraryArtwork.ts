@@ -26,6 +26,7 @@ import { logger, safeLogDiagnostic } from "./logger.ts";
 import getSharp from "./sharpConfig.ts";
 import { readLibraryMetadata } from "./libraryMetadata.ts";
 import { fetchReleaseGroupCoverUrl } from "./releaseGroupCoverService.ts";
+import { findDeezerAlbumCover } from "./apiClients/deezer.ts";
 
 export type LibraryArtworkKind = "album" | "artist";
 type Artwork = { buffer: Uint8Array; contentType: string };
@@ -283,6 +284,15 @@ async function findArtistPhoto(mbid: string, artistName: string): Promise<Artwor
   return { artwork: null, transient: Boolean(photo?.transient || image.transientError) };
 }
 
+async function findDeezerCover(artistName: string, albumTitle: string): Promise<ArtworkLookup> {
+  try {
+    const cover = await findDeezerAlbumCover(artistName, albumTitle);
+    return cover ? await downloadArtwork(cover) : { artwork: null };
+  } catch {
+    return { artwork: null, transient: true };
+  }
+}
+
 async function findAlbumCover(albumId: number): Promise<ArtworkLookup> {
   const fileArtwork = await readFileArtwork(albumId);
   if (fileArtwork) return { artwork: fileArtwork, fromFiles: true };
@@ -292,13 +302,27 @@ async function findAlbumCover(albumId: number): Promise<ArtworkLookup> {
   const fromMetadata = metadataUrl ? await downloadArtwork(metadataUrl) : null;
   if (fromMetadata?.artwork) return fromMetadata;
   const releaseGroupMbid = album.release_group_mbid || album.mbid;
-  if (!releaseGroupMbid) return { artwork: null, transient: fromMetadata?.transient };
-  const cover = await fetchReleaseGroupCoverUrl(releaseGroupMbid, {
-    artistName: album.artist_name,
-    albumTitle: album.title,
-  });
-  if (cover?.imageUrl) return downloadArtwork(cover.imageUrl);
-  return { artwork: null, transient: Boolean(fromMetadata?.transient || cover?.transientError) };
+  const releaseGroup = releaseGroupMbid
+    ? await fetchReleaseGroupCoverUrl(releaseGroupMbid, {
+        artistName: album.artist_name,
+        albumTitle: album.title,
+      })
+    : null;
+  const fromReleaseGroup = releaseGroup?.imageUrl
+    ? await downloadArtwork(releaseGroup.imageUrl)
+    : null;
+  if (fromReleaseGroup?.artwork) return fromReleaseGroup;
+  const fromDeezer = await findDeezerCover(album.artist_name, album.title);
+  if (fromDeezer?.artwork) return fromDeezer;
+  return {
+    artwork: null,
+    transient: Boolean(
+      fromMetadata?.transient ||
+      releaseGroup?.transientError ||
+      fromReleaseGroup?.transient ||
+      fromDeezer?.transient,
+    ),
+  };
 }
 
 async function findAlbumArtwork(albumId: number): Promise<ArtworkLookup> {

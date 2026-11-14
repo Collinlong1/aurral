@@ -6,9 +6,9 @@ import * as v from "valibot";
 import { db, dbHelpers } from "../../config/db-sqlite.ts";
 import { listOf } from "../../db/helpers/storedSchemas.ts";
 import type { DownloadJobsRevisionRow, DownloadJobsRow } from "../../db/rows.ts";
-import type { NzbSourceId } from "../usenetClientCommon.ts";
 import { downloadPipelineQueue } from "../jobs/queues.ts";
 import type { PipelinePayload } from "../downloadPipeline.ts";
+import type { DownloadSource } from "../download/downloadSource.ts";
 import {
   getQuickSearchSources,
   isAlbumGrabSourceConfigured,
@@ -71,7 +71,13 @@ export type DownloadJobState =
   | { status: Exclude<JobStatus, "done">; finalPath: string | null };
 type DeniedRemoteSource = [source: string, key: string];
 type JobRedirect = { fromJobId: string; toJobId: string; dispatched: boolean };
-type PendingOptions = { asRetryCycle?: boolean };
+const STORED_CAUSES = ["request", "monitoring", "missing", "playlist", "share"] as const;
+export type JobCause = { kind: (typeof STORED_CAUSES)[number]; playlistId: string | null };
+export type DownloadCause = {
+  kind: JobCause["kind"] | "upgrade" | "flow";
+  playlistId: string | null;
+};
+type PendingOptions = { asRetryCycle?: boolean; cause?: JobCause };
 type QualityUpdate = {
   tier?: string | null;
   format?: string | null;
@@ -87,17 +93,15 @@ type AddJobOptions = {
   requestKind?: RequestKind;
   saved?: boolean;
   startedByPlaylist?: string | null;
+  cause?: JobCause;
 };
 type SourceCandidate<Source extends PipelinePayload["source"]> =
   Extract<PipelinePayload, { source: Source }> extends { candidates?: (infer Candidate)[] | null }
     ? Candidate
     : never;
-type ManualSelection = { downloadClient?: string | null } & (
+type ManualSelection =
   | { source: "slskd"; candidate: SourceCandidate<"slskd"> }
-  | { source: "deemix"; candidate: SourceCandidate<"deemix"> }
-  | { source: "ytdlp"; candidate: SourceCandidate<"ytdlp"> }
-  | { source: NzbSourceId; candidate: SourceCandidate<NzbSourceId> }
-);
+  | { source: DownloadSource["id"]; candidate: SourceCandidate<DownloadSource["id"]> };
 const queuedStepSchema = v.object({
   jobId: v.string(),
   downloadAttemptId: v.string(),
@@ -232,6 +236,11 @@ function storedJobState(row: DownloadJobsRow): DownloadJobState {
   return { status: "failed", finalPath: null };
 }
 
+const storedCause = (row: DownloadJobsRow): JobCause | null => {
+  const kind = STORED_CAUSES.find((stored) => stored === row.cause);
+  return kind ? { kind, playlistId: row.cause_playlist_id || null } : null;
+};
+
 function rowToJob(row: DownloadJobsRow) {
   const job = {
     id: row.id!,
@@ -270,6 +279,7 @@ function rowToJob(row: DownloadJobsRow) {
     externalPath: row.external_path || null,
     reusedLibraryFile: row.reused_library_file === 1,
     startedByPlaylist: row.started_by_playlist || null,
+    cause: storedCause(row),
     error: row.error,
     createdAt: row.created_at,
     downloadSource: row.download_source || null,
@@ -370,9 +380,11 @@ const insertStmt = db.prepare(`
     manual_replacement_search,
     request_kind,
     reused_library_file,
-    started_by_playlist
+    started_by_playlist,
+    cause,
+    cause_playlist_id
   )
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
 const updateStmt = db.prepare(`
@@ -406,7 +418,9 @@ const updateStmt = db.prepare(`
       quality_upgrade_checked_at = ?,
       upgrade_for_job_id = ?,
       manual_replacement_search = ?,
-      reused_library_file = ?
+      reused_library_file = ?,
+      cause = ?,
+      cause_playlist_id = ?
   WHERE id = ?
 `);
 
@@ -573,13 +587,8 @@ function buildManualPayload(job: DownloadJob, selection: ManualSelection): Pipel
     allowedSources: [selection.source],
     candidateIndex: 0,
     manualSelection: true,
-    manualDownloadClient: selection.downloadClient || null,
   };
   if (selection.source === "slskd")
-    return { ...step, source: selection.source, candidates: [selection.candidate] };
-  if (selection.source === "deemix")
-    return { ...step, source: selection.source, candidates: [selection.candidate] };
-  if (selection.source === "ytdlp")
     return { ...step, source: selection.source, candidates: [selection.candidate] };
   return { ...step, source: selection.source, candidates: [selection.candidate] };
 }
@@ -602,7 +611,6 @@ export type PipelineStep = Partial<{
     albumGroupJobIds?: string[] | null;
     candidateIndex?: number;
     manualSelection?: boolean;
-    manualDownloadClient?: string | null;
   };
 
 // The files these jobs hold for review: a blocked job's file, unless only
@@ -627,6 +635,15 @@ function discardReviewFiles(
     });
   });
 }
+
+export const downloadCause = (
+  job: Pick<DownloadJob, "cause" | "playlistType" | "upgradeForJobId" | "manualReplacementSearch">,
+): DownloadCause | null => {
+  if (job.manualReplacementSearch) return { kind: "request", playlistId: null };
+  if (job.upgradeForJobId) return { kind: "upgrade", playlistId: null };
+  if (job.playlistType !== "library") return { kind: "flow", playlistId: job.playlistType };
+  return job.cause;
+};
 
 export class DownloadTracker {
   declare enqueuePipeline: (payload: PipelinePayload) => unknown;
@@ -853,6 +870,15 @@ export class DownloadTracker {
     updateDownloadMetaStmt.run(...DOWNLOAD_METADATA_KEYS.map((key) => job[key] ?? null), id);
     recordAlbumTrackState(job);
     return true;
+  }
+
+  // A job done with a shared download no longer counts as one taking a
+  // track from it.
+  releaseDownloadClient(id: string) {
+    const job = this.jobs.get(id);
+    if (!job?.downloadClientId) return;
+    job.downloadClientId = null;
+    updateDownloadMetaStmt.run(...DOWNLOAD_METADATA_KEYS.map((key) => job[key] ?? null), id);
   }
 
   // The queued album attempt this job is still part of. A job released from
@@ -1293,6 +1319,8 @@ export class DownloadTracker {
           job.upgradeForJobId ?? null,
           job.manualReplacementSearch ? 1 : 0,
           job.reusedLibraryFile ? 1 : 0,
+          job.cause?.kind ?? null,
+          job.cause?.playlistId ?? null,
           job.id,
         );
       }
@@ -1357,6 +1385,8 @@ export class DownloadTracker {
       job.requestKind === "album" ? "album" : "track",
       job.reusedLibraryFile ? 1 : 0,
       job.startedByPlaylist ?? null,
+      job.cause?.kind ?? null,
+      job.cause?.playlistId ?? null,
     );
     this._touchRevision();
   }
@@ -1393,6 +1423,8 @@ export class DownloadTracker {
       job.upgradeForJobId ?? null,
       job.manualReplacementSearch ? 1 : 0,
       job.reusedLibraryFile ? 1 : 0,
+      job.cause?.kind ?? null,
+      job.cause?.playlistId ?? null,
       job.id,
     );
     if (ENDED_STATUSES.has(job.status)) this._dropHeldForReview(job);
@@ -1448,6 +1480,7 @@ export class DownloadTracker {
       externalPath: null,
       reusedLibraryFile: false,
       startedByPlaylist: options.startedByPlaylist ?? null,
+      cause: options.cause ?? null,
       error: null,
       createdAt: Date.now(),
       retryCycle: false,
@@ -1803,6 +1836,7 @@ export class DownloadTracker {
     job.reusedLibraryFile = false;
     job.retryCycle = asRetryCycle;
     job.error = typeof error === "string" ? error : (error && error.message) || null;
+    if (options.cause) job.cause = options.cause;
     this._update(job);
     this._applyStatusDelta(job.playlistType, previousStatus, job.status);
     this.pendingSet.add(id);

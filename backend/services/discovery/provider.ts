@@ -28,9 +28,7 @@ import { getMusicDataSourceName, getTrendingArtists } from "../musicDataSource/i
 import { withLock } from "../jobs/queue.ts";
 import { websocketService } from "../websocketService.ts";
 import {
-  getLastfmDiscoveryPeriod,
-  getListenbrainzRange,
-  getDiscoveryRecommendationsPerRefresh,
+  DISCOVERY_RECOMMENDATIONS_PER_REFRESH,
   getDiscoveryMode,
   getDiscoveryRecommendationPoolLimit,
   getDiscoveryNetworkConcurrency,
@@ -79,14 +77,13 @@ type ListenHistoryArtist = { mbid: string | null; artistName: string; playcount:
 const fetchListenHistoryArtists = async (
   provider: ListenHistoryProvider,
   account: string,
-  discoveryPeriod: string,
 ): Promise<ListenHistoryArtist[]> => {
   if (provider === "listenbrainz") {
     const data = v.parse(
       listenbrainzTopArtistsSchema,
       await listenbrainzRequest(`/1/stats/user/${encodeURIComponent(account)}/artists`, {
         count: 50,
-        range: getListenbrainzRange(discoveryPeriod)!,
+        range: "month",
       }),
     );
     return (data.payload?.artists ?? [])
@@ -105,10 +102,7 @@ const fetchListenHistoryArtists = async (
   }
 
   if (provider === "koito") {
-    return fetchKoitoTopArtists(account, {
-      discoveryPeriod,
-      limit: 50,
-    });
+    return fetchKoitoTopArtists(account, 50);
   }
 
   const userTopArtists = await lastfmRequest(
@@ -116,7 +110,7 @@ const fetchListenHistoryArtists = async (
     {
       user: account,
       limit: 50,
-      period: discoveryPeriod,
+      period: "1month",
     },
     { timeoutMs: 12000, maxRetries: 2 },
   );
@@ -139,8 +133,8 @@ const fetchListenHistoryArtists = async (
 export const rerankCachedRecommendations = ({
   recommendations = [],
   feedback = [],
-  discoveryMode = getDiscoveryMode(),
-  limit = getDiscoveryRecommendationsPerRefresh(),
+  discoveryMode = "balanced",
+  limit = DISCOVERY_RECOMMENDATIONS_PER_REFRESH,
 }: {
   recommendations?: DiscoveryRecommendation[];
   feedback?: RecommendationFeedback[];
@@ -169,7 +163,7 @@ const resolveRecommendationCandidates = async (
   recommendations: DiscoveryRecommendation[],
   existingArtistKeys: Set<string>,
 ) => {
-  const perRefresh = getDiscoveryRecommendationsPerRefresh();
+  const perRefresh = DISCOVERY_RECOMMENDATIONS_PER_REFRESH;
   await resolveArtistMbids(recommendations.slice(0, perRefresh));
   return mergeResolvedRecommendations(recommendations, existingArtistKeys)
     .filter((item) => item?.id || item?.navigateTo)
@@ -206,7 +200,6 @@ const publishGlobalDiscovery = (discoveryData: DiscoveryCacheUpdate) => {
     phase: "completed",
     progress: 100,
     progressMessage: "Discovery refresh completed",
-    discoveryMode: getDiscoveryMode(),
   });
 };
 
@@ -317,13 +310,12 @@ const feedbackArtists = (feedback: DiscoveryFeedbackEntry[], action: string) =>
 
 const collectUserSeeds = async (user: DiscoveryUser, feedback: DiscoveryFeedbackEntry[]) => {
   const history = getListenHistory(user.id);
-  const period = getLastfmDiscoveryPeriod();
   const externalHistory = await Promise.all(
     LISTEN_HISTORY_PROVIDERS.map(async (provider) => {
       const account = history[provider];
-      if (!account || period === "none") return [];
+      if (!account) return [];
       try {
-        const artists = await fetchListenHistoryArtists(provider, account, period);
+        const artists = await fetchListenHistoryArtists(provider, account);
         return artists.map((artist) => ({ ...artist, source: provider }));
       } catch (error) {
         logger.error(
@@ -413,7 +405,7 @@ const buildUserRecommendations = async ({
   );
 
   progress("generating_recommendations", "Finding similar artists", 50);
-  const discoveryMode = getDiscoveryMode();
+  const discoveryMode = getDiscoveryMode(userId);
   const rawRecommendations = await buildRecommendationsFromSeeds({
     seeds,
     existingArtistKeys,

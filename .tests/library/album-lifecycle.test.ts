@@ -14,7 +14,7 @@ import {
 } from "../helpers/backendTestHarness.ts";
 import { listen, signedInAs } from "../helpers/honoApp.ts";
 import { requireFixture } from "../playlists/fixtures.ts";
-import { startWorkerForQueuedWork, usenetCandidate, usenetRelease } from "../download/fixtures.ts";
+import { startWorkerForQueuedWork, usenetCandidate } from "../download/fixtures.ts";
 
 const [
   isolatedState,
@@ -270,7 +270,7 @@ test("a Library requester can cancel without flow permission and cannot cancel a
   assert.equal(getJob(other).status, "pending");
 });
 
-test("cancelling all downloads stops only the active jobs the user controls", async () => {
+test("cancelling all downloads stops only the active jobs the user controls, or those of one cause", async () => {
   const fixture = createLibraryAlbum({ trackCount: 4 });
   const own = fixture.jobFor(0);
   const ownDownloading = fixture.jobFor(1);
@@ -293,7 +293,10 @@ test("cancelling all downloads stops only the active jobs the user controls", as
   assert.equal(getJob(finished).status, "done");
 
   requestUser = testUser(1, "admin");
-  const admin = await apiRequest("/api/playlists/jobs/cancel", "POST");
+  downloadTracker.setPending(other, null, { cause: { kind: "missing", playlistId: null } });
+  const upgrades = await apiRequest("/api/playlists/jobs/cancel?cause=upgrade", "POST");
+  assert.deepEqual(upgrades.body, { cancelled: 0, cleanupFailed: false });
+  const admin = await apiRequest("/api/playlists/jobs/cancel?cause=missing", "POST");
   assert.deepEqual(admin.body, { cancelled: 1, cleanupFailed: false });
   assert.equal(getJob(other).status, "cancelled");
 });
@@ -373,8 +376,7 @@ test("track cancellation keeps failed provider cleanup pending and succeeds afte
   downloadTracker.setDownloading(id);
   downloadTracker.updateDownloadMetadata(id, {
     downloadSource: "usenet",
-    downloadClient: "sabnzbd",
-    downloadClientId: "disposable-queue",
+    downloadClientId: "sabnzbd:disposable-queue",
   });
   const first = await apiRequest(`/api/playlists/jobs/${id}/cancel`, "POST");
   assert.equal(first.status, 200);
@@ -406,8 +408,7 @@ test("retry keeps a cancelled queued job blocked until provider cleanup succeeds
   const id = fixture.jobFor(0);
   downloadTracker.updateDownloadMetadata(id, {
     downloadSource: "usenet",
-    downloadClient: "sabnzbd",
-    downloadClientId: "disposable-queue",
+    downloadClientId: "sabnzbd:disposable-queue",
   });
 
   const cancelled = await apiRequest(`/api/playlists/jobs/${id}/cancel`, "POST");
@@ -441,8 +442,7 @@ test("retry keeps a failed job blocked until its provider request is cleaned up"
   downloadTracker.setDownloading(id);
   downloadTracker.updateDownloadMetadata(id, {
     downloadSource: "usenet",
-    downloadClient: "sabnzbd",
-    downloadClientId: "still-running-nzb",
+    downloadClientId: "sabnzbd:still-running-nzb",
   });
   downloadTracker.setFailed(id, "Usenet client remained unreadable");
 
@@ -745,8 +745,8 @@ test("album cancellation waits on provider cleanup without reviving the job", as
   const jobId = jobFor(0);
   downloadTracker.setDownloading(jobId);
   downloadTracker.updateDownloadMetadata(jobId, {
-    downloadClient: "sabnzbd",
-    downloadClientId: "unconfigured-sabnzbd-item",
+    downloadSource: "usenet",
+    downloadClientId: "sabnzbd:unconfigured-sabnzbd-item",
   });
 
   const cancelled = await callRoute(`/library/albums/${album.id}/cancel`, "POST");
@@ -1128,7 +1128,6 @@ test("an album asks for its most common edition and a shorter download leaves it
       metadata: {
         ...originalSettings.integrations?.metadata,
         baseUrl: metadata.url,
-        enableNarrowFallbacks: false,
       },
     },
   });
@@ -1192,18 +1191,7 @@ test("an album asks for its most common edition and a shorter download leaves it
     {
       ...grab,
       source: "usenet" as const,
-      candidate: usenetCandidate({
-        raw: {
-          release: usenetRelease({
-            guid: "shorter",
-            title: "",
-            downloadUrl: "",
-            indexerId: 1,
-            size: 0,
-            categories: [],
-          }),
-        },
-      }),
+      candidate: usenetCandidate({ guid: "shorter", title: "Edition Album" }),
     },
     { filePaths: shorter, source: "usenet" },
   );
@@ -1213,7 +1201,7 @@ test("an album asks for its most common edition and a shorter download leaves it
   );
   assert.deepEqual(
     ids.map((id) => getJob(id).deniedRemoteSources),
-    ids.map(() => [["usenet", "shorter"]]),
+    ids.map(() => [["usenet", "album:shorter"]]),
   );
 
   for (const id of ids) downloadTracker.setDownloading(id);
@@ -1296,7 +1284,6 @@ test("an album that wants the expanded edition keeps wanting the extra track a d
       metadata: {
         ...originalSettings.integrations?.metadata,
         baseUrl: metadata.url,
-        enableNarrowFallbacks: false,
       },
     },
   });
@@ -1373,6 +1360,85 @@ test("an album that wants the expanded edition keeps wanting the extra track a d
   assert.equal(missing?.monitored, 1);
 });
 
+test("an album asked for in an edition downloads that edition", async (t: TestContext) => {
+  const artistMbid = "eeeeeeee-eeee-4eee-8eee-000000000031";
+  const albumMbid = "eeeeeeee-eeee-4eee-8eee-000000000032";
+  const deluxe = "eeeeeeee-eeee-4eee-8eee-000000000033";
+  const release = (id: string, count: number) => ({
+    id,
+    status: "Official",
+    tracks: Array.from({ length: count }, (_, index) => ({
+      id: `${id}-${index}`,
+      recordingid: `eeeeeeee-eeee-4eee-8eee-40000000000${index + 1}`,
+      trackname: `Chosen Song ${index + 1}`,
+      artistid: artistMbid,
+      durationms: 1000,
+      trackposition: index + 1,
+      mediumnumber: 1,
+    })),
+  });
+  const metadata = await createMockHttpServer((request, response) => {
+    response.setHeader("content-type", "application/json");
+    if (new URL(request.url || "/", "http://127.0.0.1").pathname !== `/album/${albumMbid}`) {
+      response.writeHead(404);
+      response.end("{}");
+      return;
+    }
+    response.end(
+      JSON.stringify({
+        id: albumMbid,
+        title: "Chosen Album",
+        artistid: artistMbid,
+        artists: [{ id: artistMbid, artistname: "Chosen Artist" }],
+        releases: [release("cd", 2), release("digital", 2), release(deluxe, 3)],
+      }),
+    );
+  });
+  const originalSettings = dbOps.getSettings();
+  const originalWorkerStart = downloadWorker.start;
+  dbOps.updateSettings({
+    ...originalSettings,
+    integrations: {
+      ...originalSettings.integrations,
+      slskd: { enabled: true, url: "http://127.0.0.1:9", apiKey: "test-key" },
+      metadata: {
+        ...originalSettings.integrations?.metadata,
+        baseUrl: metadata.url,
+      },
+    },
+  });
+  clearApiCaches();
+  downloadWorker.start = async () => {};
+  let ids: string[] = [];
+  t.onTestFinished(async () => {
+    for (const id of ids) {
+      if (getJob(id)?.status === "pending") downloadTracker.setCancelled(id);
+    }
+    downloadWorker.start = originalWorkerStart;
+    dbOps.updateSettings(originalSettings);
+    clearApiCaches();
+    await metadata.close();
+  });
+
+  const requested = await callRoute<RequestedAlbumBody>("/library/albums/request", "POST", {
+    albumMbid,
+    albumName: "Chosen Album",
+    artistMbid,
+    artistName: "Chosen Artist",
+    releaseMbid: deluxe,
+  });
+  assert.equal(requested.status, 201, JSON.stringify(requested.body));
+  ids = requested.body.jobIds;
+  assert.deepEqual(
+    ids.map((id) => [getJob(id).trackName, getJob(id).releaseMbid]),
+    [
+      ["Chosen Song 1", deluxe],
+      ["Chosen Song 2", deluxe],
+      ["Chosen Song 3", deluxe],
+    ],
+  );
+});
+
 test("a two-disc album downloads a title it repeats on each disc to two names", async (t: TestContext) => {
   const artistMbid = "dddddddd-dddd-4ddd-8ddd-000000000001";
   const albumMbid = "dddddddd-dddd-4ddd-8ddd-000000000002";
@@ -1424,7 +1490,6 @@ test("a two-disc album downloads a title it repeats on each disc to two names", 
       metadata: {
         ...originalSettings.integrations?.metadata,
         baseUrl: metadata.url,
-        enableNarrowFallbacks: false,
       },
     },
   });
@@ -1542,7 +1607,6 @@ test("an album asks for its release's own lengths and fills a missing one from p
       metadata: {
         ...originalSettings.integrations?.metadata,
         baseUrl: metadata.url,
-        enableNarrowFallbacks: false,
       },
     },
   });
@@ -1619,7 +1683,6 @@ test("asking for an album downloads the missing tracks of the edition its track 
       metadata: {
         ...originalSettings.integrations?.metadata,
         baseUrl: metadata.url,
-        enableNarrowFallbacks: false,
       },
     },
   });
@@ -1734,7 +1797,7 @@ test("asking for an album downloads the missing tracks of the edition its track 
   );
 });
 
-test("asking for an album leaves out its [silence] places", async (t: TestContext) => {
+test("asking for an album leaves out its [silence] places, and a file tagged with the recording MusicBrainz merged a song into fills its place", async (t: TestContext) => {
   const artistMbid = "5e5e5e5e-5e5e-4e5e-8e5e-000000000011";
   const albumMbid = "5e5e5e5e-5e5e-4e5e-8e5e-000000000012";
   const silence = "5e5e5e5e-5e5e-4e5e-8e5e-200000000009";
@@ -1785,7 +1848,6 @@ test("asking for an album leaves out its [silence] places", async (t: TestContex
       metadata: {
         ...originalSettings.integrations?.metadata,
         baseUrl: metadata.url,
-        enableNarrowFallbacks: false,
       },
     },
   });
@@ -1816,6 +1878,58 @@ test("asking for an album leaves out its [silence] places", async (t: TestContex
       .pluck()
       .get(silence),
     0,
+  );
+
+  const filePath = path.join(isolatedState.baseDir, "silent", "04 Hidden Track.flac");
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await promisify(execFile)("ffmpeg", [
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    "-f",
+    "lavfi",
+    "-i",
+    "anullsrc=r=44100:cl=stereo",
+    "-t",
+    "1",
+    "-c:a",
+    "flac",
+    "-metadata",
+    "title=Hidden Track",
+    "-metadata",
+    "artist=Silent Artist",
+    "-metadata",
+    "album=Silent Album",
+    "-metadata",
+    "track=4",
+    "-metadata",
+    `MUSICBRAINZ_ALBUMARTISTID=${artistMbid}`,
+    "-metadata",
+    `MUSICBRAINZ_RELEASEGROUPID=${albumMbid}`,
+    "-metadata",
+    "MUSICBRAINZ_TRACKID=5e5e5e5e-5e5e-4e5e-8e5e-200000000003",
+    filePath,
+  ]);
+  await scanMusicRoot({
+    rootPath: path.dirname(filePath),
+    filePaths: [filePath],
+    source: "aurral",
+  });
+  assert.deepEqual(
+    db
+      .prepare<[number], { title: string; have: number }>(
+        `SELECT track.title, EXISTS (
+           SELECT 1 FROM library_media_files AS media WHERE media.track_id = track.id
+         ) AS have
+         FROM library_album_tracks AS link
+         JOIN library_tracks AS track ON track.id = link.track_id
+         WHERE link.album_id = ? ORDER BY link.track_number`,
+      )
+      .all(Number(requested.body.album.id)),
+    [
+      { title: "Opening", have: 0 },
+      { title: "Hidden Track", have: 1 },
+    ],
   );
 });
 

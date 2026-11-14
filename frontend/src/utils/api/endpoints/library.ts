@@ -41,6 +41,7 @@ type LibraryPageOptions = {
   artistId?: string | number;
   albumId?: string | number;
   source?: string;
+  favorite?: boolean;
   availableOnly?: boolean | null;
 };
 
@@ -100,6 +101,7 @@ const libraryPageParams = (options: LibraryPageOptions = {}) =>
       direction: options.direction,
       artistId: options.artistId,
       albumId: options.albumId,
+      favorite: options.favorite ? "true" : undefined,
       source: options.source || "all",
       // Tri-state: an explicit boolean forces the filter, while `undefined` omits
       // the param so the backend shows what can be played and what Aurral is fetching.
@@ -572,6 +574,7 @@ type AlbumRequestPayload = {
   albumName: string | null | undefined;
   artistMbid?: string | null;
   artistName?: string | null;
+  releaseMbid?: string | null;
 };
 
 const postAlbumRequest = (payload: AlbumRequestPayload) =>
@@ -707,6 +710,14 @@ export const cancelAlbum = (albumId: string | number) =>
         param: { albumId: encodeURIComponent(albumId) },
       }),
     ),
+  );
+
+export const setAlbumEdition = (albumId: string | number, releaseMbid: string) =>
+  parseResponse(
+    libraryAlbumsClient.albums[":albumId"].edition.$put({
+      param: { albumId: encodeURIComponent(albumId) },
+      json: { releaseMbid },
+    }),
   );
 
 export const setAlbumMonitoring = (

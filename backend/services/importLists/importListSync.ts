@@ -1,10 +1,9 @@
-import { isOwnKey } from "../../../lib/ownKey.ts";
 import {
   flowPlaylistConfig,
   invalidateFlowPlaylistConfigCache,
   type StaticPlaylist,
 } from "../playlists/flowPlaylistConfig.ts";
-import { fetchImportedPlaylistTracks } from "./importPlaylist.ts";
+import { importListFor, requireImportList } from "./importPlaylist.ts";
 import { updateStaticPlaylist } from "../playlists/playlistOperations.ts";
 import {
   buildImportTrackIdentity,
@@ -16,8 +15,6 @@ import {
   isDownloadOwnerProcess,
   requestDownloadOwner,
 } from "../downloadJobs/downloadOwnerClient.ts";
-import { spotifyConnectionStore } from "../spotify/spotifyConnectionStore.ts";
-import { scrobbleConnectionStore } from "../scrobbleConnectionStore.ts";
 
 type CodedError = Error & { statusCode?: number; code?: string };
 type ImportSource = NonNullable<StaticPlaylist["importSource"]>;
@@ -25,27 +22,17 @@ type SyncUser = NonNullable<Parameters<typeof flowPlaylistConfig.canUserAccessSt
 type SyncStaticPlaylistImportOptions = { playlistId: string; user?: SyncUser; force?: boolean };
 
 const HOUR_MS = 60 * 60 * 1000;
-const listenbrainzConnection = {
-  name: "ListenBrainz",
-  isConnected: (userId: number) =>
-    Boolean(scrobbleConnectionStore.getConnection(userId, "listenbrainz")),
-};
-const PROVIDER_CONNECTIONS = {
-  "spotify-playlist": {
-    name: "Spotify",
-    isConnected: (userId: number) => Boolean(spotifyConnectionStore.getConnection(userId)),
-  },
-  "listenbrainz-playlist": listenbrainzConnection,
-  "listenbrainz-createdfor": listenbrainzConnection,
-};
 
 export function isImportSourceDue(importSource: ImportSource | null | undefined, now = Date.now()) {
   if (!importSource?.syncEnabled) return false;
   const intervalHours = Number(importSource.syncIntervalHours);
   const intervalMs =
     Number.isFinite(intervalHours) && intervalHours > 0 ? intervalHours * HOUR_MS : 24 * HOUR_MS;
-  const lastSyncAt = Number(importSource.lastSyncAt || 0);
-  return !lastSyncAt || now - lastSyncAt >= intervalMs;
+  const lastAttemptAt = Math.max(
+    Number(importSource.lastSyncAt || 0),
+    Number(importSource.lastSyncFailedAt || 0),
+  );
+  return !lastAttemptAt || now - lastAttemptAt >= intervalMs;
 }
 
 export async function syncStaticPlaylistImport(options: SyncStaticPlaylistImportOptions) {
@@ -95,21 +82,39 @@ export async function syncStaticPlaylistImportHere({
   const ownerUserId = playlist.ownerUserId ?? user?.id;
   try {
     const externalPlaylistId = String(playlist.importSource?.externalId || "").trim();
-    const {
-      tracks,
-      stats,
-      excluded = [],
-      artworkUrl,
-    } = await fetchImportedPlaylistTracks({
-      provider: playlist.importSource.provider,
-      userId: ownerUserId,
-      externalId: externalPlaylistId,
-      externalUsername: playlist.importSource?.externalUsername,
-      forceRefresh: true,
-    });
+    const list = requireImportList(playlist.importSource.provider);
+    const source = await list
+      .fetch({
+        userId: ownerUserId,
+        externalId: externalPlaylistId,
+        externalUsername: playlist.importSource?.externalUsername,
+        forceRefresh: true,
+      })
+      .catch((error: unknown) => {
+        if (list.rotating && asAppError(error)?.code === "PLAYLIST_NOT_FOUND") return null;
+        throw error;
+      });
+    if (!source) {
+      flowPlaylistConfig.updateStaticPlaylist(playlist.id, {
+        importSource: {
+          ...playlist.importSource,
+          lastSyncAt: Date.now(),
+          lastSyncFailedAt: null,
+          lastSyncError: null,
+        },
+      });
+      logger.info("playlist-import", "Playlist source is empty for now, so its tracks stay", {
+        provider: playlist.importSource.provider,
+        playlistId: playlist.id,
+        externalPlaylistId,
+      });
+      return { skipped: true, reason: "source-empty" };
+    }
+    const { tracks, stats, excluded = [], artworkUrl } = source;
     const syncImportSource = {
       ...(artworkUrl && { artworkUrl }),
       lastSyncAt: Date.now(),
+      lastSyncFailedAt: null,
       lastSyncError: null,
       lastSyncTrackCount: tracks.length,
     };
@@ -190,11 +195,13 @@ export async function syncStaticPlaylistImportHere({
     });
     const lastSyncError = String(asAppError(error)?.message || "").trim() || "Playlist sync failed";
     const latestPlaylist = flowPlaylistConfig.getStaticPlaylist(playlist.id);
-    if (latestPlaylist?.importSource?.lastSyncError !== lastSyncError) {
+    const disconnected = asAppError(error)?.statusCode === 401;
+    if (!disconnected || latestPlaylist?.importSource?.lastSyncError !== lastSyncError) {
       flowPlaylistConfig.updateStaticPlaylist(playlist.id, {
         importSource: {
           ...(latestPlaylist?.importSource || playlist.importSource),
           lastSyncError,
+          ...(!disconnected && { lastSyncFailedAt: Date.now() }),
         },
       });
     }
@@ -216,14 +223,12 @@ export async function runDueImportSourceSyncs() {
     const ownerUserId = playlist.ownerUserId;
     if (ownerUserId == null) continue;
     const provider = playlist.importSource.provider;
-    const connection = isOwnKey(PROVIDER_CONNECTIONS, provider)
-      ? PROVIDER_CONNECTIONS[provider]
-      : undefined;
-    const connectionKey = `${connection?.name ?? provider}:${ownerUserId}`;
-    if (connection && (rejected.has(connectionKey) || !connection.isConnected(ownerUserId))) {
+    const list = importListFor(provider);
+    const connectionKey = `${list?.label ?? provider}:${ownerUserId}`;
+    if (list?.isConnected && (rejected.has(connectionKey) || !list.isConnected(ownerUserId))) {
       const pending = disconnected.get(connectionKey);
       disconnected.set(connectionKey, {
-        provider: connection.name,
+        provider: list.label,
         ownerUserId,
         playlistCount: (pending?.playlistCount || 0) + 1,
       });

@@ -30,10 +30,6 @@ export const integrationSettingsSchema = v.looseObject({
   lastfm: service({
     apiKey: text,
     apiSecret: text,
-    discoveryPeriod: text,
-    discoveryAutoRefreshHours: count,
-    discoveryRecommendationsPerRefresh: count,
-    discoveryMode: text,
   }),
   slskd: service({
     enabled: flag,
@@ -43,7 +39,6 @@ export const integrationSettingsSchema = v.looseObject({
     albumPriority: count,
     preferredFormat: text,
     preferredFormatStrict: flag,
-    cleanupAfterRuns: flag,
   }),
   prowlarr: service({
     enabled: flag,
@@ -58,8 +53,6 @@ export const integrationSettingsSchema = v.looseObject({
         }),
       ),
     ),
-    categories: lenient(listOf(number)),
-    maxResults: count,
   }),
   nzbget: service({
     enabled: flag,
@@ -69,20 +62,15 @@ export const integrationSettingsSchema = v.looseObject({
     category: text,
     priority: count,
     albumPriority: count,
-    nzbPriority: count,
-    addPaused: flag,
     completedPath: text,
-    deleteLeftovers: flag,
   }),
   sabnzbd: service({
     enabled: flag,
     url: text,
     apiKey: text,
     category: text,
-    deleteLeftovers: flag,
     priority: count,
     albumPriority: count,
-    addPaused: flag,
   }),
   tidarr: service({
     enabled: flag,
@@ -111,8 +99,6 @@ export const integrationSettingsSchema = v.looseObject({
   ticketmaster: service({
     apiKey: text,
     searchRadiusMiles: count,
-    localDiscoveryIncludeRecommendations: flag,
-    localDiscoveryIncludeTrending: flag,
   }),
   news: service({
     enabled: flag,
@@ -121,23 +107,8 @@ export const integrationSettingsSchema = v.looseObject({
     ),
     groups: lenient(recordOf(v.boolean())),
   }),
-  metadata: service({
-    provider: text,
-    baseUrl: text,
-    userAgentSuffix: text,
-    enableNarrowFallbacks: flag,
-  }),
+  metadata: service({ baseUrl: text }),
   general: service({ apiKey: text }),
-  gotify: service({
-    url: text,
-    token: text,
-    notifyDiscoveryUpdated: flag,
-    notifyFlowDone: flag,
-    notifyRequestMade: flag,
-    notifyRequestAvailable: flag,
-    notifyArtistAdded: flag,
-    notifyTrackAdded: flag,
-  }),
   google: service({ enabled: flag, clientId: text, clientSecret: text, redirectUri: text }),
   musicbrainz: service({ email: text }),
 });

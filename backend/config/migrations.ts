@@ -1,5 +1,7 @@
 import type Database from "better-sqlite3";
 import { createAurral3Schema } from "./aurral-3-schema.ts";
+import { NOTIFICATION_EVENTS } from "../../lib/notificationEvents.ts";
+import { isRecord } from "../../lib/isRecord.ts";
 
 type Migration = (db: Database.Database) => void;
 
@@ -84,6 +86,143 @@ const failUnreadableDownloadJobs: Migration = (db) =>
       );
   `);
 
+// Album fetches that failed used to wait an hour, six hours, then a day before
+// trying again. Any other wait is one BrainzMash asked for, so it stays.
+const clearMetadataFailureBackoff: Migration = (db) =>
+  db.exec(`
+    DELETE FROM metadata_request_state
+    WHERE failure_count > 0 AND retry_after - updated_at IN (3600000, 21600000, 86400000);
+  `);
+
+// Usenet and Tidarr became download sources like qBittorrent: a job names
+// its download with the client that holds it, and a release it turned down
+// by the album identity the source lists.
+const nameUsenetDownloadsBySource: Migration = (db) => {
+  db.exec(`
+    UPDATE download_jobs
+    SET download_client_id = download_client || ':' || download_client_id,
+      download_client = download_source
+    WHERE download_source IN ('usenet', 'tidarr')
+      AND download_client IN ('nzbget', 'sabnzbd', 'tidarr')
+      AND coalesce(download_client_id, '') <> ''
+      AND instr(download_client_id, ':') = 0;
+  `);
+  const rows = db
+    .prepare<[], { id: string; denied: string }>(
+      `SELECT id, denied_remote_sources AS denied FROM download_jobs
+       WHERE denied_remote_sources LIKE '%"usenet"%' OR denied_remote_sources LIKE '%"tidarr"%'`,
+    )
+    .all();
+  const update = db.prepare<[string, string]>(
+    "UPDATE download_jobs SET denied_remote_sources = ? WHERE id = ?",
+  );
+  const identity = (guid: string) => {
+    const id = guid.trim().toLowerCase();
+    const album = /^(\d+)-(hires_lossless|lossless|high|low)$/.exec(id)?.[1];
+    return `album:${album ? `tidarr:${album}` : id}`;
+  };
+  for (const { id, denied } of rows) {
+    let entries: unknown;
+    try {
+      entries = JSON.parse(denied);
+    } catch {
+      continue;
+    }
+    if (!Array.isArray(entries)) continue;
+    const renamed = entries.map((entry: unknown) =>
+      Array.isArray(entry) &&
+      (entry[0] === "usenet" || entry[0] === "tidarr") &&
+      typeof entry[1] === "string" &&
+      !entry[1].startsWith("album:")
+        ? [entry[0], identity(entry[1])]
+        : entry,
+    );
+    update.run(JSON.stringify(renamed), id);
+  }
+};
+
+// These settings became fixed behavior. Each user keeps the discovery mode
+// the server used.
+const dropFixedSettings: Migration = (db) =>
+  db.exec(`
+    INSERT OR IGNORE INTO settings (key, value)
+      SELECT 'user:' || users.id || ':discoveryMode', json_quote(integrations.value ->> '$.lastfm.discoveryMode')
+      FROM users, settings AS integrations
+      WHERE integrations.key = 'integrations' AND json_valid(integrations.value)
+        AND integrations.value ->> '$.lastfm.discoveryMode' IN ('safer', 'deeper');
+    UPDATE settings SET value = json_remove(value,
+        '$.lastfm.discoveryMode', '$.lastfm.discoveryAutoRefreshHours',
+        '$.lastfm.discoveryRecommendationsPerRefresh', '$.slskd.cleanupAfterRuns',
+        '$.prowlarr.categories', '$.prowlarr.maxResults', '$.nzbget.nzbPriority',
+        '$.nzbget.addPaused', '$.nzbget.deleteLeftovers', '$.sabnzbd.addPaused',
+        '$.sabnzbd.deleteLeftovers')
+      WHERE key = 'integrations' AND json_valid(value);
+    UPDATE settings SET value = json_remove(value, '$.ssoOnly')
+      WHERE key = 'security' AND json_valid(value);
+    DELETE FROM settings WHERE key IN ('missingTrackSearch', 'reviewTimeoutHours', 'subsonic', 'playlistFiles');
+  `);
+
+// These settings had no reader or no way to change them. A turned-off Inbox
+// keeps every item off, which is how Inbox is turned off now.
+const dropUnusedSettings: Migration = (db) =>
+  db.exec(`
+    DELETE FROM settings WHERE key IN ('quality', 'releaseTypes', 'queueCleaner');
+    UPDATE settings SET value = json_remove(value,
+        '$.lastfm.discoveryPeriod',
+        '$.ticketmaster.localDiscoveryIncludeRecommendations',
+        '$.ticketmaster.localDiscoveryIncludeTrending',
+        '$.metadata.provider',
+        '$.metadata.userAgentSuffix',
+        '$.metadata.enableNarrowFallbacks')
+      WHERE key = 'integrations' AND json_valid(value);
+    UPDATE settings SET value = json_set(value,
+        '$.releases', json('false'), '$.shows', json('false'), '$.news', json('false'),
+        '$.recommendedNews', json('false'), '$.discoveries', json('false'))
+      WHERE key = 'inbox' AND json_valid(value) AND json_type(value, '$.enabled') = 'false';
+    UPDATE settings SET value = json_remove(value, '$.enabled')
+      WHERE key = 'inbox' AND json_valid(value);
+  `);
+
+// Gotify is a webhook to its /message endpoint. Its token is stored encrypted
+// the same way webhook header values are, so it moves over as it is.
+const moveGotifyToWebhook: Migration = (db) => {
+  const row = db
+    .prepare<[], string>("SELECT value FROM settings WHERE key = 'integrations'")
+    .pluck()
+    .get();
+  let integrations: unknown;
+  try {
+    integrations = JSON.parse(row ?? "");
+  } catch {
+    return;
+  }
+  if (!isRecord(integrations) || !("gotify" in integrations)) return;
+  const { gotify, ...rest } = integrations;
+  const url = isRecord(gotify) && typeof gotify.url === "string" ? gotify.url.trim() : "";
+  const token = isRecord(gotify) && typeof gotify.token === "string" ? gotify.token.trim() : "";
+  const webhooks = Array.isArray(rest.webhooks) ? rest.webhooks : [];
+  if (isRecord(gotify) && url && token) {
+    webhooks.push({
+      url: `${url.replace(/\/+$/, "")}/message`,
+      headers: [{ key: "X-Gotify-Key", value: token }],
+      body: '{"title":"$title","message":"$message","priority":5}',
+      events: NOTIFICATION_EVENTS.filter((event) => gotify[event] === true),
+    });
+  }
+  db.prepare("UPDATE settings SET value = ? WHERE key = 'integrations'").run(
+    JSON.stringify({ ...rest, webhooks }),
+  );
+};
+
+const recordDownloadCauses: Migration = (db) => {
+  const hasColumn = db.prepare<[string]>(
+    "SELECT 1 FROM pragma_table_info('download_jobs') WHERE name = ?",
+  );
+  for (const column of ["cause", "cause_playlist_id"]) {
+    if (!hasColumn.get(column)) db.exec(`ALTER TABLE download_jobs ADD COLUMN ${column} TEXT`);
+  }
+};
+
 export const migrations: Migration[] = [
   createAurral3Schema,
   indexFinishedDownloadNames,
@@ -92,6 +231,12 @@ export const migrations: Migration[] = [
   storeListenbrainzArtistTags,
   indexPlaysByArtist,
   failUnreadableDownloadJobs,
+  clearMetadataFailureBackoff,
+  nameUsenetDownloadsBySource,
+  dropFixedSettings,
+  dropUnusedSettings,
+  moveGotifyToWebhook,
+  recordDownloadCauses,
 ];
 
 export function migrate(db: Database.Database, steps: readonly Migration[] = migrations) {

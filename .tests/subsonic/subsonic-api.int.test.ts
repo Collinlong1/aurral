@@ -1508,6 +1508,8 @@ test("exposes owned static playlists and keeps their entries playable", async ()
 
   const song = responseJson(await request("getSong", { id: playlist.entry[0].id })).song;
   assert.equal(song.title, "Flow Song");
+  assert.equal(song.parent, undefined);
+  assert.equal(song.albumId, undefined);
   const stream = await request("stream", { id: song.id });
   assert.equal(stream.response.status, 200);
   assert.equal(stream.body, "0123456789");
@@ -1521,7 +1523,6 @@ test("returns library song ids for playlist entries that exist in the library", 
   ).playlist;
   assert.equal(playlist.entry.length, 1);
   assert.match(requireFixture(playlist.entry[0]).id, /^song:/);
-  assert.equal(playlist.entry[0]?.parent, playlist.id);
   assert.equal(playlist.entry[0]?.title, "Canonical Song");
   assert.equal(playlist.entry[0]?.musicBrainzId, "33333333-3333-4333-8333-333333333333");
   const artistId = requireFixture(
@@ -1534,6 +1535,7 @@ test("returns library song ids for playlist entries that exist in the library", 
     responseJson(await request("getAlbum", { id: album.id })).album.song[0],
   );
   assert.equal(playlist.entry[0]?.id, librarySong.id);
+  assert.equal(playlist.entry[0]?.parent, librarySong.parent);
   const stream = await request("stream", { id: playlist.entry[0].id });
   assert.equal(stream.response.status, 200);
 });
@@ -1787,36 +1789,7 @@ test("createPlaylist replaces songs in order and supports an empty replacement",
   assert.equal(responseJson(await request("deletePlaylist", { id: created.id })).status, "ok");
 });
 
-test("malformed Subsonic settings do not crash the settings update", async () => {
-  const initialFavoriteAutoKeep = dbOps.getSettings().subsonic.favoriteAutoKeep;
-  try {
-    const disable = await apiFetch("/api/settings", {
-      method: "POST",
-      body: JSON.stringify({ subsonic: { favoriteAutoKeep: false } }),
-    });
-    assert.equal(disable.status, 200);
-    assert.equal((await (await apiFetch("/api/settings")).json()).subsonic.favoriteAutoKeep, false);
-    const response = await apiFetch("/api/settings", {
-      method: "POST",
-      body: JSON.stringify({ subsonic: null }),
-    });
-    assert.equal(response.status, 200);
-    assert.equal((await (await apiFetch("/api/settings")).json()).subsonic.favoriteAutoKeep, false);
-    const partial = await apiFetch("/api/settings", {
-      method: "POST",
-      body: JSON.stringify({ subsonic: {} }),
-    });
-    assert.equal(partial.status, 200);
-    assert.equal((await (await apiFetch("/api/settings")).json()).subsonic.favoriteAutoKeep, false);
-  } finally {
-    await apiFetch("/api/settings", {
-      method: "POST",
-      body: JSON.stringify({ subsonic: { favoriteAutoKeep: initialFavoriteAutoKeep } }),
-    });
-  }
-});
-
-test("favorites can keep Flow tracks and respect the auto-keep setting", async () => {
+test("favoriting a Flow track keeps it in the Library", async () => {
   const flow = responseJson(await request("getPlaylists")).playlists.playlist.find(
     (entry) => entry.name === "Favorite Toggle Flow",
   );
@@ -1825,46 +1798,18 @@ test("favorites can keep Flow tracks and respect the auto-keep setting", async (
     responseJson(await request("getPlaylist", { id: flow.id })).playlist.entry[0],
   );
 
-  const saveSettings = (subsonic: { favoriteAutoKeep: boolean }) =>
-    apiFetch("/api/settings", {
-      method: "POST",
-      body: JSON.stringify({ subsonic }),
-    });
-  assert.equal((await saveSettings({ favoriteAutoKeep: false })).status, 200);
   assert.equal(responseJson(await request("star", { id: entry.id })).status, "ok");
-  assert.equal(
-    Boolean(
-      db
-        .prepare<unknown[], { "1": unknown }>(
-          "SELECT 1 FROM download_jobs WHERE owner_type = ? AND track_name = ? LIMIT 1",
-        )
-        .get("library", "Favorite Song"),
-    ),
-    false,
-  );
   const starredEntry = requireFixture(responseJson(await request("getStarred")).starred.song[0]);
   assert.equal(starredEntry.id, entry.id);
-  assert.ok(starredEntry.starred != null);
-  assert.match(starredEntry.starred, /^\d{4}-\d{2}-\d{2}T/);
-  assert.ok(flow != null);
-  assert.match(
-    requireFixture(responseJson(await request("getPlaylist", { id: flow.id })).playlist.entry[0])
-      .starred,
-    /^\d{4}-\d{2}-\d{2}T/,
-  );
-  assert.equal((await saveSettings({ favoriteAutoKeep: true })).status, 200);
-  assert.equal(responseJson(await request("unstar", { id: entry.id })).status, "ok");
-  assert.equal(responseJson(await request("star", { id: entry.id })).status, "ok");
+  assert.match(String(starredEntry.starred), /^\d{4}-\d{2}-\d{2}T/);
   const autoKeepJob = db
     .prepare<unknown[], { id: import("../../backend/db/rows.ts").DownloadJobsRow["id"] }>(
       "SELECT id FROM download_jobs WHERE owner_type = ? AND track_name = ? LIMIT 1",
     )
     .get("library", "Favorite Song");
-  assert.ok(autoKeepJob);
-  assert.ok(autoKeepJob.id != null);
+  assert.ok(autoKeepJob?.id != null);
   downloadTracker.removeJob(autoKeepJob.id);
   assert.equal(responseJson(await request("unstar", { id: entry.id })).status, "ok");
-  assert.ok(flow != null);
   assert.equal(
     requireFixture(responseJson(await request("getPlaylist", { id: flow.id })).playlist.entry[0])
       .starred,
@@ -1953,7 +1898,7 @@ test("playlist favorites resolve to the owned library track", async () => {
   }
 });
 
-test("library song responses agree on the earliest star date", async () => {
+test("library song responses agree on the earliest star date and order by it", async () => {
   const user = userOps.getUserByUsername("alice");
   assert.ok(user != null);
   const playlistSongKey = `${libraryFavoritePlaylist.id}:${libraryFavoriteJobId}`;
@@ -1961,17 +1906,45 @@ test("library song responses agree on the earliest star date", async () => {
     responseJson(await request("search3", { query: "Canonical Song" })).searchResult3.song[0],
   );
   const songKey = decodeURIComponent(song.id.slice("song:".length));
+  const flow = requireFixture(
+    responseJson(await request("getPlaylists")).playlists.playlist.find(
+      (entry: { name: string }) => entry.name === "Favorite Toggle Flow",
+    ),
+  );
+  const between = requireFixture(
+    responseJson(await request("getPlaylist", { id: flow.id })).playlist.entry[0],
+  );
+  const separator = between.id.indexOf(":");
+  const betweenKind = between.id.slice(0, separator);
+  const betweenKey = decodeURIComponent(between.id.slice(separator + 1));
+  const betweenStar = db.prepare<[number, string, string], { created_at: number }>(
+    "SELECT created_at FROM subsonic_stars WHERE user_id = ? AND entity_kind = ? AND entity_key = ?",
+  );
+  const betweenStarredAt = betweenStar.get(user.id, betweenKind, betweenKey)?.created_at;
   const insertStar = db.prepare(
     "INSERT INTO subsonic_stars (user_id, entity_kind, entity_key, created_at) VALUES (?, ?, ?, ?)",
   );
   try {
     insertStar.run(user.id, "song", songKey, 1000);
+    db.prepare(
+      "INSERT INTO subsonic_stars (user_id, entity_kind, entity_key, created_at) VALUES (?, ?, ?, 1500) ON CONFLICT DO UPDATE SET created_at = 1500",
+    ).run(user.id, betweenKind, betweenKey);
     insertStar.run(user.id, "shared-song", playlistSongKey, 2000);
-    const starred = requireFixture(responseJson(await request("getStarred")).starred.song[0]);
+    const songs: { id: string; starred: string }[] = responseJson(await request("getStarred"))
+      .starred.song;
+    const starred = requireFixture(songs.find((entry) => entry.id === song.id));
     const direct = responseJson(await request("getSong", { id: song.id })).song;
     assert.equal(starred.starred, new Date(1000).toISOString());
     assert.equal(direct.starred, starred.starred);
+    const position = (id: string) => songs.findIndex((entry) => entry.id === id);
+    assert.ok(position(between.id) < position(song.id));
   } finally {
+    db.prepare(
+      "DELETE FROM subsonic_stars WHERE user_id = ? AND entity_kind = ? AND entity_key = ?",
+    ).run(user.id, betweenKind, betweenKey);
+    if (betweenStarredAt !== undefined) {
+      insertStar.run(user.id, betweenKind, betweenKey, betweenStarredAt);
+    }
     db.prepare(
       "DELETE FROM subsonic_stars WHERE user_id = ? AND entity_kind = ? AND entity_key = ?",
     ).run(user.id, "song", songKey);

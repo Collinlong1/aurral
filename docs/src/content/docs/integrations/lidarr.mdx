@@ -10,6 +10,8 @@ Aurral runs the Library by itself, and Lidarr is optional. You can use the two t
 
 Aurral has no Lidarr settings of its own. It never moves, renames, tags, upgrades, or deletes a file in a Lidarr folder.
 
+Aurral keeps getting music simple and makes most choices for you. If you want control over quality profiles, release selection, and every other detail, Lidarr is the better tool, and the plugin lets Aurral hand downloads to it.
+
 ## Play Lidarr's music
 
 Add each Lidarr root folder as a read-only folder in **Settings > Library**. See [Add music Aurral only reads](/using/library/#add-music-aurral-only-reads).
@@ -37,7 +39,7 @@ New artists go to Lidarr's first root folder. To use another one, fill in **Root
 
 Aurral finds a finished album by its MusicBrainz tags, or by artist and album name when Lidarr didn't tag it. If it can't find the album, the download fails and Aurral tries your next source. Turning on Lidarr's tags avoids this. See [Tag Lidarr's files](#tag-lidarrs-files).
 
-Lidarr joins your other download sources, and Aurral tries lower priorities first. The plugin starts at `30`, after slskd, deemix, Usenet, and Tidarr. To have Lidarr get your albums first, set its **Priority** lower than theirs, such as `5`. See [Download source priority and fallback](/integrations/usenet/#download-source-priority-and-fallback).
+Lidarr joins your other download sources in **Settings > Downloads > Download clients**. It starts after slskd, deemix, Usenet, and Tidarr. To have Lidarr get your albums first, drag it to the top. See [Download source priority and fallback](/integrations/usenet/#download-source-priority-and-fallback).
 
 Quality profiles, metadata profiles, and upgrades stay in Lidarr. The plugin's page covers its other settings. See [Plugins](/admin/plugins/).
 

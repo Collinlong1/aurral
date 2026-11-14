@@ -2,6 +2,7 @@ import { test, beforeEach, afterAll } from "vite-plus/test";
 import assert from "node:assert/strict";
 import type { hc, InferResponseType } from "hono/client";
 import type discoveryApp from "../../backend/routes/discovery/index.ts";
+import { testClient } from "hono/testing";
 import { signedInAs } from "../helpers/honoApp.ts";
 import { testUser } from "../helpers/userFixtures.ts";
 import {
@@ -133,4 +134,30 @@ test("served picks say whether they came through another pick and when they were
     ),
     { Direct: [1, "2026-10-01T00:00:00.000Z"], Bridged: [2, null] },
   );
+});
+
+test("discovery for the API key, which has no user account, queues no listening history refresh", () => {
+  const refreshJobs = () =>
+    db
+      .prepare<[], { queue: string }>(
+        "SELECT queue FROM jobs WHERE queue = 'discovery-user-refresh'",
+      )
+      .all();
+  getUserDiscovery(8, 0);
+  assert.equal(refreshJobs().length, 1);
+  db.prepare("DELETE FROM jobs").run();
+  getUserDiscovery(-1, 0);
+  assert.deepEqual(refreshJobs(), []);
+});
+
+test("each user keeps their own discovery mode", async () => {
+  const preferencesOf = (id: number) =>
+    testClient(signedInAs(testUser(id)).route("/", api)).discover.preferences;
+
+  const saved = await preferencesOf(1).$post({ json: { discoveryMode: "deeper" } });
+  assert.equal(saved.status, 200);
+
+  assert.deepEqual(await (await preferencesOf(1).$get()).json(), { discoveryMode: "deeper" });
+  assert.equal((await (await preferencesOf(2).$get()).json()).discoveryMode, "balanced");
+  assert.equal(discovery.getDiscoveryMode(1), "deeper");
 });

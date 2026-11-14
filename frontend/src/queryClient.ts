@@ -180,7 +180,13 @@ export const queryKeys = {
   artistCover: (mbid: MaybeText): QueryKey => ["artists", "cover", mbid || null],
   releaseGroupDetails: (id: MaybeText): QueryKey => ["artists", "release-group", id],
   releaseTrackCredits: (id: MaybeText): QueryKey => ["artists", "release-track-credits", id],
-  releaseGroupTracks: (id: MaybeText): QueryKey => ["artists", "release-group-tracks", id],
+  releaseGroupTracks: (id: MaybeText, release: MaybeText = null): QueryKey => [
+    "artists",
+    "release-group-tracks",
+    id,
+    release || null,
+  ],
+  releaseGroupEditions: (id: MaybeText): QueryKey => ["artists", "release-group-editions", id],
   releaseGroupPreviews: (id: MaybeText, hints: unknown): QueryKey => [
     "artists",
     "release-group-previews",
@@ -258,6 +264,7 @@ export const queryKeys = {
   logs: (filters: Record<string, string>): QueryKey => ["settings", "logs", "lines", filters],
   prowlarrIndexers: ["settings", "prowlarr-indexers"],
   tasteFeedback: (userId: MaybeId): QueryKey => ["discovery", "feedback", userId],
+  discoveryPreferences: (userId: MaybeId): QueryKey => ["discovery", "preferences", userId],
   blockedTags: (userId: MaybeId): QueryKey => ["discovery", "blocked-tags", userId],
   spotifyHistory: (userId: MaybeId): QueryKey => ["discovery", "spotify-history", userId],
   scrobbleStatus: ["scrobbling", "status"],
@@ -269,6 +276,7 @@ export const queryKeys = {
   pluginActions: (userId: MaybeId): QueryKey => ["plugins", "actions", userId || null],
   apiKey: ["auth", "api-key"],
   myApiKey: (userId: MaybeId): QueryKey => ["users", "me", "api-key", userId || null],
+  myPlaylistOrder: (userId: MaybeId): QueryKey => ["users", "me", "playlist-order", userId || null],
   myIdentities: (userId: MaybeId): QueryKey => ["auth", "identities", userId || null],
   manualMissingSearchSources: (jobId: MaybeId, mode: string, playlistId: MaybeId): QueryKey => [
     "playlists",

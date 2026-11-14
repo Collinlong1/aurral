@@ -1,8 +1,9 @@
 export {
-  getDiscoveryAutoRefreshHours,
+  DISCOVERY_REFRESH_MS,
+  DISCOVERY_MODES,
   getDiscoveryMode,
-  getLocalDiscoveryPreferences,
-  getDiscoveryRecommendationsPerRefresh,
+  setDiscoveryMode,
+  DISCOVERY_RECOMMENDATIONS_PER_REFRESH,
   getDiscoveryRecommendationPoolLimit,
   DISCOVERY_QUALITY_INITIAL,
   DISCOVERY_QUALITY_ENRICHING,

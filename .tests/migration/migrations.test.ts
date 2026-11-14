@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import Database from "better-sqlite3";
+import { randomBytes } from "node:crypto";
 import { test } from "vite-plus/test";
 import { migrate, migrations } from "../../backend/config/migrations.ts";
+import { decryptIntegrations, encryptWithKey } from "../../backend/config/encryption.ts";
 
 const version = (db: Database.Database) => db.pragma("user_version", { simple: true });
 
@@ -109,7 +111,7 @@ test("upgrading drops what only Lidarr mode read and keeps the rest", () => {
 test("upgrading fails finished downloads without a file and statuses Aurral does not read", () => {
   const db = new Database(":memory:");
   db.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
-  migrate(db, migrations.slice(0, -1));
+  migrate(db, migrations.slice(0, 6));
   const insert = db.prepare<[string, string, string | null]>(
     `INSERT INTO download_jobs (id, artist_name, track_name, owner_id, status, final_path, created_at)
      VALUES (?, 'Artist', 'Song', 'library', ?, ?, 1)`,
@@ -129,4 +131,200 @@ test("upgrading fails finished downloads without a file and statuses Aurral does
     { id: "pending", status: "pending" },
     { id: "unknown", status: "failed" },
   ]);
+});
+
+test("upgrading lets albums that failed to load try again, and keeps rate-limit waits", () => {
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+  migrate(db, migrations.slice(0, 7));
+  const insert = db.prepare<[string, number, number]>(
+    "INSERT INTO metadata_request_state (cache_key, failure_count, retry_after, updated_at) VALUES (?, ?, ?, 1000)",
+  );
+  const day = 24 * 60 * 60 * 1000;
+  insert.run("failed", 3, 1000 + day);
+  insert.run("rate-limited", 0, 1000 + 7 * day);
+  insert.run("rate-limited-after-failing", 1, 1000 + day / 2);
+
+  migrate(db);
+
+  assert.deepEqual(
+    db.prepare("SELECT cache_key FROM metadata_request_state ORDER BY cache_key").pluck().all(),
+    ["rate-limited", "rate-limited-after-failing"],
+  );
+});
+
+test("upgrading names a Usenet job's download by its client and its turned-down releases by album", () => {
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+  migrate(db, migrations.slice(0, 8));
+  const insert = db.prepare<[string, string, string, string | null, string | null]>(
+    `INSERT INTO download_jobs (id, artist_name, track_name, owner_id, status, download_source,
+       download_client, download_client_id, denied_remote_sources, created_at)
+     VALUES (?, 'Artist', 'Song', 'library', 'downloading', ?, ?, ?, ?, 1)`,
+  );
+  insert.run("nzbget", "usenet", "nzbget", "42", JSON.stringify([["usenet", "Guid-A"]]));
+  insert.run(
+    "tidarr",
+    "tidarr",
+    "tidarr",
+    "SABnzbd_nzo_1",
+    JSON.stringify([
+      ["tidarr", "123-lossless"],
+      ["slskd", "user\0file"],
+    ]),
+  );
+  insert.run("qbittorrent", "qbittorrent", "qbittorrent", "aurral-tag", null);
+
+  migrate(db);
+
+  assert.deepEqual(
+    db
+      .prepare(
+        "SELECT id, download_client, download_client_id, denied_remote_sources FROM download_jobs ORDER BY id",
+      )
+      .all(),
+    [
+      {
+        id: "nzbget",
+        download_client: "usenet",
+        download_client_id: "nzbget:42",
+        denied_remote_sources: JSON.stringify([["usenet", "album:guid-a"]]),
+      },
+      {
+        id: "qbittorrent",
+        download_client: "qbittorrent",
+        download_client_id: "aurral-tag",
+        denied_remote_sources: null,
+      },
+      {
+        id: "tidarr",
+        download_client: "tidarr",
+        download_client_id: "tidarr:SABnzbd_nzo_1",
+        denied_remote_sources: JSON.stringify([
+          ["tidarr", "album:tidarr:123"],
+          ["slskd", "user\0file"],
+        ]),
+      },
+    ],
+  );
+});
+
+test("upgrading drops settings that became fixed and keeps each user's discovery mode", () => {
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+  migrate(db, migrations.slice(0, 9));
+  db.exec(`
+    INSERT INTO users (id, username, password_hash) VALUES (1, 'test', ''), (2, 'listener', '');
+  `);
+  const setting = (key: string, value: unknown) =>
+    db
+      .prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)")
+      .run(key, JSON.stringify(value));
+  setting("integrations", {
+    lastfm: { apiKey: "key", discoveryMode: "deeper", discoveryAutoRefreshHours: 24 },
+    nzbget: { url: "http://nzbget.test", addPaused: true, deleteLeftovers: false },
+    prowlarr: { url: "http://prowlarr.test", categories: [3010], maxResults: 10 },
+  });
+  setting("security", { ssoOnly: true, localNetworkBypass: { enabled: true } });
+  setting("missingTrackSearch", { enabled: false, intervalDays: 3 });
+  setting("reviewTimeoutHours", 0);
+  setting("subsonic", { favoriteAutoKeep: false });
+  setting("playlistFiles", { prefixOwnerUsername: false });
+
+  migrate(db);
+
+  const read = (key: string): unknown =>
+    JSON.parse(
+      db.prepare<[string], string>("SELECT value FROM settings WHERE key = ?").pluck().get(key) ??
+        "null",
+    );
+  assert.deepEqual(read("integrations"), {
+    lastfm: { apiKey: "key" },
+    nzbget: { url: "http://nzbget.test" },
+    prowlarr: { url: "http://prowlarr.test" },
+  });
+  assert.deepEqual(read("security"), { localNetworkBypass: { enabled: true } });
+  assert.equal(read("user:1:discoveryMode"), "deeper");
+  assert.equal(read("user:2:discoveryMode"), "deeper");
+  for (const key of ["missingTrackSearch", "reviewTimeoutHours", "subsonic", "playlistFiles"]) {
+    assert.equal(read(key), null, key);
+  }
+});
+
+test("upgrading drops settings nothing reads and keeps a turned-off Inbox off", () => {
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+  migrate(db, migrations.slice(0, 10));
+  const insert = db.prepare<[string, string]>("INSERT INTO settings (key, value) VALUES (?, ?)");
+  insert.run("quality", "standard");
+  insert.run("releaseTypes", JSON.stringify(["Album"]));
+  insert.run("queueCleaner", "{}");
+  insert.run(
+    "integrations",
+    JSON.stringify({
+      lastfm: { apiKey: "key", discoveryPeriod: "none" },
+      ticketmaster: { apiKey: "key", localDiscoveryIncludeTrending: false },
+      metadata: { provider: "brainzmash", baseUrl: "https://meta.example", userAgentSuffix: "x" },
+    }),
+  );
+  insert.run("inbox", JSON.stringify({ enabled: false, releases: true, news: true }));
+
+  migrate(db);
+
+  const setting = (key: string) =>
+    db.prepare<[string], string>("SELECT value FROM settings WHERE key = ?").pluck().get(key);
+  for (const key of ["quality", "releaseTypes", "queueCleaner"]) {
+    assert.equal(setting(key), undefined);
+  }
+  assert.deepEqual(JSON.parse(setting("integrations") ?? ""), {
+    lastfm: { apiKey: "key" },
+    ticketmaster: { apiKey: "key" },
+    metadata: { baseUrl: "https://meta.example" },
+  });
+  assert.deepEqual(JSON.parse(setting("inbox") ?? ""), {
+    releases: false,
+    news: false,
+    shows: false,
+    recommendedNews: false,
+    discoveries: false,
+  });
+});
+
+test("upgrading turns a Gotify setup into a webhook that still reads its token", () => {
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+  migrate(db, migrations.slice(0, 11));
+  const key = randomBytes(32);
+  const hook = { url: "http://ntfy.test", headers: [], events: ["notifyFlowDone"] };
+  db.prepare("INSERT INTO settings (key, value) VALUES ('integrations', ?)").run(
+    JSON.stringify({
+      gotify: {
+        url: "http://gotify.test/ ",
+        token: encryptWithKey("gotify-token", key),
+        notifyRequestMade: true,
+        notifyFlowDone: false,
+        notifyTrackAdded: true,
+      },
+      webhooks: [hook],
+    }),
+  );
+
+  migrate(db);
+
+  const stored = db
+    .prepare<[], string>("SELECT value FROM settings WHERE key = 'integrations'")
+    .pluck()
+    .get();
+  assert.doesNotMatch(stored ?? "", /gotify-token/);
+  assert.deepEqual(decryptIntegrations(JSON.parse(stored ?? ""), key), {
+    webhooks: [
+      hook,
+      {
+        url: "http://gotify.test/message",
+        headers: [{ key: "X-Gotify-Key", value: "gotify-token" }],
+        body: '{"title":"$title","message":"$message","priority":5}',
+        events: ["notifyRequestMade", "notifyTrackAdded"],
+      },
+    ],
+  });
 });

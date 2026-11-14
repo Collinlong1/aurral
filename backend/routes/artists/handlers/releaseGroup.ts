@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import * as v from "valibot";
 import { UUID_REGEX } from "../../../../lib/uuid.ts";
 import { dbOps } from "../../../db/helpers/index.ts";
@@ -6,12 +6,17 @@ import { cacheFor, noCache } from "../../../middleware/cacheHeaders.ts";
 import { requireStreamAuth } from "../../../middleware/guards.ts";
 import type { AppEnv } from "../../../middleware/requestUser.ts";
 import { validate } from "../../../middleware/validate.ts";
-import { fetchReleaseGroupCoverUrl } from "../../../services/releaseGroupCoverService.ts";
+import {
+  fetchReleaseGroupCoverUrl,
+  savedReleaseGroupCoverUrl,
+} from "../../../services/releaseGroupCoverService.ts";
+import { selectAlbumCover } from "../../../services/imageRanking.ts";
 import { enrichTracksWithDeezerPreviews } from "../../../services/apiClients/index.ts";
 import {
   getArtistByMbid,
   getAlbumByMbid,
   getAlbumTracksByAlbumMbid,
+  getMetadataCooldownMs,
   isMetadataNotFoundError,
 } from "../../../services/providers/brainzmashProvider.ts";
 import {
@@ -19,7 +24,12 @@ import {
   toLegacyReleaseGroupSummary,
 } from "../../../services/providers/brainzmashMappers.ts";
 import { logger } from "../../../services/logger.ts";
-import { chooseLibraryRelease } from "../../../services/releaseResolver.ts";
+import {
+  albumEditions,
+  chooseAlbumEdition,
+  editionOf,
+  libraryRelease,
+} from "../../../services/releaseResolver.ts";
 import { asAppError } from "../../../../lib/errors.ts";
 import { queryText } from "../utils.ts";
 import { musicbrainzGetReleaseTrackCredits } from "../../../services/apiClients/musicbrainz.ts";
@@ -34,10 +44,37 @@ const coverQuery = v.object({
   albumTitle: queryText,
 });
 
+const editionQuery = v.object({ release: queryText });
+
 const previewsQuery = v.object({
   artistMbid: queryText,
   deezerAlbumId: queryText,
+  release: queryText,
 });
+
+const waitText = (ms: number) => {
+  const minutes = Math.ceil(ms / 60_000);
+  if (minutes <= 1) return "a minute";
+  if (minutes < 90) return `${minutes} minutes`;
+  const hours = Math.round(minutes / 60);
+  return hours < 48 ? `${hours} hours` : `${Math.round(hours / 24)} days`;
+};
+
+const metadataUnavailable = <E extends AppEnv>(c: Context<E>, error: unknown) => {
+  c.header("Cache-Control", "no-store");
+  const cooldownMs = getMetadataCooldownMs(error);
+  if (cooldownMs === null) {
+    return c.json({ error: "Metadata unavailable", message: asAppError(error)?.message }, 502);
+  }
+  c.header("Retry-After", String(Math.ceil(cooldownMs / 1000)));
+  return c.json(
+    {
+      error: "Metadata unavailable",
+      message: `Couldn’t reach the metadata service. Try again in ${waitText(cooldownMs)}.`,
+    },
+    503,
+  );
+};
 
 export default new Hono<AppEnv>()
   .basePath("/artists")
@@ -89,8 +126,7 @@ export default new Hono<AppEnv>()
           ...toLegacyReleaseGroupSummary(album, primaryArtist),
           genres: Array.isArray(album?.genres) ? album.genres : [],
           overview: album?.overview || "",
-          coverUrl:
-            Array.isArray(album?.images) && album.images[0]?.url ? album.images[0].url : null,
+          coverUrl: savedReleaseGroupCoverUrl(mbid) || selectAlbumCover(album.images)?.url || null,
         },
         200,
       );
@@ -102,9 +138,8 @@ export default new Hono<AppEnv>()
       if (isMetadataNotFoundError(error)) {
         return c.json({ error: "Release not found", message: failure?.message }, 404);
       }
-      c.header("Cache-Control", "no-store");
       c.header("Expires", "0");
-      return c.json({ error: "Metadata unavailable", message: failure?.message }, 502);
+      return metadataUnavailable(c, error);
     }
   })
   .get("/release-group/:mbid/cover", validate("query", coverQuery), async (c) => {
@@ -168,11 +203,44 @@ export default new Hono<AppEnv>()
     c.header("Cache-Control", credits.size ? "private, max-age=86400" : "no-store");
     return c.json({ credits: Object.fromEntries(credits) }, 200);
   })
-  .get("/release-group/:mbid/tracks", noCache, async (c) => {
+  .get("/release-group/:mbid/editions", noCache, async (c) => {
     const mbid = c.req.param("mbid");
     if (!UUID_REGEX.test(mbid)) return c.json({ error: "Invalid MBID format" }, 400);
     try {
-      const tracks = await getAlbumTracksByAlbumMbid(mbid, { chooseRelease: chooseLibraryRelease });
+      const group = await getAlbumByMbid(mbid);
+      const editions = albumEditions(group);
+      return c.json(
+        {
+          editions: editions.map(({ id, name, date, trackCount }) => ({
+            id,
+            name,
+            date,
+            trackCount,
+          })),
+          library: editionOf(editions, libraryRelease(group))?.id ?? null,
+        },
+        200,
+      );
+    } catch (error) {
+      const failure = asAppError(error);
+      if (isMetadataNotFoundError(error)) {
+        return c.json({ error: "Release not found", message: failure?.message }, 404);
+      }
+      logger.info("releaseGroup", "Album editions unavailable", {
+        mbid,
+        message: failure?.message,
+      });
+      return metadataUnavailable(c, error);
+    }
+  })
+  .get("/release-group/:mbid/tracks", noCache, validate("query", editionQuery), async (c) => {
+    const mbid = c.req.param("mbid");
+    if (!UUID_REGEX.test(mbid)) return c.json({ error: "Invalid MBID format" }, 400);
+    const { release } = c.req.valid("query");
+    try {
+      const tracks = await getAlbumTracksByAlbumMbid(mbid, {
+        chooseRelease: (group) => chooseAlbumEdition(group, release),
+      });
       return c.json(
         tracks.map((track) => ({
           id: track.recordingId || track.id,
@@ -207,7 +275,9 @@ export default new Hono<AppEnv>()
     try {
       const [album, tracks] = await Promise.all([
         getAlbumByMbid(mbid),
-        getAlbumTracksByAlbumMbid(mbid, { chooseRelease: chooseLibraryRelease }),
+        getAlbumTracksByAlbumMbid(mbid, {
+          chooseRelease: (group) => chooseAlbumEdition(group, query.release),
+        }),
       ]);
       const artistMbid = UUID_REGEX.test(query.artistMbid)
         ? query.artistMbid
@@ -227,7 +297,7 @@ export default new Hono<AppEnv>()
         albumTitle: album.title,
         releaseType: album.type,
         releaseDate: album.releaseDate || "",
-        cacheKey: `release-group:${mbid}:${query.deezerAlbumId || deezerArtistId || artistName}`,
+        cacheKey: `release-group:${mbid}:${query.release ? `${query.release}:` : ""}${query.deezerAlbumId || deezerArtistId || artistName}`,
       });
       for (const track of previewed) {
         if (!track.preview_url) continue;

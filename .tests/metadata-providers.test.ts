@@ -53,7 +53,6 @@ afterAll(async () => {
 const OFFLINE_CHILD_ARGS = ["--import", new URL("./setup-env.ts", import.meta.url).href];
 
 test("default settings and unset backend config use BrainzMash metadata", async () => {
-  assert.equal(defaultData.settings.integrations.metadata.provider, "brainzmash");
   assert.equal(defaultData.settings.integrations.metadata.baseUrl, "");
   assert.equal(brainzmashProvider.getMetadataBaseUrl(), DEFAULT_METADATA_BASE_URL);
 
@@ -71,25 +70,28 @@ test("default settings and unset backend config use BrainzMash metadata", async 
   vi.unstubAllEnvs();
 });
 
-test("entity request failures back off for one hour, six hours, then one day", () => {
+test("entity request failures back off for one minute, ten minutes, then one hour", () => {
   const key = "backoff:test";
-  const hour = 60 * 60 * 1000;
+  const minute = 60 * 1000;
   let now = 1_000_000;
   clearMetadataRequestStates();
 
   const first = acquireMetadataRequest(key, 120_000, now);
   assert.equal(first.acquired, true);
-  assert.equal(failMetadataRequest(key, first.acquired ? first.token : "", now), now + hour);
+  assert.equal(failMetadataRequest(key, first.acquired ? first.token : "", now), now + minute);
 
-  now += hour;
+  now += minute;
   const second = acquireMetadataRequest(key, 120_000, now);
   assert.equal(second.acquired, true);
-  assert.equal(failMetadataRequest(key, second.acquired ? second.token : "", now), now + 6 * hour);
+  assert.equal(
+    failMetadataRequest(key, second.acquired ? second.token : "", now),
+    now + 10 * minute,
+  );
 
-  now += 6 * hour;
+  now += 10 * minute;
   const third = acquireMetadataRequest(key, 120_000, now);
   assert.equal(third.acquired, true);
-  assert.equal(failMetadataRequest(key, third.acquired ? third.token : "", now), now + 24 * hour);
+  assert.equal(failMetadataRequest(key, third.acquired ? third.token : "", now), now + 60 * minute);
   clearMetadataRequestStates();
 });
 
@@ -101,7 +103,7 @@ test("an abandoned entity request enters cooldown when its lease expires", () =>
 
   const recovered = acquireMetadataRequest(key, 1_000, now + 1_001);
   assert.equal(recovered.acquired, false);
-  assert.equal(recovered.retryAfter, now + 1_001 + 60 * 60 * 1000);
+  assert.equal(recovered.retryAfter, now + 1_001 + 60 * 1000);
   clearMetadataRequestStates();
 });
 
@@ -139,9 +141,7 @@ test("stale album metadata is served while one refresh runs in the background", 
         ...(previousSettings.integrations || {}),
         metadata: {
           ...(previousSettings.integrations?.metadata || {}),
-          provider: "brainzmash",
           baseUrl: server.url,
-          enableNarrowFallbacks: false,
         },
       },
     });
@@ -188,9 +188,7 @@ test("BrainzMash data Aurral can't read is never served, from the provider or th
         ...(previousSettings.integrations || {}),
         metadata: {
           ...(previousSettings.integrations?.metadata || {}),
-          provider: "brainzmash",
           baseUrl: server.url,
-          enableNarrowFallbacks: false,
         },
       },
     });
@@ -231,9 +229,7 @@ test("cached artist lookups read only what Aurral already stored", async () => {
         ...(previousSettings.integrations || {}),
         metadata: {
           ...(previousSettings.integrations?.metadata || {}),
-          provider: "brainzmash",
           baseUrl: server.url,
-          enableNarrowFallbacks: false,
         },
       },
     });
@@ -272,9 +268,7 @@ test("entity metadata is shared with other processes until the cache is cleared"
         ...(previousSettings.integrations || {}),
         metadata: {
           ...(previousSettings.integrations?.metadata || {}),
-          provider: "brainzmash",
           baseUrl: server.url,
-          enableNarrowFallbacks: false,
         },
       },
     });
@@ -328,9 +322,7 @@ test("metadata past its stale window is removed from storage", async () => {
         ...(previousSettings.integrations || {}),
         metadata: {
           ...(previousSettings.integrations?.metadata || {}),
-          provider: "brainzmash",
           baseUrl: server.url,
-          enableNarrowFallbacks: false,
         },
       },
     });
@@ -405,9 +397,7 @@ test("artist album refreshes can bypass the long-lived metadata cache", async ()
         ...(previousSettings.integrations || {}),
         metadata: {
           ...(previousSettings.integrations?.metadata || {}),
-          provider: "brainzmash",
           baseUrl: server.url,
-          enableNarrowFallbacks: false,
         },
       },
     });
@@ -424,6 +414,70 @@ test("artist album refreshes can bypass the long-lived metadata cache", async ()
     assert.equal(cached[0]?.title, "Cached Release");
     assert.equal(refreshed[0]?.title, "Current Release");
     assert.equal(requests, 2);
+  } finally {
+    clearMetadataProviderCaches();
+    dbOps.updateSettings(previousSettings);
+    await server.close();
+  }
+});
+
+test("an artist's album list refreshes a cached album only while it is not out yet", async () => {
+  const previousSettings = dbOps.getSettings();
+  const fetched: string[] = [];
+  let upcomingRefreshed!: () => void;
+  const upcomingRefresh = new Promise<void>((resolve) => {
+    upcomingRefreshed = resolve;
+  });
+  const releaseDates = { out: "2000-01-01", soon: "2999-01-01" };
+  const server = await createMockHttpServer((request, response) => {
+    const id = requireFixture(request.url).split("/").at(-1);
+    response.setHeader("content-type", "application/json");
+    if (request.url?.startsWith("/artist/")) {
+      response.end(
+        JSON.stringify({
+          id,
+          artistname: "List Artist",
+          Albums: [
+            { Id: "out", Title: "Out", Type: "Album" },
+            { Id: "soon", Title: "Soon", Type: "Album" },
+          ],
+        }),
+      );
+      return;
+    }
+    fetched.push(String(id));
+    response.end(JSON.stringify({ id, title: id, releasedate: releaseDates.soon }));
+    upcomingRefreshed();
+  });
+
+  try {
+    dbOps.updateSettings({
+      ...previousSettings,
+      integrations: {
+        ...(previousSettings.integrations || {}),
+        metadata: {
+          ...(previousSettings.integrations?.metadata || {}),
+          baseUrl: server.url,
+        },
+      },
+    });
+    clearMetadataProviderCaches();
+    for (const [id, releasedate] of Object.entries(releaseDates)) {
+      await dbOps.setMetadataResponseAsync(`${server.url}/album/${id}:{}`, {
+        value: { id, title: id, releasedate },
+        freshUntil: Date.now() - 1000,
+        staleUntil: Date.now() + 60_000,
+      });
+    }
+
+    const albums = await listArtistAlbums("list-artist");
+    await upcomingRefresh;
+
+    assert.deepEqual(
+      albums.map((album) => album.firstReleaseDate),
+      Object.values(releaseDates),
+    );
+    assert.deepEqual(fetched, ["soon"]);
   } finally {
     clearMetadataProviderCaches();
     dbOps.updateSettings(previousSettings);
@@ -448,9 +502,7 @@ test("missing entity metadata is negatively cached for repeated lookups", async 
         ...(previousSettings.integrations || {}),
         metadata: {
           ...(previousSettings.integrations?.metadata || {}),
-          provider: "brainzmash",
           baseUrl: server.url,
-          enableNarrowFallbacks: false,
         },
       },
     });
@@ -488,9 +540,7 @@ test("transient entity failures use a persistent cooldown instead of redownloadi
         ...(previousSettings.integrations || {}),
         metadata: {
           ...(previousSettings.integrations?.metadata || {}),
-          provider: "brainzmash",
           baseUrl: server.url,
-          enableNarrowFallbacks: false,
         },
       },
     });
@@ -509,6 +559,84 @@ test("transient entity failures use a persistent cooldown instead of redownloadi
   }
 });
 
+test("an album request already sent finishes and is cached after its caller leaves", async () => {
+  const previousSettings = dbOps.getSettings();
+  let requests = 0;
+  const arrived = Promise.withResolvers<void>();
+  const answer = Promise.withResolvers<void>();
+  const server = await createMockHttpServer(async (_request, response) => {
+    requests += 1;
+    arrived.resolve();
+    await answer.promise;
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify({ id: "left-album", title: "Left Album" }));
+  });
+  const caller = new AbortController();
+
+  try {
+    dbOps.updateSettings({
+      ...previousSettings,
+      integrations: {
+        ...(previousSettings.integrations || {}),
+        metadata: {
+          ...(previousSettings.integrations?.metadata || {}),
+          baseUrl: server.url,
+        },
+      },
+    });
+    clearMetadataProviderCaches();
+
+    const left = getAlbumByMbid("left-album", { signal: caller.signal });
+    await arrived.promise;
+    caller.abort();
+    await assert.rejects(left);
+    answer.resolve();
+
+    assert.equal((await getAlbumByMbid("left-album")).title, "Left Album");
+    assert.equal(requests, 1);
+  } finally {
+    answer.resolve();
+    clearMetadataProviderCaches();
+    dbOps.updateSettings(previousSettings);
+    await server.close();
+  }
+});
+
+test("a request that waited its turn is sent with its full timeout", async () => {
+  const previousSettings = dbOps.getSettings();
+  const timeouts: (number | undefined)[] = [];
+  const get = vi.spyOn(http, "get").mockImplementation(async (url, options) => {
+    timeouts.push(options?.timeoutMs);
+    return {
+      status: 200,
+      statusText: "OK",
+      headers: {},
+      data: { id: url.split("/").at(-1), title: "In Line" },
+    };
+  });
+
+  try {
+    dbOps.updateSettings({
+      ...previousSettings,
+      integrations: {
+        ...(previousSettings.integrations || {}),
+        metadata: {
+          ...(previousSettings.integrations?.metadata || {}),
+          baseUrl: "http://metadata.test",
+        },
+      },
+    });
+    clearMetadataProviderCaches();
+
+    await Promise.all([getAlbumByMbid("first-in-line"), getAlbumByMbid("second-in-line")]);
+    assert.deepEqual(timeouts, [8000, 8000]);
+  } finally {
+    get.mockRestore();
+    clearMetadataProviderCaches();
+    dbOps.updateSettings(previousSettings);
+  }
+});
+
 test("a metadata request that reaches its turn a moment early by the wall clock is admitted", () => {
   const baseUrl = "http://slots.invalid";
   vi.useFakeTimers({ toFake: ["Date"] });
@@ -518,6 +646,38 @@ test("a metadata request that reaches its turn a moment early by the wall clock 
     assert.equal(reserveMetadataProviderRequest(baseUrl, 100), 0);
     vi.advanceTimersByTime(50);
     assert.equal(reserveMetadataProviderRequest(baseUrl, 100), 50);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("a shared rate limit waits out the turn another process booked, but not a clock that went back", async () => {
+  const { default: createRateLimiter } =
+    await import("../backend/services/apiClients/rateLimiter.ts");
+  const service = "http://shared-pace.invalid";
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  try {
+    const limiter = createRateLimiter(1000, { shared: service });
+    const startOnce = async () => {
+      let startedAt = 0;
+      const request = limiter.schedule(() => {
+        startedAt = Date.now();
+      });
+      await vi.runAllTimersAsync();
+      await request;
+      return startedAt;
+    };
+    assert.equal(reserveMetadataProviderRequest(service, 1000), 0);
+    const bookedAt = Date.now();
+    const startedAt = await startOnce();
+    assert.ok(startedAt - bookedAt >= 998, `started ${startedAt - bookedAt}ms after the booking`);
+
+    db.prepare("UPDATE metadata_provider_budget SET next_request_at = ? WHERE base_url = ?").run(
+      Date.now() + 60 * 60_000,
+      service,
+    );
+    const skewedAt = await startOnce();
+    assert.ok(skewedAt - startedAt <= 1000, `waited ${skewedAt - startedAt}ms on a stale booking`);
   } finally {
     vi.useRealTimers();
   }
@@ -539,9 +699,7 @@ test("local request admission timeouts do not put entity metadata into cooldown"
         ...(previousSettings.integrations || {}),
         metadata: {
           ...(previousSettings.integrations?.metadata || {}),
-          provider: "brainzmash",
           baseUrl: server.url,
-          enableNarrowFallbacks: false,
         },
       },
     });
@@ -603,9 +761,7 @@ test("forced refreshes serve stale album metadata when the provider fails", asyn
         ...(previousSettings.integrations || {}),
         metadata: {
           ...(previousSettings.integrations?.metadata || {}),
-          provider: "brainzmash",
           baseUrl: server.url,
-          enableNarrowFallbacks: false,
         },
       },
     });
@@ -659,9 +815,7 @@ test("an album 429 makes only that album wait out its retry-after", async () => 
         ...(previousSettings.integrations || {}),
         metadata: {
           ...(previousSettings.integrations?.metadata || {}),
-          provider: "brainzmash",
           baseUrl: server.url,
-          enableNarrowFallbacks: false,
         },
       },
     });
@@ -696,16 +850,14 @@ test("a search 429 pauses every metadata request for at most fifteen minutes", a
         ...(previousSettings.integrations || {}),
         metadata: {
           ...(previousSettings.integrations?.metadata || {}),
-          provider: "brainzmash",
           baseUrl: server.url,
-          enableNarrowFallbacks: false,
         },
       },
     });
     clearMetadataProviderCaches();
 
     await assert.rejects(
-      () => searchAlbums("Rate Limited", { throwOnFailure: true }),
+      () => searchAlbums("Rate Limited", { throwOnFailure: true, musicbrainzFallback: false }),
       (error) => asAppError(error)?.response?.status === 429,
     );
     await assert.rejects(
@@ -765,9 +917,7 @@ test("a metadata 403 opens a shared blocked cooldown for subsequent requests", a
         ...(previousSettings.integrations || {}),
         metadata: {
           ...(previousSettings.integrations?.metadata || {}),
-          provider: "brainzmash",
           baseUrl: server.url,
-          enableNarrowFallbacks: false,
         },
       },
     });
@@ -837,9 +987,7 @@ test("search metadata coalesces concurrent misses and shares fresh cache entries
         ...(previousSettings.integrations || {}),
         metadata: {
           ...(previousSettings.integrations?.metadata || {}),
-          provider: "brainzmash",
           baseUrl: server.url,
-          enableNarrowFallbacks: false,
         },
       },
     });
@@ -878,9 +1026,7 @@ test("album search shows no results when its MusicBrainz fallback is down", asyn
         ...(previousSettings.integrations || {}),
         metadata: {
           ...(previousSettings.integrations?.metadata || {}),
-          provider: "brainzmash",
           baseUrl: server.url,
-          enableNarrowFallbacks: true,
         },
       },
     });
@@ -910,7 +1056,6 @@ test("BrainzMash rejects the saturation boundary before its deadline", async () 
         ...(previousSettings.integrations || {}),
         metadata: {
           ...(previousSettings.integrations?.metadata || {}),
-          provider: "brainzmash",
           baseUrl: server.url,
         },
       },
@@ -955,7 +1100,6 @@ test("independent provider processes share request admission", async () => {
         metadata: {
           ...previous.integrations?.metadata,
           baseUrl: server.url,
-          enableNarrowFallbacks: false,
         },
       },
     });
@@ -1018,7 +1162,6 @@ test("independent provider processes share one active entity request", async () 
         metadata: {
           ...previous.integrations?.metadata,
           baseUrl: server.url,
-          enableNarrowFallbacks: false,
         },
       },
     });
@@ -1075,7 +1218,6 @@ test("clearing caches preserves provider spacing for another process", async () 
         metadata: {
           ...previous.integrations?.metadata,
           baseUrl: server.url,
-          enableNarrowFallbacks: false,
         },
       },
     });
