@@ -521,7 +521,12 @@ function BulkBar({
 }) {
   const all = rows.map((row) => row.id);
   return (
-    <div className="plugin-admin__bulk" role="group" aria-label="Selected items">
+    <div
+      className="plugin-admin__bulk"
+      data-selected={ticked.length > 0}
+      role="group"
+      aria-label="Selected items"
+    >
       <span className="plugin-admin__bulk-count">
         {ticked.length ? `${ticked.length} selected` : "None selected"}
       </span>

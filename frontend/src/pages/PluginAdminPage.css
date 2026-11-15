@@ -478,6 +478,15 @@ button.plugin-admin__row-main:focus-visible {
   font-variant-numeric: tabular-nums;
 }
 
+.plugin-admin__bulk[data-selected="true"] {
+  position: sticky;
+  top: 0;
+  z-index: var(--aurral-z-sticky);
+  padding: 0.75rem;
+  background: var(--aurral-surface);
+  border-radius: var(--aurral-radius-sm);
+}
+
 .plugin-admin__bulk-actions {
   display: flex;
   flex-wrap: wrap;

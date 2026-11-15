@@ -1,3 +1,9 @@
+# Metadata editor UI, item 2 (November 14, 2026)
+
+Local implementation for review, plugin 1.0.55. Album grouping now uses one paged track list: select tracks → choose an existing work or create one → map only those tracks → apply. Back retains the selection; Cancel leaves assignments unchanged. Not classical defaults to Skip; explicit moves remain atomic. Selection tokens bind the final request to the selected album tracks, in album order. Existing forms/rows/navigation API; no schema change.
+
+Core boundary: all grouping, work/movement decisions, selection persistence and validation live in the plugin. The only item-2 core change keeps the generic bulk-action bar visible when rows are selected; any plugin list benefits. No classical names, branching or data model in core. Item 1's generic draft/navigation guards are published as core `365e6dc`, plugin `26be9ac`. Those guards belong to the host because it owns form resets, routing and unload events. An experimental scroll change was removed after testing did not justify it. Running validation and the ordered backlog are in `EDITOR_UI_HANDOFF.md`. Item 2 is not pushed; items 3–7 remain pending.
+
 # Metadata editor UI, item 1
 
 Generic admin pages v2 now guard unsaved forms before unrelated mutations and before leaving/reloading the page. The companion plugin's `EDITOR_UI_HANDOFF.md` records implementation, validation and the ordered UI backlog. Local work; no API/schema or existing feature removal.
