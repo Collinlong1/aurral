@@ -120,6 +120,9 @@ const section = v.variant("type", [
     arguments: values,
     submitLabel: text(100),
     fields: v.pipe(v.array(v2Field), v.maxLength(40)),
+    // Shown beside Submit in the form's footer, such as a Cancel that opens
+    // the page the person came from.
+    actions: actions(4),
   }),
   v.object({
     type: v.literal("rows"),
@@ -245,7 +248,8 @@ export async function invokePluginPage(
     ...pluginInput(plugin),
     pageId,
     // 2: the host also renders admin pages v2 and answers lookups.
-    capabilities: { adminForms: 2 },
+    // formActions: v2 form sections may carry footer actions.
+    capabilities: { adminForms: 2, formActions: true },
     user: { id: user.id, username: user.username, role: user.role },
     ...(request.operation === "read" ? { query: request.query } : { mutation: request.mutation }),
   };

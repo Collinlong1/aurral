@@ -29,6 +29,10 @@ type Tone = "default" | "muted" | "success" | "warning" | "error";
 export type AdminParams = { selection: string; q: string; offset: string; tab: string };
 export type AdminNavigation = { preserveScroll?: boolean };
 type GoOptions = AdminNavigation & { force?: boolean; focus?: string };
+// Where an action started: a section id, "list" for the browse list or
+// "view" for the entry's header. Its result is reported there.
+type Origin = string;
+type Request = { command: string; values: Values; origin: Origin };
 
 const PAGE_SIZE = 100;
 
@@ -313,6 +317,8 @@ function FieldMeta({
 function FormSection({
   section,
   disabled,
+  saving,
+  feedback,
   pluginId,
   pageId,
   onDirty,
@@ -321,6 +327,10 @@ function FormSection({
 }: {
   section: Extract<Section, { type: "form" }>;
   disabled: boolean;
+  // This form's own submit is in flight.
+  saving: boolean;
+  // The result of this form's last action, shown in its footer.
+  feedback: ReactNode;
   pluginId: string;
   pageId: string;
   onDirty: (dirty: boolean) => void;
@@ -422,6 +432,7 @@ function FormSection({
       className="settings-card plugin-admin__form"
       onSubmit={(event) => {
         event.preventDefault();
+        if (disabled) return;
         // Lines are edited as text; send them back without blank entries.
         const cleaned = Object.fromEntries(
           section.fields.map((field): [string, FieldValue] => {
@@ -487,27 +498,54 @@ function FormSection({
           </div>
         );
       })}
-      <div className="settings-actions plugin-admin__form-actions">
-        <button type="submit" className="btn btn-primary" disabled={disabled}>
-          {section.submitLabel}
-        </button>
-        {dirty ? (
+      {/* Stays at the bottom of the screen while a long form scrolls past. */}
+      <div className="plugin-admin__form-footer" data-dirty={dirty}>
+        <div className="settings-actions plugin-admin__form-actions">
           <button
-            type="button"
-            className="btn btn-ghost"
+            type="submit"
+            className="btn btn-primary"
             disabled={disabled}
-            onClick={() => {
-              setValues(base);
-              setLabels(
-                Object.fromEntries(
-                  section.fields.map((field) => [field.key, field.valueLabel ?? ""]),
-                ),
-              );
-            }}
+            aria-busy={saving || undefined}
           >
-            Discard changes
+            {saving ? (
+              <>
+                <DotLoader size="xs" label={null} /> Saving…
+              </>
+            ) : (
+              section.submitLabel
+            )}
           </button>
-        ) : null}
+          {dirty ? (
+            <button
+              type="button"
+              className="btn btn-ghost"
+              disabled={disabled}
+              onClick={() => {
+                setValues(base);
+                setLabels(
+                  Object.fromEntries(
+                    section.fields.map((field) => [field.key, field.valueLabel ?? ""]),
+                  ),
+                );
+              }}
+            >
+              Discard changes
+            </button>
+          ) : null}
+          {section.actions.map((action) => (
+            <button
+              key={action.command + action.label}
+              type="button"
+              className={`btn ${action.tone === "danger" ? "btn-ghost plugin-admin__danger" : "btn-ghost"}`}
+              disabled={disabled}
+              onClick={() => onAction(action)}
+            >
+              {action.label}
+            </button>
+          ))}
+          {dirty && !saving ? <span className="plugin-admin__unsaved">Unsaved changes</span> : null}
+        </div>
+        {feedback}
       </div>
     </form>
   );
@@ -774,18 +812,23 @@ export default function PluginAdminPage({
   const [pending, setPending] = useState<{ next: Partial<AdminParams>; options: GoOptions } | null>(
     null,
   );
-  const [pendingMutation, setPendingMutation] = useState<{
-    command: string;
-    values: Values;
-    forms: string[];
-  } | null>(null);
+  const [pendingMutation, setPendingMutation] = useState<(Request & { forms: string[] }) | null>(
+    null,
+  );
+  // The last action's origin, and the section its result brought into view.
+  const [report, setReport] = useState<{ origin: Origin; focus: string | null }>({
+    origin: "view",
+    focus: null,
+  });
   const [pendingReload, setPendingReload] = useState(false);
   const [formReset, setFormReset] = useState(0);
   // A section to bring into view once the page shows it (a step of a task
   // further down the page, or a section's next page).
   const [focus, setFocus] = useState<string | null>(null);
   const queryClient = useQueryClient();
-  const [confirming, setConfirming] = useState<PluginPageV2Action | null>(null);
+  const [confirming, setConfirming] = useState<(PluginPageV2Action & { origin: Origin }) | null>(
+    null,
+  );
   // Ticked rows, per section ("list" for the browse list).
   const [ticked, setTicked] = useState<Record<string, string[]>>({});
   const tickedIn = (id: string, rows: Row[]) => {
@@ -853,18 +896,19 @@ export default function PluginAdminPage({
   }, [focus, fetching, data]);
 
   const mutation = useMutation({
-    mutationFn: async ({ command, values }: { command: string; values: Values }) =>
+    mutationFn: async ({ command, values }: Request) =>
       parseResponse(
         pluginsClient[":id"].pages[":pageId"].$post({
           param: { id: pluginId, pageId },
           json: { command, values, revision: data.revision },
         }),
       ),
-    onMutate: () => {
+    onMutate: ({ origin }) => {
       setMessage("");
       setError(null);
+      setReport({ origin, focus: null });
     },
-    onSuccess: async (result, { command }) => {
+    onSuccess: async (result, { command, origin }) => {
       setDirtyForms({});
       setFormReset((current) => current + 1);
       setTicked({});
@@ -882,7 +926,13 @@ export default function PluginAdminPage({
         // item opens the next without losing the person's place. A step of
         // the same task keeps the reader where they are (or brings its
         // section into view); only "open" goes to the top of a new entry.
+        // The result is reported in that section, or at the top of the entry
+        // that opened; a list action that returns to the list reports there.
         setFocus(target);
+        setReport({
+          origin: origin === "list" && !result.selection ? "list" : "view",
+          focus: target,
+        });
         onNavigate(
           { selection: result.selection },
           { preserveScroll: command !== "open" || Boolean(target) },
@@ -892,6 +942,7 @@ export default function PluginAdminPage({
       else {
         await onRefetch();
         setFocus(target);
+        setReport({ origin, focus: target });
       }
       setMessage(text);
     },
@@ -905,13 +956,13 @@ export default function PluginAdminPage({
     },
   });
   const busy = mutation.isPending;
-  const run = (command: string, values: Values, submittingForm?: string) => {
+  const run = (request: Request, submittingForm?: string) => {
     const forms = Object.keys(dirtyForms).filter((id) => dirtyForms[id] && id !== submittingForm);
     if (forms.length) {
-      setPendingMutation({ command, values, forms });
+      setPendingMutation({ ...request, forms });
       return;
     }
-    mutation.mutate({ command, values });
+    mutation.mutate(request);
   };
   const reload = () => {
     setError(null);
@@ -919,20 +970,70 @@ export default function PluginAdminPage({
     setFormReset((current) => current + 1);
     void onRefetch();
   };
-  const runAction = (action: PluginPageV2Action) => {
-    if (action.confirm) setConfirming(action);
-    else run(action.command, action.arguments);
+  const runAction = (origin: Origin) => (action: PluginPageV2Action) => {
+    if (action.confirm) setConfirming({ ...action, origin });
+    else run({ command: action.command, values: action.arguments, origin });
   };
-  const runBulk = (key: string) => (action: PluginPageV2Action, ids: string[]) => {
+  const runBulk = (key: string, origin: Origin) => (action: PluginPageV2Action, ids: string[]) => {
     const withRows = { ...action, arguments: { ...action.arguments, [key]: ids } };
     if (action.confirm)
-      setConfirming({ ...withRows, confirm: `${action.confirm} (${ids.length} selected)` });
-    else run(withRows.command, withRows.arguments);
+      setConfirming({
+        ...withRows,
+        origin,
+        confirm: `${action.confirm} (${ids.length} selected)`,
+      });
+    else run({ command: withRows.command, values: withRows.arguments, origin });
   };
 
   const view = data.view;
   const total = data.list.total;
   const offset = data.list.offset;
+  // Report beside the task: the section a result brought into view, else the
+  // section the action started in, else the entry's header (or the list).
+  const sectionIds = new Set(view?.sections.map((section) => section.id));
+  const place = !view
+    ? "list"
+    : report.focus && sectionIds.has(report.focus)
+      ? report.focus
+      : sectionIds.has(report.origin) || report.origin === "list"
+        ? report.origin
+        : "view";
+  const pendingRequest = busy ? mutation.variables : undefined;
+  const feedback = (where: string, { saving = true }: { saving?: boolean } = {}) => {
+    if (where !== place) return null;
+    if (error)
+      return (
+        <div className="settings-note settings-note--error plugin-admin__error" role="alert">
+          <AlertCircle aria-hidden="true" />
+          <span>{error.text}</span>
+          {error.conflict ? (
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={() => {
+                if (dirty) setPendingReload(true);
+                else reload();
+              }}
+            >
+              Reload
+            </button>
+          ) : null}
+        </div>
+      );
+    if (busy && !saving) return null;
+    if (!busy && !message) return null;
+    return (
+      <div className="plugin-admin__status plugin-admin__feedback">
+        {busy ? (
+          <>
+            <DotLoader size="xs" label={null} /> Saving…
+          </>
+        ) : (
+          message
+        )}
+      </div>
+    );
+  };
   // A section's pages are selections; the new page opens at the section.
   const sectionPager = (section: Extract<Section, { type: "rows" }>) => {
     const pager = section.pager;
@@ -1051,9 +1152,14 @@ export default function PluginAdminPage({
           </p>
           {data.list.actions.length ? (
             <div className="plugin-admin__list-actions">
-              <ActionButtons actions={data.list.actions} disabled={busy} onAction={runAction} />
+              <ActionButtons
+                actions={data.list.actions}
+                disabled={busy}
+                onAction={runAction("list")}
+              />
             </div>
           ) : null}
+          {feedback("list")}
           {listPager}
           {data.list.select && data.list.items.length ? (
             <BulkBar
@@ -1062,7 +1168,7 @@ export default function PluginAdminPage({
               ticked={tickedIn("list", data.list.items)}
               disabled={busy}
               onTick={(ids) => tick("list", ids)}
-              onAction={runBulk(data.list.select.key)}
+              onAction={runBulk(data.list.select.key, "list")}
             />
           ) : null}
           {data.list.items.length ? (
@@ -1078,7 +1184,7 @@ export default function PluginAdminPage({
                     onTick: (on: boolean) => toggle("list", item.id, on),
                   })}
                   onSelect={(selection) => go({ selection })}
-                  onAction={runAction}
+                  onAction={runAction("list")}
                 />
               ))}
             </div>
@@ -1126,43 +1232,21 @@ export default function PluginAdminPage({
                 </div>
                 {view.actions.length ? (
                   <div className="plugin-admin__view-actions">
-                    <ActionButtons actions={view.actions} disabled={busy} onAction={runAction} />
+                    <ActionButtons
+                      actions={view.actions}
+                      disabled={busy}
+                      onAction={runAction("view")}
+                    />
                   </div>
                 ) : null}
               </div>
-              <div className="plugin-admin__status" role="status" aria-live="polite">
-                {busy ? (
-                  <>
-                    <DotLoader size="xs" label={null} /> Saving…
-                  </>
-                ) : message ? (
-                  message
-                ) : null}
-              </div>
-              {error ? (
-                <div
-                  className="settings-note settings-note--error plugin-admin__error"
-                  role="alert"
-                >
-                  <AlertCircle aria-hidden="true" />
-                  <span>{error.text}</span>
-                  {error.conflict ? (
-                    <button
-                      type="button"
-                      className="btn btn-secondary btn-sm"
-                      onClick={() => {
-                        if (dirty) setPendingReload(true);
-                        else reload();
-                      }}
-                    >
-                      Reload
-                    </button>
-                  ) : null}
-                </div>
-              ) : null}
+              {feedback("view") ?? <div className="plugin-admin__status" />}
               <div className="plugin-admin__sections">
                 {view.sections.map((section) => {
-                  if (section.type === "form")
+                  if (section.type === "form") {
+                    const saving =
+                      pendingRequest?.origin === section.id &&
+                      pendingRequest.command === section.command;
                     return (
                       // Entries share section ids such as "details", so the key names
                       // what the form edits; otherwise one entry's edits carry into the next.
@@ -1174,16 +1258,26 @@ export default function PluginAdminPage({
                         <FormSection
                           section={section}
                           disabled={busy || fetching}
+                          saving={saving}
+                          feedback={feedback(section.id, { saving: !saving })}
                           pluginId={pluginId}
                           pageId={pageId}
                           onDirty={dirtyFor(section.id)}
-                          onAction={runAction}
+                          onAction={runAction(section.id)}
                           onSubmit={(values) =>
-                            run(section.command, { ...section.arguments, ...values }, section.id)
+                            run(
+                              {
+                                command: section.command,
+                                values: { ...section.arguments, ...values },
+                                origin: section.id,
+                              },
+                              section.id,
+                            )
                           }
                         />
                       </Group>
                     );
+                  }
                   if (section.type === "rows")
                     return (
                       <Group
@@ -1195,11 +1289,12 @@ export default function PluginAdminPage({
                             <ActionButtons
                               actions={section.actions}
                               disabled={busy}
-                              onAction={runAction}
+                              onAction={runAction(section.id)}
                             />
                           ) : null
                         }
                       >
+                        {feedback(section.id)}
                         {section.note ? (
                           <p className="settings-group__note">{section.note}</p>
                         ) : null}
@@ -1211,7 +1306,7 @@ export default function PluginAdminPage({
                             ticked={tickedIn(section.id, section.rows)}
                             disabled={busy}
                             onTick={(ids) => tick(section.id, ids)}
-                            onAction={runBulk(section.select.key)}
+                            onAction={runBulk(section.select.key, section.id)}
                           />
                         ) : null}
                         {section.rows.length ? (
@@ -1226,7 +1321,7 @@ export default function PluginAdminPage({
                                   onTick: (on: boolean) => toggle(section.id, row.id, on),
                                 })}
                                 onSelect={open}
-                                onAction={runAction}
+                                onAction={runAction(section.id)}
                               />
                             ))}
                           </div>
@@ -1238,6 +1333,7 @@ export default function PluginAdminPage({
                     );
                   return (
                     <Group key={section.id} id={section.id} title={section.title}>
+                      {feedback(section.id)}
                       <div className="settings-card">
                         {section.items.map((item) => (
                           <div className="settings-row" key={item.label}>
@@ -1296,9 +1392,17 @@ export default function PluginAdminPage({
           } else if (next) go(next.next, { ...next.options, force: true });
         }}
       />
+      {/* One announcement per result, wherever it is shown. */}
+      <div className="sr-only" role="status" aria-live="polite">
+        {busy ? "Saving…" : message}
+      </div>
       <ConfirmModal
         open={pendingMutation !== null}
-        title="Discard other unsaved changes?"
+        title={
+          pendingMutation?.forms.includes(pendingMutation.origin)
+            ? "Discard unsaved changes?"
+            : "Discard other unsaved changes?"
+        }
         body={`Your changes in ${(pendingMutation?.forms ?? []).map((id) => data.view?.sections.find((section) => section.id === id)?.title || id).join(", ")} haven't been saved. Discard them and continue with this action, or keep editing to save them first.`}
         cancelLabel="Keep editing"
         confirmLabel="Discard and continue"
@@ -1307,7 +1411,12 @@ export default function PluginAdminPage({
         onConfirm={() => {
           const request = pendingMutation;
           setPendingMutation(null);
-          if (request) mutation.mutate({ command: request.command, values: request.values });
+          if (request)
+            mutation.mutate({
+              command: request.command,
+              values: request.values,
+              origin: request.origin,
+            });
         }}
       />
       <ConfirmModal
@@ -1321,7 +1430,8 @@ export default function PluginAdminPage({
         onConfirm={() => {
           const action = confirming;
           setConfirming(null);
-          if (action) run(action.command, action.arguments);
+          if (action)
+            run({ command: action.command, values: action.arguments, origin: action.origin });
         }}
       />
     </div>

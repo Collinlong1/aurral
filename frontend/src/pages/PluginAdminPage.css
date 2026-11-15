@@ -303,6 +303,34 @@ button.plugin-admin__row-main:focus-visible {
   gap: 0.5rem;
 }
 
+/* Submit, Cancel and the result stay in reach while a long form scrolls. */
+.plugin-admin__form-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: var(--aurral-z-sticky);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  background: var(--aurral-surface-raised);
+}
+
+/* A field reached by Tab or scrolled to stops above the pinned footer. */
+.plugin-admin__form :is(input, textarea, button) {
+  scroll-margin-bottom: 7rem;
+}
+
+.plugin-admin__unsaved {
+  color: var(--aurral-text-subtle);
+  font-size: var(--aurral-font-sm);
+}
+
+.plugin-admin__form-footer > .plugin-admin__status,
+.plugin-admin__form-footer > .plugin-admin__error,
+.plugin-admin__group > .plugin-admin__error,
+.plugin-admin__list > .plugin-admin__error {
+  margin: 0;
+}
+
 .plugin-admin__mapping {
   padding: 0;
 }
