@@ -279,3 +279,7 @@ The footer stays at the bottom of the screen while a long form scrolls past. It 
 ### Admin pages v2: order fields (classical fork)
 
 A v2 form field may be `type: "order"`: `value` is the items' values in their current order and `options` names them (`{value,label}`), as in v1 forms. The person rearranges the items locally (drag by a handle, keyboard drag with Space and the arrow keys, or each item's up/down buttons), and Submit sends the new order once; Discard changes restores it. The host sends `capabilities.orderField: true`. Older hosts reject a page with an unknown field type, so send order fields only when the flag is present.
+
+### Admin pages v2: stable lists (classical fork)
+
+The host remembers each tab's list (search, page and scroll) for the browser session. The scroll is taken when an entry is opened from the list, while the list is visible. A link inside the detail view still lets the plugin pick the tab and the page that holds the entry. The tab button, or the breadcrumb back to the list after such a link, brings back the remembered search, page and scroll. Lists reached through links never replace what a person chose. No plugin change is needed; the plugin keeps receiving the usual `tab`, `q` and `offset`.

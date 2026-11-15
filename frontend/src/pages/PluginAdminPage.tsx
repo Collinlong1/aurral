@@ -40,13 +40,53 @@ type Values = Record<string, FieldValue>;
 type Tone = "default" | "muted" | "success" | "warning" | "error";
 export type AdminParams = { selection: string; q: string; offset: string; tab: string };
 export type AdminNavigation = { preserveScroll?: boolean };
-type GoOptions = AdminNavigation & { force?: boolean; focus?: string };
+type GoOptions = AdminNavigation & {
+  force?: boolean;
+  focus?: string;
+  // A link to a related entry: remember the list the person had first.
+  link?: boolean;
+  // The person chose this list (a search, a page, a tab).
+  list?: boolean;
+  // Scroll the list back to where it was once it is on screen.
+  restore?: { tab: string } & ListPlace;
+};
 // Where an action started: a section id, "list" for the browse list or
 // "view" for the entry's header. Its result is reported there.
 type Origin = string;
 type Request = { command: string; values: Values; origin: Origin };
 
 const PAGE_SIZE = 100;
+
+// Where a person left each tab's list: its search, page and scroll. Kept for
+// the browser session so returning to a tab (or reloading) finds it again.
+type ListPlace = { q: string; offset: string; scroll: number };
+function readPlaces(key: string): Record<string, ListPlace> {
+  try {
+    const parsed: unknown = JSON.parse(window.sessionStorage.getItem(key) ?? "{}");
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, ListPlace>) : {};
+  } catch {
+    return {};
+  }
+}
+function writePlaces(key: string, places: Record<string, ListPlace>) {
+  try {
+    window.sessionStorage.setItem(key, JSON.stringify(places));
+  } catch {
+    // Storage can be unavailable (private windows); places then last until reload.
+  }
+}
+// The element the page scrolls in: the app's main area, or the window.
+function scrollerOf(node: HTMLElement | null): HTMLElement | null {
+  for (let parent = node?.parentElement; parent; parent = parent.parentElement) {
+    const { overflowY } = window.getComputedStyle(parent);
+    if (
+      (overflowY === "auto" || overflowY === "scroll") &&
+      parent.scrollHeight > parent.clientHeight
+    )
+      return parent;
+  }
+  return null;
+}
 
 function Badge({ label, tone = "default" }: { label: string; tone?: Tone }) {
   return <span className={`plugin-admin__badge plugin-admin__badge--${tone}`}>{label}</span>;
@@ -1004,15 +1044,79 @@ export default function PluginAdminPage({
 
   useEffect(() => setSearch(params.q), [params.q]);
 
+  const rootRef = useRef<HTMLDivElement>(null);
+  const placesKey = `aurral:plugin-admin:${pluginId}:${pageId}:lists`;
+  const places = useRef<Record<string, ListPlace> | null>(null);
+  places.current ??= readPlaces(placesKey);
+  // True while the list shows what a link chose (another tab, no search),
+  // not what the person chose; that state is never remembered.
+  const linked = useRef(false);
+  const scrollTop = () => {
+    const scroller = scrollerOf(rootRef.current);
+    return scroller ? scroller.scrollTop : window.scrollY;
+  };
+  const listRef = useRef<HTMLElement>(null);
+  // Remember the list on screen. Its scroll is taken when the person opens an
+  // entry from it, while the list is visible (phones hide it beside an open
+  // entry); links and tab clicks keep that scroll while the list is the same.
+  const remember = ({ scroll }: { scroll: boolean }) => {
+    if (linked.current || !data.tab || !places.current) return;
+    const previous = places.current[data.tab];
+    const offset = String(data.list.offset);
+    const same = previous?.q === params.q && previous.offset === offset;
+    const visible = Boolean(listRef.current?.getClientRects().length);
+    places.current[data.tab] = {
+      q: params.q,
+      offset,
+      scroll: scroll && visible ? scrollTop() : same ? previous.scroll : 0,
+    };
+    writePlaces(placesKey, places.current);
+  };
+  // A list scroll position to restore once that tab's list is on screen.
+  const [restoring, setRestoring] = useState<({ tab: string } & ListPlace) | null>(null);
+  useEffect(() => {
+    // Wait for that list itself: same tab, search and page, no entry open.
+    if (
+      !restoring ||
+      fetching ||
+      data.view ||
+      data.tab !== restoring.tab ||
+      params.q !== restoring.q ||
+      String(data.list.offset) !== restoring.offset
+    )
+      return;
+    setRestoring(null);
+    const scroller = scrollerOf(rootRef.current);
+    if (scroller) scroller.scrollTop = restoring.scroll;
+    else window.scrollTo({ top: restoring.scroll });
+  }, [restoring, fetching, data, params.q]);
+  // Back to a tab's list where the person left it.
+  const returnTo = (tab: string) => {
+    const place = places.current?.[tab];
+    if (!place) go({ tab, q: "", offset: "0", selection: "" }, { list: true });
+    else
+      go(
+        { tab, q: place.q, offset: place.offset, selection: "" },
+        { list: true, preserveScroll: true, restore: { tab, ...place } },
+      );
+  };
+
   // Links inside the detail view clear the tab so the plugin shows the list
   // that matches the opened item, and leave the list's page to the plugin
-  // (an empty offset): it shows the page that holds the opened item.
-  const open = (selection: string) => go({ selection, tab: "", q: "", offset: "" });
+  // (an empty offset): it shows the page that holds the opened item. The
+  // list the person had is remembered first.
+  const open = (selection: string) => go({ selection, tab: "", q: "", offset: "" }, { link: true });
   const go = (next: Partial<AdminParams>, options: GoOptions = {}) => {
     if (dirty && !options.force) {
       setPending({ next, options });
       return;
     }
+    // Leaving a list the person chose: remember its search and page. The
+    // scroll that matters was taken when they opened an entry from it.
+    if (options.link || next.tab !== undefined) remember({ scroll: false });
+    if (options.link) linked.current = true;
+    else if (options.list) linked.current = false;
+    setRestoring(options.restore ?? null);
     setMessage("");
     setError(null);
     setDirtyForms({});
@@ -1190,8 +1294,8 @@ export default function PluginAdminPage({
         label={`${offset + 1}–${Math.min(offset + PAGE_SIZE, total)} of ${total}`}
         previous={offset > 0}
         next={offset + PAGE_SIZE < total}
-        onPrevious={() => go({ offset: String(Math.max(0, offset - PAGE_SIZE)) })}
-        onNext={() => go({ offset: String(offset + PAGE_SIZE) })}
+        onPrevious={() => go({ offset: String(Math.max(0, offset - PAGE_SIZE)) }, { list: true })}
+        onNext={() => go({ offset: String(offset + PAGE_SIZE) }, { list: true })}
       />
     ) : null;
 
@@ -1210,7 +1314,7 @@ export default function PluginAdminPage({
                 type="button"
                 className={`activity-status-tab${tab.id === data.tab ? " is-active" : ""}`}
                 aria-pressed={tab.id === data.tab}
-                onClick={() => go({ tab: tab.id, q: "", offset: "0", selection: "" })}
+                onClick={() => returnTo(tab.id)}
               >
                 {tab.label}
                 {tab.count != null ? (
@@ -1233,13 +1337,13 @@ export default function PluginAdminPage({
         </p>
       ))}
       <div className="plugin-admin__layout">
-        <aside className="plugin-admin__list" aria-label="Items">
+        <aside ref={listRef} className="plugin-admin__list" aria-label="Items">
           <form
             role="search"
             className="plugin-admin__search"
             onSubmit={(event) => {
               event.preventDefault();
-              go({ q: search, offset: "0" });
+              go({ q: search, offset: "0" }, { list: true });
             }}
           >
             <label className="activity-toolbar__filter plugin-admin__filter">
@@ -1259,7 +1363,7 @@ export default function PluginAdminPage({
                   className="btn"
                   onClick={() => {
                     setSearch("");
-                    go({ q: "", offset: "0" });
+                    go({ q: "", offset: "0" }, { list: true });
                   }}
                 >
                   <X aria-hidden="true" />
@@ -1317,7 +1421,11 @@ export default function PluginAdminPage({
                     ticked: tickedIn("list", data.list.items).includes(item.id),
                     onTick: (on: boolean) => toggle("list", item.id, on),
                   })}
-                  onSelect={(selection) => go({ selection })}
+                  onSelect={(selection) => {
+                    // The list stays; remember where it was scrolled.
+                    remember({ scroll: true });
+                    go({ selection });
+                  }}
                   onAction={runAction("list")}
                 />
               ))}
@@ -1336,7 +1444,7 @@ export default function PluginAdminPage({
                 <button
                   type="button"
                   className="plugin-admin__crumb"
-                  onClick={() => go({ selection: "" })}
+                  onClick={() => (linked.current ? returnTo(data.tab) : go({ selection: "" }))}
                 >
                   <ChevronLeft aria-hidden="true" className="plugin-admin__crumb-back" />
                   {data.tabs.find((tab) => tab.id === data.tab)?.label || "All"}
