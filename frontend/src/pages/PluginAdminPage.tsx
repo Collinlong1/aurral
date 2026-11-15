@@ -1194,6 +1194,13 @@ export default function PluginAdminPage({
       // Album pages and work pages read the catalogue the plugin just changed.
       void queryClient.invalidateQueries({ queryKey: ["plugin-album-presentation"] });
       void queryClient.invalidateQueries({ queryKey: ["plugin-resource", pluginId] });
+      // Other pages of this editor are out of date now. Drop their cached
+      // copies so returning to one (the section a save goes back to) shows
+      // this page until fresh data arrives, never the order from before.
+      queryClient.removeQueries({
+        queryKey: ["plugins", "page", pluginId, pageId],
+        type: "inactive",
+      });
       const text = "message" in result ? result.message : "Saved";
       const target = "focus" in result && typeof result.focus === "string" ? result.focus : null;
       if (
