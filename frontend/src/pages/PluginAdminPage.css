@@ -452,6 +452,8 @@ button.plugin-admin__row-main:focus-visible {
   }
 
   .plugin-admin__row-actions {
+    flex-basis: 100%;
+    flex-wrap: wrap;
     padding: 0 1rem 0.625rem;
   }
 }
