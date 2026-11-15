@@ -76,7 +76,11 @@ async function answer<Env extends AppEnv, Path extends string, In extends Input,
   try {
     return c.json(await run(), 200);
   } catch (error) {
-    if (error instanceof PluginRequestError) return c.json({ error: error.message }, error.status);
+    if (error instanceof PluginRequestError)
+      return c.json(
+        { error: error.message, ...(error.field && { field: error.field }) },
+        error.status,
+      );
     throw error;
   }
 }

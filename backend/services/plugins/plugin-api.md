@@ -283,3 +283,7 @@ A v2 form field may be `type: "order"`: `value` is the items' values in their cu
 ### Admin pages v2: stable lists (classical fork)
 
 The host remembers each tab's list (search, page and scroll) for the browser session. The scroll is taken when an entry is opened from the list, while the list is visible. A link inside the detail view still lets the plugin pick the tab and the page that holds the entry. The tab button, or the breadcrumb back to the list after such a link, brings back the remembered search, page and scroll. Lists reached through links never replace what a person chose. No plugin change is needed; the plugin keeps receiving the usual `tab`, `q` and `offset`.
+
+### Admin pages v2: errors beside fields (classical fork)
+
+A mutation that refuses a form's input may name the field: `{ok:false,status:400|409,message,field}`, where `field` is one of the submitted form's field keys. The HTTP error then carries `{error, field}`. The renderer shows the message under that field, marks it `aria-invalid`, links it with `aria-describedby` and moves focus to it. Without `field`, or when the field isn't in the form the action came from, the message appears in the form's footer as before. Older hosts ignore `field`. A form's footer counts the fields changed since it loaded ("2 unsaved changes").

@@ -104,6 +104,7 @@ function LookupField({
   disabled,
   pluginId,
   pageId,
+  errorId,
   onChange,
 }: {
   id: string;
@@ -111,6 +112,8 @@ function LookupField({
   value: string;
   label: string;
   disabled: boolean;
+  // Set while a rejected save names this field.
+  errorId?: string;
   pluginId: string;
   pageId: string;
   onChange: (value: string, label: string) => void;
@@ -195,7 +198,10 @@ function LookupField({
           aria-expanded={open}
           aria-controls={open ? listId : undefined}
           aria-activedescendant={activeId}
-          aria-describedby={open ? statusId : undefined}
+          aria-describedby={
+            [open ? statusId : "", errorId ?? ""].filter(Boolean).join(" ") || undefined
+          }
+          aria-invalid={errorId ? true : undefined}
           aria-autocomplete="list"
           aria-required={field.required || undefined}
           autoComplete="off"
@@ -480,6 +486,7 @@ function FormSection({
   disabled,
   saving,
   feedback,
+  fieldError,
   pluginId,
   pageId,
   onDirty,
@@ -492,6 +499,8 @@ function FormSection({
   saving: boolean;
   // The result of this form's last action, shown in its footer.
   feedback: ReactNode;
+  // A rejected save that names one of this form's fields, shown beside it.
+  fieldError: { field: string; text: string } | null;
   pluginId: string;
   pageId: string;
   onDirty: (dirty: boolean) => void;
@@ -503,12 +512,23 @@ function FormSection({
   const [labels, setLabels] = useState<Record<string, string>>(() =>
     Object.fromEntries(section.fields.map((field) => [field.key, field.valueLabel ?? ""])),
   );
-  const dirty = JSON.stringify(values) !== JSON.stringify(base);
+  const changed = section.fields.filter(
+    (field) => JSON.stringify(values[field.key]) !== JSON.stringify(base[field.key]),
+  ).length;
+  const dirty = changed > 0;
   useEffect(() => {
     onDirty(dirty);
     return () => onDirty(false);
   }, [dirty, onDirty]);
   const formId = useId();
+  // Take the person to the field a rejected save names.
+  useEffect(() => {
+    if (fieldError) document.getElementById(`${formId}-${fieldError.field}`)?.focus();
+  }, [fieldError, formId]);
+  const invalid = (field: PluginPageV2Field, id: string) =>
+    fieldError?.field === field.key
+      ? { "aria-invalid": true as const, "aria-describedby": `${id}-error` }
+      : {};
   const set = (key: string, value: FieldValue) =>
     setValues((current) => ({ ...current, [key]: value }));
   const control = (field: PluginPageV2Field, id: string): ReactNode => {
@@ -540,6 +560,7 @@ function FormSection({
         return (
           <textarea
             id={id}
+            {...invalid(field, id)}
             className={`input settings-textarea${field.type === "lines" ? " plugin-admin__lines" : ""}`}
             rows={field.type === "lines" ? 3 : 4}
             maxLength={10000}
@@ -565,6 +586,7 @@ function FormSection({
             disabled={disabled}
             pluginId={pluginId}
             pageId={pageId}
+            {...(fieldError?.field === field.key && { errorId: `${id}-error` })}
             onChange={(next, label) => {
               set(field.key, next);
               setLabels((current) => ({ ...current, [field.key]: label }));
@@ -587,6 +609,7 @@ function FormSection({
         return (
           <input
             id={id}
+            {...invalid(field, id)}
             className="input"
             maxLength={10000}
             required={field.required}
@@ -668,7 +691,19 @@ function FormSection({
               {field.help ? <p className="settings-row__help">{field.help}</p> : null}
               <FieldMeta field={field} disabled={disabled || dirty} onAction={onAction} />
             </div>
-            <div className="settings-row__control">{control(field, id)}</div>
+            <div className="settings-row__control">
+              {control(field, id)}
+              {fieldError?.field === field.key ? (
+                <p
+                  id={`${id}-error`}
+                  role="alert"
+                  className="settings-note settings-note--error plugin-admin__field-error"
+                >
+                  <AlertCircle aria-hidden="true" />
+                  <span>{fieldError.text}</span>
+                </p>
+              ) : null}
+            </div>
           </div>
         );
       })}
@@ -717,7 +752,11 @@ function FormSection({
               {action.label}
             </button>
           ))}
-          {dirty && !saving ? <span className="plugin-admin__unsaved">Unsaved changes</span> : null}
+          {dirty && !saving ? (
+            <span className="plugin-admin__unsaved">
+              {changed} unsaved change{changed === 1 ? "" : "s"}
+            </span>
+          ) : null}
         </div>
         {feedback}
       </div>
@@ -981,7 +1020,9 @@ export default function PluginAdminPage({
   const [search, setSearch] = useState(params.q);
   const searchHelpId = useId();
   const [message, setMessage] = useState("");
-  const [error, setError] = useState<{ text: string; conflict: boolean } | null>(null);
+  const [error, setError] = useState<{ text: string; conflict: boolean; field?: string } | null>(
+    null,
+  );
   const [dirtyForms, setDirtyForms] = useState<Record<string, boolean>>({});
   const [pending, setPending] = useState<{ next: Partial<AdminParams>; options: GoOptions } | null>(
     null,
@@ -1187,9 +1228,14 @@ export default function PluginAdminPage({
     onError: (failure: unknown) => {
       setMessage("");
       const details = readApiError(failure);
+      const field =
+        details.body && "field" in details.body && typeof details.body.field === "string"
+          ? details.body.field
+          : undefined;
       setError({
         text: details.error || details.message || details.text || "Couldn't save. Try again.",
         conflict: details.status === 409,
+        ...(field && { field }),
       });
     },
   });
@@ -1237,8 +1283,16 @@ export default function PluginAdminPage({
         ? report.origin
         : "view";
   const pendingRequest = busy ? mutation.variables : undefined;
+  // A rejection naming a field of the form it came from is shown beside it.
+  const errorField = (where: string) => {
+    if (!error?.field || where !== place) return null;
+    const section = view?.sections.find((entry) => entry.id === where);
+    return section?.type === "form" && section.fields.some((field) => field.key === error.field)
+      ? { field: error.field, text: error.text }
+      : null;
+  };
   const feedback = (where: string, { saving = true }: { saving?: boolean } = {}) => {
-    if (where !== place) return null;
+    if (where !== place || errorField(where)) return null;
     if (error)
       return (
         <div className="settings-note settings-note--error plugin-admin__error" role="alert">
@@ -1502,6 +1556,7 @@ export default function PluginAdminPage({
                           disabled={busy || fetching}
                           saving={saving}
                           feedback={feedback(section.id, { saving: !saving })}
+                          fieldError={errorField(section.id)}
                           pluginId={pluginId}
                           pageId={pageId}
                           onDirty={dirtyFor(section.id)}

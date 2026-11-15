@@ -49,9 +49,12 @@ export const messageResult = v.nullish(
 
 export class PluginRequestError extends Error {
   declare status: 400 | 403 | 404 | 409 | 502;
-  constructor(status: PluginRequestError["status"], message: string) {
+  // The form field a rejected admin-page write is about.
+  declare field?: string;
+  constructor(status: PluginRequestError["status"], message: string, field?: string) {
     super(message);
     this.status = status;
+    if (field) this.field = field;
   }
 }
 

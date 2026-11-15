@@ -222,7 +222,13 @@ const mutationResult = v.variant("ok", [
     // A section of the resulting page to bring into view.
     focus: v.optional(key),
   }),
-  v.object({ ok: v.literal(false), status: v.picklist([400, 409]), message: text(500) }),
+  v.object({
+    ok: v.literal(false),
+    status: v.picklist([400, 409]),
+    message: text(500),
+    // The form field the message is about; the host shows it there.
+    field: v.optional(key),
+  }),
 ]);
 
 function admin(user: RequestUser) {
@@ -278,7 +284,7 @@ export async function invokePluginPage(
       return data;
     }
     const result = await callPlugin(plugin, { path: "pages.mutate", input }, mutationResult, 15000);
-    if (!result.ok) throw new PluginRequestError(result.status, result.message);
+    if (!result.ok) throw new PluginRequestError(result.status, result.message, result.field);
     return result;
   } catch (error) {
     if (error instanceof PluginError)

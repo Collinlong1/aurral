@@ -625,3 +625,17 @@ button.plugin-admin__row-main:focus-visible {
   min-width: 0;
   overflow-wrap: anywhere;
 }
+
+/* A rejected save's message, under the field it is about. */
+.plugin-admin__form .settings-row__control:has(> .plugin-admin__field-error) {
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.plugin-admin__form .settings-row--stack .settings-row__control:has(> .plugin-admin__field-error) {
+  align-items: stretch;
+}
+
+.plugin-admin__field-error {
+  margin: 0.375rem 0 0;
+}

@@ -269,6 +269,10 @@ test("admin pages may ask the plugin for the page holding a selection and bring 
       list:{items:[],total:0,offset:0},view:null}),
     mutate:async input=>input.mutation.command==='bad'
       ? ({ok:true,message:'Bad',focus:'../x'})
+      : input.mutation.command==='invalid'
+      ? ({ok:false,status:400,message:'Enter a year',field:'date'})
+      : input.mutation.command==='bad-field'
+      ? ({ok:false,status:400,message:'Enter a year',field:'../date'})
       : ({ok:true,message:'Moved',selection:'album:1@w2',focus:'assign'})}}`;
   await install("pagesfocus", { pages: [{ id: "editor", label: "Editor" }] }, code);
   await turnOn("pagesfocus");
@@ -290,6 +294,22 @@ test("admin pages may ask the plugin for the page holding a selection and bring 
   assert.deepEqual(
     v.parse(v.object({ selection: v.string(), focus: v.string() }), await result.json()),
     { selection: "album:1@w2", focus: "assign" },
+  );
+  // A rejection may name the form field it is about; the host passes it on.
+  const invalid = await routes(admin).request(
+    route,
+    json("POST", { revision: "1", command: "invalid", values: {} }),
+  );
+  assert.equal(invalid.status, 400);
+  assert.deepEqual(await invalid.json(), { error: "Enter a year", field: "date" });
+  assert.equal(
+    (
+      await routes(admin).request(
+        route,
+        json("POST", { revision: "1", command: "bad-field", values: {} }),
+      )
+    ).status,
+    502,
   );
   // A focus that isn't a section id is refused.
   assert.equal(
