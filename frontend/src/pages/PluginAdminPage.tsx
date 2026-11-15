@@ -61,54 +61,127 @@ function LookupField({
 }) {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
-  const [options, setOptions] = useState<{ value: string; label: string; detail?: string }[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const [attempt, setAttempt] = useState(0);
+  const [result, setResult] = useState<{
+    query: string;
+    options: { value: string; label: string; detail?: string }[];
+    error: boolean;
+  } | null>(null);
+  const input = useRef<HTMLInputElement>(null);
+  const list = useRef<HTMLUListElement>(null);
   const listId = useId();
+  const statusId = useId();
+  const loading = result?.query !== query;
+  const options = !loading && result && !result.error ? result.options : [];
+  const activeId = open && options[activeIndex] ? `${listId}-${activeIndex}` : undefined;
+  const begin = () => {
+    setQuery("");
+    setResult(null);
+    setActiveIndex(-1);
+    setOpen(true);
+  };
+  const retry = () => {
+    setResult(null);
+    setAttempt((current) => current + 1);
+  };
+  const choose = (option: (typeof options)[number]) => {
+    onChange(option.value, option.label);
+    setOpen(false);
+    setActiveIndex(-1);
+  };
   useEffect(() => {
-    if (!open) return undefined;
+    if (!open || disabled) return undefined;
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
-      setLoading(true);
       parseResponse(
         pluginsClient[":id"].pages[":pageId"].$get(
           { param: { id: pluginId, pageId }, query: { lookup: field.lookup ?? "", q: query } },
           { init: { signal: controller.signal } },
         ),
       )
-        .then((result) => {
-          if ("lookup" in result) setOptions(result.options);
+        .then((response) => {
+          if (controller.signal.aborted) return;
+          if (!("lookup" in response)) throw new Error("Invalid lookup response");
+          setResult({ query, options: response.options, error: false });
         })
-        .catch(() => setOptions([]))
-        .finally(() => setLoading(false));
+        .catch(() => {
+          if (!controller.signal.aborted) setResult({ query, options: [], error: true });
+        });
     }, 200);
     return () => {
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [open, query, field.lookup, pluginId, pageId]);
+  }, [open, disabled, query, field.lookup, pluginId, pageId, attempt]);
+  useEffect(() => {
+    const menu = list.current;
+    const option = menu?.children[activeIndex];
+    if (!menu || !(option instanceof HTMLElement)) return;
+    if (option.offsetTop < menu.scrollTop) menu.scrollTop = option.offsetTop;
+    else if (option.offsetTop + option.offsetHeight > menu.scrollTop + menu.clientHeight)
+      menu.scrollTop = option.offsetTop + option.offsetHeight - menu.clientHeight;
+  }, [activeIndex, activeId]);
   return (
-    <div className="plugin-admin__lookup">
+    <div
+      className="plugin-admin__lookup"
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+      }}
+    >
       <div className="activity-toolbar__filter plugin-admin__lookup-input">
         <Search aria-hidden="true" />
         <input
+          ref={input}
           id={id}
           type="search"
           role="combobox"
           aria-expanded={open}
-          aria-controls={listId}
+          aria-controls={open ? listId : undefined}
+          aria-activedescendant={activeId}
+          aria-describedby={open ? statusId : undefined}
           aria-autocomplete="list"
+          aria-required={field.required || undefined}
           autoComplete="off"
+          maxLength={200}
           disabled={disabled}
           placeholder={field.placeholder || "Search"}
           value={open ? query : label}
           onFocus={() => {
-            setQuery("");
+            if (!open) begin();
+          }}
+          onChange={(event) => {
+            if (open && event.target.value === query) return;
+            setQuery(event.target.value);
+            setResult(null);
+            setActiveIndex(-1);
             setOpen(true);
           }}
-          onBlur={() => window.setTimeout(() => setOpen(false), 150)}
-          onChange={(event) => setQuery(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key === "Escape") setOpen(false);
+            if (event.nativeEvent.isComposing) return;
+            if (event.key === "Escape") {
+              event.preventDefault();
+              event.stopPropagation();
+              setOpen(false);
+            } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+              event.preventDefault();
+              if (!open) begin();
+              else if (options.length)
+                setActiveIndex((current) =>
+                  event.key === "ArrowDown"
+                    ? Math.min(current + 1, options.length - 1)
+                    : current <= 0
+                      ? options.length - 1
+                      : current - 1,
+                );
+            } else if (open && options.length && (event.key === "Home" || event.key === "End")) {
+              event.preventDefault();
+              setActiveIndex(event.key === "Home" ? 0 : options.length - 1);
+            } else if (open && event.key === "Enter") {
+              event.preventDefault();
+              if (result?.error && !loading) retry();
+              else if (options[activeIndex]) choose(options[activeIndex]);
+            }
           }}
         />
         {value && !open ? (
@@ -116,29 +189,76 @@ function LookupField({
             label={`Clear ${field.label.toLowerCase()}`}
             className="btn"
             disabled={disabled}
-            onClick={() => onChange("", "")}
+            onClick={() => {
+              onChange("", "");
+              input.current?.focus();
+              setOpen(false);
+            }}
           >
             <X aria-hidden="true" />
           </TooltipButton>
         ) : null}
       </div>
       {open ? (
-        <ul id={listId} role="listbox" className="plugin-admin__lookup-list">
-          {loading && !options.length ? (
-            <li className="plugin-admin__lookup-empty">
-              <DotLoader size="xs" label={null} /> Searching…
-            </li>
-          ) : options.length ? (
-            options.map((option) => (
-              <li key={option.value} role="option" aria-selected={option.value === value}>
+        <div className="plugin-admin__lookup-list">
+          <div
+            id={statusId}
+            role="status"
+            aria-live="polite"
+            className="plugin-admin__lookup-empty"
+          >
+            {loading ? (
+              <>
+                <DotLoader size="xs" label={null} /> Searching…
+              </>
+            ) : result?.error ? (
+              <>
+                <AlertCircle aria-hidden="true" />
+                <span>{"Couldn't load results."}</span>
                 <button
                   type="button"
-                  className="plugin-admin__lookup-option"
+                  className="plugin-admin__link"
                   onMouseDown={(event) => event.preventDefault()}
                   onClick={() => {
-                    onChange(option.value, option.label);
-                    setOpen(false);
+                    retry();
+                    input.current?.focus();
                   }}
+                >
+                  Try again
+                </button>
+              </>
+            ) : options.length ? (
+              `${options.length} result${options.length === 1 ? "" : "s"}. Use arrow keys and Enter to choose.`
+            ) : query ? (
+              "No matches"
+            ) : (
+              "Type to search"
+            )}
+          </div>
+          {/* Scroll containers can be implicit tab stops; keep focus in the combobox. */}
+          <ul
+            ref={list}
+            tabIndex={-1}
+            id={listId}
+            role="listbox"
+            aria-label={`${field.label} results`}
+            aria-busy={loading}
+            className="plugin-admin__lookup-options"
+          >
+            {options.map((option, index) => (
+              <li
+                key={option.value}
+                id={`${listId}-${index}`}
+                role="option"
+                aria-selected={index === activeIndex}
+              >
+                <button
+                  type="button"
+                  tabIndex={-1}
+                  className="plugin-admin__lookup-option"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onMouseMove={() => setActiveIndex(index)}
+                  onClick={() => choose(option)}
                 >
                   <span>{option.label}</span>
                   {option.detail ? (
@@ -146,11 +266,9 @@ function LookupField({
                   ) : null}
                 </button>
               </li>
-            ))
-          ) : (
-            <li className="plugin-admin__lookup-empty">No matches</li>
-          )}
-        </ul>
+            ))}
+          </ul>
+        </div>
       ) : null}
     </div>
   );
@@ -649,6 +767,7 @@ export default function PluginAdminPage({
   onRefetch: () => Promise<unknown>;
 }) {
   const [search, setSearch] = useState(params.q);
+  const searchHelpId = useId();
   const [message, setMessage] = useState("");
   const [error, setError] = useState<{ text: string; conflict: boolean } | null>(null);
   const [dirtyForms, setDirtyForms] = useState<Record<string, boolean>>({});
@@ -893,6 +1012,7 @@ export default function PluginAdminPage({
               <input
                 type="search"
                 aria-label={data.list.placeholder || "Search"}
+                aria-describedby={searchHelpId}
                 placeholder={data.list.placeholder || "Search"}
                 maxLength={200}
                 value={search}
@@ -911,7 +1031,24 @@ export default function PluginAdminPage({
                 </TooltipButton>
               ) : null}
             </label>
+            <button type="submit" className="btn btn-secondary btn-sm" disabled={busy || fetching}>
+              Search
+            </button>
           </form>
+          <p
+            id={searchHelpId}
+            role="status"
+            aria-live="polite"
+            className="plugin-admin__search-status"
+          >
+            {fetching
+              ? "Loading results…"
+              : search !== params.q
+                ? "Press Enter or Search to apply your search."
+                : params.q
+                  ? `${data.list.total} result${data.list.total === 1 ? "" : "s"} for “${params.q}”.`
+                  : "Press Enter or Search to search this list."}
+          </p>
           {data.list.actions.length ? (
             <div className="plugin-admin__list-actions">
               <ActionButtons actions={data.list.actions} disabled={busy} onAction={runAction} />
