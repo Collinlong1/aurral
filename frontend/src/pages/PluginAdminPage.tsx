@@ -1,6 +1,8 @@
 // Host renderer for generic plugin admin pages (v2). Plugins send bounded data;
 // everything here is Aurral's own markup, components and design tokens.
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { useSortable } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { parseResponse } from "hono/client";
 import { useBlocker } from "react-router";
@@ -17,7 +19,17 @@ import StatePanel from "../components/StatePanel";
 import { ConfirmModal } from "../components/ConfirmModal";
 import { DotLoader } from "../components/DotLoader";
 import TooltipButton from "../components/TooltipButton";
-import { AlertCircle, ChevronLeft, ChevronRight, Search, X } from "../components/icons";
+import { SortableList } from "../components/SortableList";
+import {
+  AlertCircle,
+  ArrowDown,
+  ArrowUp,
+  ChevronLeft,
+  ChevronRight,
+  GripVertical,
+  Search,
+  X,
+} from "../components/icons";
 import "./Settings/settings.css";
 import "./PluginAdminPage.css";
 
@@ -278,6 +290,115 @@ function LookupField({
   );
 }
 
+function OrderItem({
+  id,
+  label,
+  index,
+  count,
+  disabled,
+  onMove,
+}: {
+  id: string;
+  label: string;
+  index: number;
+  count: number;
+  disabled: boolean;
+  onMove: (from: number, to: number) => void;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    setActivatorNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id, disabled });
+  return (
+    <li
+      ref={setNodeRef}
+      className={`plugin-admin__order-item${isDragging ? " is-dragging" : ""}`}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+    >
+      <button
+        type="button"
+        ref={setActivatorNodeRef}
+        className="plugin-admin__order-handle"
+        aria-label={`Drag ${label}`}
+        disabled={disabled}
+        {...attributes}
+        {...listeners}
+      >
+        <GripVertical aria-hidden="true" />
+      </button>
+      <span className="plugin-admin__order-position">{index + 1}</span>
+      <span className="plugin-admin__order-label">{label}</span>
+      <TooltipButton
+        label={`Move ${label} up`}
+        className="btn btn-ghost btn-icon btn-sm"
+        disabled={disabled || index === 0}
+        onClick={() => onMove(index, index - 1)}
+      >
+        <ArrowUp aria-hidden="true" />
+      </TooltipButton>
+      <TooltipButton
+        label={`Move ${label} down`}
+        className="btn btn-ghost btn-icon btn-sm"
+        disabled={disabled || index === count - 1}
+        onClick={() => onMove(index, index + 1)}
+      >
+        <ArrowDown aria-hidden="true" />
+      </TooltipButton>
+    </li>
+  );
+}
+
+// Items the person rearranges locally (drag, keyboard drag or the arrow
+// buttons); the form saves the new order once.
+function OrderField({
+  id,
+  field,
+  value,
+  disabled,
+  onChange,
+}: {
+  id: string;
+  field: PluginPageV2Field;
+  value: string[];
+  disabled: boolean;
+  onChange: (value: string[]) => void;
+}) {
+  const labels = useMemo(
+    () => new Map(field.options.map((option) => [option.value, option.label])),
+    [field.options],
+  );
+  const labelOf = (item: string | number) => labels.get(String(item)) ?? String(item);
+  const move = (from: number, to: number) => {
+    const next = [...value];
+    const [item] = next.splice(from, 1);
+    if (item === undefined) return;
+    next.splice(to, 0, item);
+    onChange(next);
+  };
+  return (
+    <SortableList ids={value} titleOf={labelOf} onReorder={onChange}>
+      <ol id={id} className="plugin-admin__order" aria-label={field.label}>
+        {value.map((item, index) => (
+          <OrderItem
+            key={item}
+            id={item}
+            label={labelOf(item)}
+            index={index}
+            count={value.length}
+            disabled={disabled}
+            onMove={move}
+          />
+        ))}
+      </ol>
+    </SortableList>
+  );
+}
+
 function FieldMeta({
   field,
   disabled,
@@ -410,6 +531,16 @@ function FormSection({
             }}
           />
         );
+      case "order":
+        return (
+          <OrderField
+            id={id}
+            field={field}
+            value={Array.isArray(value) ? value : []}
+            disabled={disabled}
+            onChange={(next) => set(field.key, next)}
+          />
+        );
       case "mapping":
         return null;
       default:
@@ -484,11 +615,14 @@ function FormSection({
             </div>
           );
         }
-        const stack = ["textarea", "lines", "lookup"].includes(field.type);
+        const stack = ["textarea", "lines", "lookup", "order"].includes(field.type);
         return (
           <div key={field.key} className={`settings-row${stack ? " settings-row--stack" : ""}`}>
             <div className="settings-row__copy">
-              <label className="settings-row__label" htmlFor={id}>
+              <label
+                className="settings-row__label"
+                htmlFor={field.type === "order" ? undefined : id}
+              >
                 {field.label}
               </label>
               {field.help ? <p className="settings-row__help">{field.help}</p> : null}

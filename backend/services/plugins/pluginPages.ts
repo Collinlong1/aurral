@@ -70,7 +70,16 @@ const selection = text(500);
 const v2Field = v.object({
   key,
   label: text(200),
-  type: v.picklist(["text", "textarea", "lines", "select", "checkbox", "lookup", "mapping"]),
+  type: v.picklist([
+    "text",
+    "textarea",
+    "lines",
+    "select",
+    "checkbox",
+    "lookup",
+    "mapping",
+    "order",
+  ]),
   value,
   required: v.optional(v.boolean(), false),
   help: v.optional(text()),
@@ -79,6 +88,8 @@ const v2Field = v.object({
   // lookup: the plugin's lookup source; valueLabel names the current value.
   lookup: v.optional(key),
   valueLabel: v.optional(text(500)),
+  // order: value is the items' values in order, options name them (as in v1);
+  // the person rearranges them and saves once.
   // mapping: one select per row, all sharing options; value is one entry per row.
   rows: v.optional(
     v.pipe(
@@ -249,7 +260,8 @@ export async function invokePluginPage(
     pageId,
     // 2: the host also renders admin pages v2 and answers lookups.
     // formActions: v2 form sections may carry footer actions.
-    capabilities: { adminForms: 2, formActions: true },
+    // orderField: v2 forms may use "order" fields.
+    capabilities: { adminForms: 2, formActions: true, orderField: true },
     user: { id: user.id, username: user.username, role: user.role },
     ...(request.operation === "read" ? { query: request.query } : { mutation: request.mutation }),
   };

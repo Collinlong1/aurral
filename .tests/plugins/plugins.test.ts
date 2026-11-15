@@ -176,7 +176,7 @@ test("admin pages v2 and lookups pass validated data; plugins learn the host ren
     ? ({version:2,lookup:input.query.lookup,options:[{value:'w1',label:'Symphony No. 5',detail:'Beethoven'}]})
     : input.query.tab==='bad'
       ? ({version:2,title:'Bad',revision:'1',tabs:[],list:{items:[],total:0,offset:0},view:{crumbs:[],title:'x',sections:[{type:'script',id:'x'}]}})
-      : ({version:2,title:'Editor v'+input.capabilities.adminForms+(input.capabilities.formActions===true?' with form actions':''),revision:'1',tab:input.query.tab,
+      : ({version:2,title:'Editor v'+input.capabilities.adminForms+(input.capabilities.formActions===true?' with form actions':'')+(input.capabilities.orderField===true?' and order fields':''),revision:'1',tab:input.query.tab,
           tabs:[{id:'works',label:'Works',count:1}],
           list:{items:[{id:'w1',label:'Symphony No. 5',selection:'w1',badge:{label:'Complete',tone:'success'}}],total:1,offset:0,
             select:{key:'works',actions:[{label:'Delete',command:'delete-works',arguments:{},tone:'danger',confirm:'Delete?'}]}},
@@ -190,7 +190,8 @@ test("admin pages v2 and lookups pass validated data; plugins learn the host ren
               select:{key:'tracks',actions:[{label:'Send to Classical',command:'set-classification',arguments:{state:'classical'}}]},
               pager:{label:'1–100 of 640',next:'album:1~1'}},
             {type:'details',id:'file',items:[{label:'File',value:'1.flac'}]},
-            {type:'form',id:'notes',command:'save-notes',arguments:{},submitLabel:'Save notes',fields:[]}]}})}}`;
+            {type:'form',id:'notes',command:'save-notes',arguments:{},submitLabel:'Save notes',fields:[
+              {key:'order',label:'Movements',type:'order',value:['m2','m1'],options:[{value:'m1',label:'I. Allegro'},{value:'m2',label:'II. Adagio'}]}]}]}})}}`;
   await install("pages2", { pages: [{ id: "editor", label: "Editor" }] }, code);
   await turnOn("pages2");
   const route = "/plugins/pages2/pages/editor";
@@ -201,7 +202,11 @@ test("admin pages v2 and lookups pass validated data; plugins learn the host ren
     v.object({ version: v.literal(2), title: v.string(), tab: v.string() }),
     body,
   );
-  assert.deepEqual(parsed, { version: 2, title: "Editor v2 with form actions", tab: "works" });
+  assert.deepEqual(parsed, {
+    version: 2,
+    title: "Editor v2 with form actions and order fields",
+    tab: "works",
+  });
   // Bulk selection and section pages pass through.
   const extras = v.parse(
     v.object({
@@ -232,6 +237,20 @@ test("admin pages v2 and lookups pass validated data; plugins learn the host ren
     { label: "Cancel", command: "open", arguments: { selection: "w1~movements" }, tone: "default" },
   ]);
   assert.deepEqual(forms.view.sections[3]?.actions, []);
+  // An order field keeps its items' order.
+  const order = v.parse(
+    v.object({
+      view: v.object({
+        sections: v.array(
+          v.looseObject({
+            fields: v.optional(v.array(v.looseObject({ type: v.string(), value: v.unknown() }))),
+          }),
+        ),
+      }),
+    }),
+    body,
+  ).view.sections[3]?.fields?.[0];
+  assert.deepEqual([order?.type, order?.value], ["order", ["m2", "m1"]]);
   const lookup = await routes(admin).request(`${route}?lookup=works&q=symphony`);
   assert.equal(lookup.status, 200);
   const options: unknown = await lookup.json();
