@@ -1,3 +1,7 @@
+# Metadata editor UI, item 1
+
+Generic admin pages v2 now guard unsaved forms before unrelated mutations and before leaving/reloading the page. The companion plugin's `EDITOR_UI_HANDOFF.md` records implementation, validation and the ordered UI backlog. Local work; no API/schema or existing feature removal.
+
 # Phase 4 inventory addendum
 
 The fork now has opt-in generic album-presentation, authenticated resource-page and bounded local queue capabilities. Classical decisions and storage stay in the plugin. Existing main/upstream/preservation refs are unchanged. See `PHASE_4_REPORT.md` and the central plugin `UPSTREAM_DELTA.md`.

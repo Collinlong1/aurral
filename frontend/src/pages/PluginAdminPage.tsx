@@ -3,6 +3,7 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { parseResponse } from "hono/client";
+import { useBlocker } from "react-router";
 import type {
   PluginPageV2Action,
   PluginPageV2Data,
@@ -649,6 +650,13 @@ export default function PluginAdminPage({
   const [pending, setPending] = useState<{ next: Partial<AdminParams>; options: GoOptions } | null>(
     null,
   );
+  const [pendingMutation, setPendingMutation] = useState<{
+    command: string;
+    values: Values;
+    forms: string[];
+  } | null>(null);
+  const [pendingReload, setPendingReload] = useState(false);
+  const [formReset, setFormReset] = useState(0);
   // A section to bring into view once the page shows it (a step of a task
   // further down the page, or a section's next page).
   const [focus, setFocus] = useState<string | null>(null);
@@ -667,6 +675,21 @@ export default function PluginAdminPage({
       return { ...current, [id]: on ? [...rest, rowId] : rest };
     });
   const dirty = Object.values(dirtyForms).some(Boolean);
+  // Internal page links use go's guard below; the router also covers the
+  // surrounding app navigation and browser back/forward.
+  const blocker = useBlocker(
+    ({ currentLocation, nextLocation, historyAction }) =>
+      dirty && (historyAction === "POP" || currentLocation.pathname !== nextLocation.pathname),
+  );
+  useEffect(() => {
+    if (!dirty) return undefined;
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
   const dirtySetters = useRef(new Map<string, (dirty: boolean) => void>());
   const dirtyFor = (id: string) => {
     let setter = dirtySetters.current.get(id);
@@ -719,6 +742,7 @@ export default function PluginAdminPage({
     },
     onSuccess: async (result, { command }) => {
       setDirtyForms({});
+      setFormReset((current) => current + 1);
       setTicked({});
       // Album pages and work pages read the catalogue the plugin just changed.
       void queryClient.invalidateQueries({ queryKey: ["plugin-album-presentation"] });
@@ -757,7 +781,20 @@ export default function PluginAdminPage({
     },
   });
   const busy = mutation.isPending;
-  const run = (command: string, values: Values) => mutation.mutate({ command, values });
+  const run = (command: string, values: Values, submittingForm?: string) => {
+    const forms = Object.keys(dirtyForms).filter((id) => dirtyForms[id] && id !== submittingForm);
+    if (forms.length) {
+      setPendingMutation({ command, values, forms });
+      return;
+    }
+    mutation.mutate({ command, values });
+  };
+  const reload = () => {
+    setError(null);
+    setDirtyForms({});
+    setFormReset((current) => current + 1);
+    void onRefetch();
+  };
   const runAction = (action: PluginPageV2Action) => {
     if (action.confirm) setConfirming(action);
     else run(action.command, action.arguments);
@@ -972,9 +1009,8 @@ export default function PluginAdminPage({
                       type="button"
                       className="btn btn-secondary btn-sm"
                       onClick={() => {
-                        setError(null);
-                        setDirtyForms({});
-                        void onRefetch();
+                        if (dirty) setPendingReload(true);
+                        else reload();
                       }}
                     >
                       Reload
@@ -989,7 +1025,7 @@ export default function PluginAdminPage({
                       // Entries share section ids such as "details", so the key names
                       // what the form edits; otherwise one entry's edits carry into the next.
                       <Group
-                        key={`${section.id}:${data.revision}:${section.command}:${JSON.stringify(section.arguments)}`}
+                        key={`${section.id}:${data.revision}:${formReset}:${section.command}:${JSON.stringify(section.arguments)}`}
                         id={section.id}
                         title={section.title}
                       >
@@ -1001,7 +1037,7 @@ export default function PluginAdminPage({
                           onDirty={dirtyFor(section.id)}
                           onAction={runAction}
                           onSubmit={(values) =>
-                            run(section.command, { ...section.arguments, ...values })
+                            run(section.command, { ...section.arguments, ...values }, section.id)
                           }
                         />
                       </Group>
@@ -1096,16 +1132,40 @@ export default function PluginAdminPage({
         </div>
       </div>
       <ConfirmModal
-        open={pending !== null}
+        open={pending !== null || pendingReload || blocker.state === "blocked"}
         title="Discard unsaved changes?"
         body="You have edits that haven't been saved."
         confirmLabel="Discard"
         busyLabel="Discarding"
-        onCancel={() => setPending(null)}
+        onCancel={() => {
+          setPending(null);
+          setPendingReload(false);
+          if (blocker.state === "blocked") blocker.reset();
+        }}
         onConfirm={() => {
           const next = pending;
           setPending(null);
-          if (next) go(next.next, { ...next.options, force: true });
+          if (pendingReload) {
+            setPendingReload(false);
+            reload();
+          } else if (blocker.state === "blocked") {
+            setDirtyForms({});
+            blocker.proceed();
+          } else if (next) go(next.next, { ...next.options, force: true });
+        }}
+      />
+      <ConfirmModal
+        open={pendingMutation !== null}
+        title="Discard other unsaved changes?"
+        body={`Your changes in ${(pendingMutation?.forms ?? []).map((id) => data.view?.sections.find((section) => section.id === id)?.title || id).join(", ")} haven't been saved. Discard them and continue with this action, or keep editing to save them first.`}
+        cancelLabel="Keep editing"
+        confirmLabel="Discard and continue"
+        busyLabel="Working"
+        onCancel={() => setPendingMutation(null)}
+        onConfirm={() => {
+          const request = pendingMutation;
+          setPendingMutation(null);
+          if (request) mutation.mutate({ command: request.command, values: request.values });
         }}
       />
       <ConfirmModal
