@@ -3,7 +3,8 @@ import * as v from "valibot";
 import { getLibraryForTrackIds } from "../libraryQueryService.ts";
 import { playlistOperationQueue } from "../playlists/playlistOperationQueue.ts";
 import type { RequestUser } from "../../middleware/requestUser.ts";
-import { albumTarget } from "./pluginContext.ts";
+import { logger } from "../logger.ts";
+import { albumTarget, PluginTargetMissing } from "./pluginContext.ts";
 import { callPlugin, PluginError } from "./pluginHost.ts";
 import { activePlugin, activePlugins, isCapabilityOn, pluginInput } from "./pluginStore.ts";
 import { PluginRequestError } from "./pluginService.ts";
@@ -121,15 +122,19 @@ function realUser(user: RequestUser) {
 }
 
 type AlbumTarget = ReturnType<typeof albumTarget>;
-// Each album is read once per response, however many groups name it.
+// Each album is read once per response, however many groups name it. An
+// album that no longer exists has no playable tracks.
 type PlayableAlbums = Map<string, Set<number>>;
 const playableTracks = (album: AlbumTarget) =>
   new Set(album.tracks.filter((track) => track.path).map((track) => Number(track.id)));
 
+// The plugin's catalogue follows the Library only after its next scan, and a
+// retag gives a track or album a new id, so an item can name a track that is
+// gone. Drop those; a malformed reference or range is still a plugin bug.
 function playableItems<
   Item extends { trackId: string; albumId: string; startMs: number; endMs: number | null },
 >(items: Item[], albums: PlayableAlbums, expectedAlbumId?: string) {
-  return items.map((item) => {
+  return items.flatMap((item) => {
     if (expectedAlbumId !== undefined && item.albumId !== expectedAlbumId)
       throw new PluginRequestError(502, "Plugin returned a track from another album");
     if (item.endMs !== null && item.endMs <= item.startMs)
@@ -141,29 +146,43 @@ function playableItems<
     if (!playable) {
       try {
         playable = playableTracks(albumTarget(item.albumId));
-      } catch {
-        throw new PluginRequestError(502, "Plugin returned an unavailable album reference");
+      } catch (error) {
+        if (!(error instanceof PluginTargetMissing))
+          throw new PluginRequestError(502, "Plugin returned an unavailable album reference");
+        playable = new Set();
       }
       albums.set(item.albumId, playable);
     }
-    if (!playable.has(numericTrackId))
-      throw new PluginRequestError(502, "Plugin returned a track outside its album");
-    return {
-      ...item,
-      streamPath: `/library/stream/${encodeURIComponent(item.albumId)}/${encodeURIComponent(item.trackId)}`,
-    };
+    if (!playable.has(numericTrackId)) return [];
+    return [
+      {
+        ...item,
+        streamPath: `/library/stream/${encodeURIComponent(item.albumId)}/${encodeURIComponent(item.trackId)}`,
+      },
+    ];
   });
 }
 
-function hydrateWork(view: v.InferOutput<typeof workView>) {
+function logDropped(pluginId: string, before: number, after: number) {
+  if (before > after)
+    logger.info(`plugin:${pluginId}`, "Left out items whose tracks are no longer in the Library", {
+      dropped: before - after,
+    });
+}
+
+function hydrateWork(pluginId: string, view: v.InferOutput<typeof workView>) {
   const albums: PlayableAlbums = new Map();
-  return {
-    ...view,
-    recordings: view.recordings.map((recording) => ({
-      ...recording,
-      items: playableItems(recording.items, albums),
-    })),
-  };
+  let before = 0;
+  let after = 0;
+  const recordings = view.recordings.flatMap((recording) => {
+    const items = playableItems(recording.items, albums);
+    before += recording.items.length;
+    after += items.length;
+    // A recording whose every track is gone has nothing left to show.
+    return recording.items.length && !items.length ? [] : [{ ...recording, items }];
+  });
+  logDropped(pluginId, before, after);
+  return { ...view, recordings };
 }
 
 function bounded<T>(value: T, maxBytes = 512000) {
@@ -199,7 +218,7 @@ export async function readPluginResource(
       workView,
       15000,
     );
-    return bounded(hydrateWork(view));
+    return bounded(hydrateWork(plugin.id, view));
   } catch (error) {
     if (error instanceof PluginError)
       throw new PluginRequestError(502, `Plugin page: ${error.message}`);
@@ -270,20 +289,25 @@ export async function pluginAlbumPresentation(user: RequestUser, albumId: string
       if (!result) continue;
       // album.tracks is in disc and track order; groups follow the album.
       const position = new Map(album.tracks.map((track, index) => [String(track.id), index]));
-      const firstPosition = (group: (typeof result.groups)[number]) =>
+      const firstPosition = (group: { items: { trackId: string }[] }) =>
         Math.min(...group.items.map((item) => position.get(item.trackId) ?? Infinity));
       const albums: PlayableAlbums = new Map([[String(album.id), playableTracks(album)]]);
+      const groups = result.groups.flatMap((group) => {
+        const items = playableItems(group.items, albums, String(album.id));
+        if (!items.length) return [];
+        const href = group.workId ? `/plugins/${plugin.id}/work/${group.workId}` : null;
+        return [{ ...group, href, items }];
+      });
+      logDropped(
+        plugin.id,
+        result.groups.reduce((total, group) => total + group.items.length, 0),
+        groups.reduce((total, group) => total + group.items.length, 0),
+      );
       return bounded(
         {
           pluginId: plugin.id,
           ...result,
-          groups: result.groups
-            .map((group) => ({
-              ...group,
-              href: group.workId ? `/plugins/${plugin.id}/work/${group.workId}` : null,
-              items: playableItems(group.items, albums, String(album.id)),
-            }))
-            .sort((a, b) => firstPosition(a) - firstPosition(b)),
+          groups: groups.sort((a, b) => firstPosition(a) - firstPosition(b)),
         },
         // About 400 bytes a track, for the largest box sets.
         ALBUM_TRACKS * 1000,
