@@ -79,6 +79,11 @@ export const pluginManifestSchema = v.object({
   ),
   albumPresentation: v.optional(v.boolean(), false),
   search: v.optional(v.boolean(), false),
+  // One entry in the Library's navigation, opening a non-admin page.
+  library: v.optional(
+    v.nullable(v.object({ pageId: key, resourceId: text(200), label: text(40) })),
+    null,
+  ),
   events: v.optional(
     v.pipe(
       v.array(v.picklist(PLUGIN_EVENTS)),
@@ -147,6 +152,10 @@ export function pluginCapabilities(manifest: PluginManifest) {
       ? [{ key: "albumPresentation", label: "Album presentation", kind: "Album page" }]
       : []),
     ...(manifest.search ? [{ key: "search", label: "Search results", kind: "Search" }] : []),
+    ...(manifest.library &&
+    manifest.pages.some((page) => page.id === manifest.library?.pageId && !page.admin)
+      ? [{ key: "library", label: manifest.library.label, kind: "Library navigation" }]
+      : []),
     ...manifest.actions.map((action) => ({
       key: `action:${action.id}`,
       label: action.label,

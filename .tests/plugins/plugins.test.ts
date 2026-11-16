@@ -400,6 +400,78 @@ test("one crash with several calls waiting is one failure, not one per call", as
   assert.equal(activePlugin("crashy")?.enabled, true);
 });
 
+test("a plugin's Library entry shows once declared for a Library page and switched on", async () => {
+  const { pluginLibraryEntries } =
+    await import("../../backend/services/plugins/pluginPresentation.ts");
+  await install(
+    "shelf",
+    {
+      pages: [
+        { id: "library", label: "Library", admin: false },
+        { id: "editor", label: "Editor" },
+      ],
+      library: { pageId: "library", resourceId: "home", label: "Shelf" },
+    },
+    "export default { pages: { read: () => ({ version: 2, title: 'Shelf', sections: [] }) } }",
+  );
+  // An entry naming an admin page is never offered.
+  await install(
+    "hidden",
+    {
+      pages: [{ id: "editor", label: "Editor" }],
+      library: { pageId: "editor", resourceId: "home", label: "Hidden" },
+    },
+    "export default {}",
+  );
+  await turnOn("shelf");
+  await turnOn("hidden");
+  const entries = () =>
+    pluginLibraryEntries().filter((entry) => ["shelf", "hidden"].includes(entry.pluginId));
+  assert.deepEqual(entries(), [
+    { pluginId: "shelf", label: "Shelf", path: "/plugins/shelf/library/home" },
+  ]);
+  // People get them from their own endpoint, not on every app load.
+  const listed = v.parse(
+    v.object({
+      entries: v.array(v.object({ pluginId: v.string(), label: v.string(), path: v.string() })),
+    }),
+    await (await routes(owner).request("/plugins/library")).json(),
+  );
+  assert.deepEqual(
+    listed.entries.filter((entry) => entry.pluginId === "shelf"),
+    [{ pluginId: "shelf", label: "Shelf", path: "/plugins/shelf/library/home" }],
+  );
+  const capabilities = v.parse(
+    v.object({
+      plugins: v.array(
+        v.looseObject({
+          id: v.string(),
+          capabilities: v.array(v.looseObject({ key: v.string(), kind: v.string() })),
+        }),
+      ),
+    }),
+    await (await routes(admin).request("/plugins")).json(),
+  );
+  assert.deepEqual(
+    capabilities.plugins
+      .find((plugin) => plugin.id === "shelf")
+      ?.capabilities.filter((c) => c.key === "library")
+      .map((c) => c.kind),
+    ["Library navigation"],
+  );
+  assert.equal(
+    capabilities.plugins
+      .find((plugin) => plugin.id === "hidden")
+      ?.capabilities.some((c) => c.key === "library"),
+    false,
+  );
+  // The admin's switch, or the page's, takes it out.
+  await turnOn("shelf", { capabilities: { library: false } });
+  assert.deepEqual(entries(), []);
+  await turnOn("shelf", { capabilities: { library: true, "page:library": false } });
+  assert.deepEqual(entries(), []);
+});
+
 test("old plugins stay page-free and invalid page output fails with a bounded error", async () => {
   await install("legacy", {}, "export default {}");
   await turnOn("legacy");

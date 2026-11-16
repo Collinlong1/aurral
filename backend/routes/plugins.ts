@@ -13,6 +13,7 @@ import {
   readPluginResource,
   mutatePluginResource,
   pluginResourceQuery,
+  pluginLibraryEntries,
   resourcePlaylistInput,
   saveResourcePlaylist,
 } from "../services/plugins/pluginPresentation.ts";
@@ -132,6 +133,10 @@ export default new Hono<AppEnv>()
     noCache,
     validate("query", pluginSearchQuery),
     (c) => answer(c, () => pluginSearch(c.var.user, c.req.valid("query"))),
+  )
+  // Plugin pages an admin added to the Library's navigation.
+  .get("/library", requireAuth, requireUserAccount, (c) =>
+    answer(c, () => ({ entries: pluginLibraryEntries() })),
   )
   .get("/album-presentation/:albumId", requireAuth, requireUserAccount, (c) =>
     answer(c, () => pluginAlbumPresentation(c.var.user, c.req.param("albumId"))),

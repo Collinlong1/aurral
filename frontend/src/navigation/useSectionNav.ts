@@ -1,4 +1,7 @@
 import { useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { parseResponse } from "hono/client";
+import { pluginsClient } from "../utils/api/clients/plugins.ts";
 import { useLocation } from "react-router";
 import { useAuth } from "../contexts/AuthContext";
 import { ACTIVITY_VIEWS, buildActivityPath, WANTED_VIEWS } from "./activityNavConfig";
@@ -14,6 +17,15 @@ function firstSegment(pathname: string, prefix: string) {
 export function useSectionNav() {
   const { key, pathname, search } = useLocation();
   const { user, bootstrap } = useAuth();
+  // Plugin pages in the Library's navigation: asked for only where the
+  // Library's navigation shows, not on every load.
+  const libraryEntries = useQuery({
+    queryKey: ["plugin-library", user?.id],
+    queryFn: () => parseResponse(pluginsClient.library.$get()),
+    enabled:
+      (user?.id ?? 0) > 0 && (pathname.startsWith("/library") || pathname.startsWith("/plugins/")),
+    staleTime: 300_000,
+  }).data?.entries;
 
   return useMemo(() => {
     const section = resolveSection(key, pathname);
@@ -67,6 +79,13 @@ export function useSectionNav() {
           path: view.path,
           active: segment === view.id,
         })),
+        // Plugin pages an admin added to the Library.
+        ...(libraryEntries ?? []).map((entry) => ({
+          id: `plugin:${entry.pluginId}`,
+          label: entry.label,
+          path: entry.path,
+          active: pathname === entry.path,
+        })),
       ];
       return { id, root, title: "Library", label: "Library views", items };
     }
@@ -103,5 +122,5 @@ export function useSectionNav() {
       active: segment === filter.id,
     }));
     return { id, root, title: "Shows", label: "Show filters", items };
-  }, [bootstrap?.newsConfigured, key, pathname, search, user]);
+  }, [bootstrap?.newsConfigured, libraryEntries, key, pathname, search, user]);
 }

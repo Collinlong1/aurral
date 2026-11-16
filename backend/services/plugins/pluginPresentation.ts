@@ -5,7 +5,7 @@ import { playlistOperationQueue } from "../playlists/playlistOperationQueue.ts";
 import type { RequestUser } from "../../middleware/requestUser.ts";
 import { logger } from "../logger.ts";
 import { albumTarget, PluginTargetMissing } from "./pluginContext.ts";
-import { parseFilters, pluginLink, resolvedLink } from "./pluginLinks.ts";
+import { hrefFor, parseFilters, pluginLink, resolvedLink } from "./pluginLinks.ts";
 import { callPlugin, PluginError } from "./pluginHost.ts";
 import { activePlugin, activePlugins, isCapabilityOn, pluginInput } from "./pluginStore.ts";
 import { PluginRequestError } from "./pluginService.ts";
@@ -597,4 +597,25 @@ export async function saveResourcePlaylist(
     downloadMissing: false,
   });
   return { ok: true as const, playlistId, tracks: tracks.length };
+}
+
+// The Library's navigation entries: one per plugin that declares a
+// non-admin Library page, with the entry and that page switched on.
+export function pluginLibraryEntries() {
+  return activePlugins().flatMap((plugin) => {
+    const entry = plugin.manifest.library;
+    if (
+      !entry ||
+      !isCapabilityOn(plugin, "library") ||
+      !isCapabilityOn(plugin, `page:${entry.pageId}`)
+    )
+      return [];
+    if (!plugin.manifest.pages.some((page) => page.id === entry.pageId && !page.admin)) return [];
+    const path = hrefFor(plugin.id, {
+      type: "resource",
+      pageId: entry.pageId,
+      resourceId: entry.resourceId,
+    });
+    return path ? [{ pluginId: plugin.id, label: entry.label, path }] : [];
+  });
 }
