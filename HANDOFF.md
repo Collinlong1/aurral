@@ -1,3 +1,7 @@
+# Synced with upstream through #1891 (November 16, 2026)
+
+At the user's request, fork `main` merged upstream lklynet/aurral #1891 (pause and resume the download queue) as `dabeef5`, fast-forwarded from a short-lived branch. Two conflicts: `downloadWorker.start()` keeps both the fork's wake of a running worker and upstream's no-start while paused; `.tests/perf/baseline.json` was regenerated on the merged tree (app shell 1563 bytes). Then `aurral-classical` merged `main` with no conflicts. Node 26.12 on both trees: `pnpm check` clean at the 1089 unsafe-any baseline, frontend build passes; unit tests 2651/2651 on `main` and 2668/2668 across 388 files on `aurral-classical`. Not run: `pnpm eden test`, integration tests, remote CI, and the companion plugin's Compose and Chromium workflow, which AGENTS.md asks for after a sync. No PR, release or deployment.
+
 # Paired integration CI passes (November 15, 2026)
 
 The user asked for the paired integration workflow to be run on `aurral-classical`. **Run 30 (`43682154366`) passed** (plugin `347a4e4`, core pin `a7691ad`). It covers all seven editor browser checks, the comparison smoke, the full-app editor and permissions check, and restart persistence with unchanged media.

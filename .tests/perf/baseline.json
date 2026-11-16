@@ -4,7 +4,7 @@
       "cold": 13,
       "warm": 13
     },
-    "bytes": 1533,
+    "bytes": 1563,
     "scans": []
   },
   "library home": {
@@ -12,7 +12,7 @@
       "cold": 127,
       "warm": 121
     },
-    "bytes": 180403,
+    "bytes": 180583,
     "scans": []
   },
   "library albums": {
@@ -160,7 +160,7 @@
       "cold": 94,
       "warm": 59
     },
-    "bytes": 2039,
+    "bytes": 2041,
     "scans": [],
     "calls": {
       "api.deezer.com": {
@@ -252,7 +252,7 @@
       "cold": 33,
       "warm": 19
     },
-    "bytes": 4737,
+    "bytes": 4752,
     "scans": [
       "download_jobs"
     ]
@@ -262,7 +262,7 @@
       "cold": 12,
       "warm": 12
     },
-    "bytes": 248,
+    "bytes": 278,
     "scans": [
       "download_jobs"
     ]
@@ -328,7 +328,7 @@
       "cold": 15,
       "warm": 15
     },
-    "bytes": 44099,
+    "bytes": 44055,
     "scans": []
   },
   "subsonic getGenres": {
