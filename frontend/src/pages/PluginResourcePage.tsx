@@ -13,7 +13,11 @@ import { pluginQueueTrack } from "../utils/pluginQueue.ts";
 import { albumPath } from "../../../lib/albumPath.ts";
 import { getApiErrorMessage, readApiError } from "../utils/api/errors.ts";
 import { formatDuration } from "./library/libraryShared.tsx";
-import type { readPluginResource } from "../../../backend/services/plugins/pluginPresentation.ts";
+import type {
+  mutatePluginResource,
+  readPluginResource,
+} from "../../../backend/services/plugins/pluginPresentation.ts";
+import PluginResourceView from "./PluginResourceView.tsx";
 import "./PluginPage.css";
 
 type ResourceView = Awaited<ReturnType<typeof readPluginResource>>;
@@ -52,7 +56,7 @@ export default function PluginResourcePage() {
   // "" compares whole works; a movement ID compares that movement.
   const [movementId, setMovementId] = useState("");
   // A view 2 page's search, sort, filters, page and tab live in the URL.
-  const [search] = useSearchParams();
+  const [search, setSearch] = useSearchParams();
   const pageQuery = Object.fromEntries(
     (["q", "sort", "filters", "page", "tab"] as const).flatMap((key) => {
       const value = search.get(key);
@@ -71,11 +75,7 @@ export default function PluginResourcePage() {
     retry: false,
   });
   const mutation = useMutation({
-    mutationFn: (body: {
-      command: "favourite" | "pick" | "admin-pick";
-      value?: boolean;
-      realizationId?: string | null;
-    }) =>
+    mutationFn: (body: Parameters<typeof mutatePluginResource>[4]) =>
       parseResponse(
         pluginsClient[":id"].resources[":pageId"][":resourceId"].$post({
           param: { id, pageId, resourceId },
@@ -122,17 +122,18 @@ export default function PluginResourcePage() {
         />
       </div>
     );
-  if (loaded.version !== 1)
+  if (loaded.version === 2)
     return (
-      <div className="plugin-page">
-        <StatePanel
-          icon={<AlertCircle aria-hidden="true" />}
-          heading="h1"
-          role="alert"
-          title="Can't show this page"
-          message="This plugin page needs a newer Aurral."
+      <>
+        <PluginResourceView
+          data={loaded}
+          search={search}
+          setSearch={setSearch}
+          mutating={mutation.isPending}
+          onMutate={(body) => mutation.mutate(body)}
         />
-      </div>
+        {mutationError && <p role="alert">{mutationError}</p>}
+      </>
     );
   const data: WorkView = loaded;
   const workTitle = data.work.title;
