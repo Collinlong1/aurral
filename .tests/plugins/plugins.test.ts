@@ -937,6 +937,128 @@ test("album and track actions get the Library's album and tracks", async (t) => 
     ).status,
     403,
   );
+  // View 2: a generic page built from sections. The plugin gets the URL's
+  // query and capabilities; links become paths; a stale track is dropped.
+  await install(
+    "pages2",
+    { pages: [{ id: "library", label: "Library", admin: false }] },
+    `export default { pages: {
+      read: (input) => ({ version: 2, title: 'Fixture Library', sections: [
+        { type: 'header', title: 'Fixture Library', subtitle: JSON.stringify([input.capabilities, input.query]),
+          facts: [{ label: 'Works', value: '1', link: { type: 'resource', pageId: 'library', resourceId: 'list:work' } }],
+          actions: [{ label: 'Favourite', mutation: { command: 'favourite-item', target: 'work-1', value: true } }] },
+        { type: 'rows', id: 'works', rows: [
+          { id: 'w', label: 'Fixture Work', link: { type: 'resource', pageId: 'library', resourceId: 'work:work-1' } },
+          { id: 'a', label: 'Lowlands', link: { type: 'album', albumId: ${JSON.stringify(albumId)} } },
+          { id: 'f', label: 'More by Glass Coast', link: { type: 'filter', filters: { performer: ['glass-coast'] } } },
+        ] },
+        { type: 'tracks', id: 'play', context: 'Fixture Work', items: [${item}, ${staleOn("gone-in-view")}] },
+        { type: 'pager', total: 120, offset: 100, limit: 100 },
+        { type: 'sort', active: 'title', options: [{ value: 'title', label: 'Title' }] },
+      ] }),
+      mutate: (input) => ({ ok: input.mutation.command === 'favourite-item' || input.mutation.command === 'save-queue' }),
+    } }`,
+  );
+  await turnOn("pages2");
+  const viewResponse = await routes(owner).request(
+    "/plugins/pages2/resources/library/home?q=sonata&sort=title&filters=composer%3Dc1%2Cc2%3Bperiod%3Dbaroque&page=2&tab=works",
+  );
+  assert.equal(viewResponse.status, 200);
+  const viewBody = v.parse(
+    v.object({
+      version: v.literal(2),
+      sections: v.array(
+        v.looseObject({
+          type: v.string(),
+          subtitle: v.optional(v.string()),
+          facts: v.optional(
+            v.array(
+              v.looseObject({ link: v.nullable(v.looseObject({ href: v.nullable(v.string()) })) }),
+            ),
+          ),
+          rows: v.optional(
+            v.array(
+              v.object({
+                id: v.string(),
+                label: v.string(),
+                detail: v.string(),
+                badge: v.string(),
+                link: v.nullable(
+                  v.object({
+                    href: v.nullable(v.string()),
+                    filters: v.nullable(v.record(v.string(), v.array(v.string()))),
+                  }),
+                ),
+              }),
+            ),
+          ),
+          items: v.optional(v.array(v.looseObject({ id: v.string(), streamPath: v.string() }))),
+        }),
+      ),
+    }),
+    await viewResponse.json(),
+  );
+  const [header, rows, tracks] = viewBody.sections;
+  assert.deepEqual(JSON.parse(header?.subtitle ?? "null"), [
+    { resourceView: 2 },
+    {
+      q: "sonata",
+      sort: "title",
+      tab: "works",
+      page: 2,
+      filters: { composer: ["c1", "c2"], period: ["baroque"] },
+    },
+  ]);
+  assert.equal(header?.facts?.[0]?.link?.href, "/plugins/pages2/library/list%3Awork");
+  assert.deepEqual(
+    rows?.rows?.map((row) => [row.id, row.link?.href ?? null, row.link?.filters ?? null]),
+    [
+      ["w", "/plugins/pages2/library/work%3Awork-1", null],
+      ["a", `/album/${albumId}`, null],
+      ["f", null, { performer: ["glass-coast"] }],
+    ],
+  );
+  assert.deepEqual(
+    tracks?.items?.map((entry) => entry.id),
+    ["item-1"],
+  );
+  assert.match(tracks?.items?.[0]?.streamPath ?? "", /\/library\/stream\//);
+  // The new mutations, each with what it needs.
+  const mutateView = (body: object) =>
+    routes(owner).request("/plugins/pages2/resources/library/home", json("POST", body));
+  assert.equal(
+    (await mutateView({ command: "favourite-item", target: "work-1", value: true })).status,
+    200,
+  );
+  assert.equal((await mutateView({ command: "favourite-item", value: true })).status, 400);
+  assert.equal(
+    (await mutateView({ command: "save-queue", name: "Evening", itemIds: ["item-1"] })).status,
+    200,
+  );
+  assert.equal((await mutateView({ command: "save-queue", name: "Evening" })).status, 400);
+  assert.equal(
+    (await routes(owner).request("/plugins/pages2/resources/library/home?sort=not%20a%20key"))
+      .status,
+    400,
+  );
+  // A view 2 page's playable rows can be saved as a playlist too.
+  const enqueueView = vi
+    .spyOn(playlistOperationQueue, "enqueuePayload")
+    .mockResolvedValue({ operationId: 2, queued: true } as never);
+  try {
+    const savedView = await routes(owner).request(
+      "/plugins/pages2/resources/library/home/playlist",
+      json("POST", { name: "From the library", itemIds: ["item-1"] }),
+    );
+    assert.equal(savedView.status, 200);
+    assert.equal(
+      v.parse(v.looseObject({ sourceName: v.string() }), enqueueView.mock.calls[0]?.[0]).sourceName,
+      "Fixture Library",
+    );
+  } finally {
+    enqueueView.mockRestore();
+  }
+
   await turnOn("views", { capabilities: { albumPresentation: false, "page:work": false } });
   assert.equal(
     await (await routes(owner).request(`/plugins/album-presentation/${album.id}`)).json(),

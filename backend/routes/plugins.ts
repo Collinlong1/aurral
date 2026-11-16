@@ -12,6 +12,7 @@ import {
   pluginResourceMutation,
   readPluginResource,
   mutatePluginResource,
+  pluginResourceQuery,
   resourcePlaylistInput,
   saveResourcePlaylist,
 } from "../services/plugins/pluginPresentation.ts";
@@ -135,15 +136,21 @@ export default new Hono<AppEnv>()
   .get("/album-presentation/:albumId", requireAuth, requireUserAccount, (c) =>
     answer(c, () => pluginAlbumPresentation(c.var.user, c.req.param("albumId"))),
   )
-  .get("/:id/resources/:pageId/:resourceId", requireAuth, requireUserAccount, (c) =>
-    answer(c, () =>
-      readPluginResource(
-        c.var.user,
-        c.req.param("id"),
-        c.req.param("pageId"),
-        c.req.param("resourceId"),
+  .get(
+    "/:id/resources/:pageId/:resourceId",
+    requireAuth,
+    requireUserAccount,
+    validate("query", pluginResourceQuery),
+    (c) =>
+      answer(c, () =>
+        readPluginResource(
+          c.var.user,
+          c.req.param("id"),
+          c.req.param("pageId"),
+          c.req.param("resourceId"),
+          c.req.valid("query"),
+        ),
       ),
-    ),
   )
   .post(
     "/:id/resources/:pageId/:resourceId/playlist",

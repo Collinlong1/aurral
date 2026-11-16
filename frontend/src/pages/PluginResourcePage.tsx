@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { parseResponse } from "hono/client";
-import { Link, useNavigate, useParams } from "react-router";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import { useAuth } from "../contexts/AuthContext.tsx";
 import { useAudioQueue } from "../contexts/audioQueueContext.ts";
 import { useToast } from "../contexts/ToastContext.tsx";
@@ -16,7 +16,8 @@ import { formatDuration } from "./library/libraryShared.tsx";
 import type { readPluginResource } from "../../../backend/services/plugins/pluginPresentation.ts";
 import "./PluginPage.css";
 
-type WorkView = Awaited<ReturnType<typeof readPluginResource>>;
+type ResourceView = Awaited<ReturnType<typeof readPluginResource>>;
+type WorkView = Extract<ResourceView, { version: 1 }>;
 type Recording = WorkView["recordings"][number];
 type Item = Recording["items"][number];
 
@@ -50,14 +51,23 @@ export default function PluginResourcePage() {
   const navigate = useNavigate();
   // "" compares whole works; a movement ID compares that movement.
   const [movementId, setMovementId] = useState("");
+  // A view 2 page's search, sort, filters, page and tab live in the URL.
+  const [search] = useSearchParams();
+  const pageQuery = Object.fromEntries(
+    (["q", "sort", "filters", "page", "tab"] as const).flatMap((key) => {
+      const value = search.get(key);
+      return value ? [[key, value]] : [];
+    }),
+  );
   const query = useQuery({
-    queryKey: ["plugin-resource", id, pageId, resourceId, user?.id],
+    queryKey: ["plugin-resource", id, pageId, resourceId, user?.id, pageQuery],
     queryFn: () =>
       parseResponse(
         pluginsClient[":id"].resources[":pageId"][":resourceId"].$get({
           param: { id, pageId, resourceId },
+          query: pageQuery,
         }),
-      ) as Promise<WorkView>,
+      ) as Promise<ResourceView>,
     retry: false,
   });
   const mutation = useMutation({
@@ -91,14 +101,14 @@ export default function PluginResourcePage() {
         return details.error || details.message || "Couldn't save that change. Try again.";
       })()
     : "";
-  const data = query.data;
+  const loaded = query.data;
   if (query.isPending)
     return (
       <div className="plugin-page">
         <p role="status">Loading…</p>
       </div>
     );
-  if (!data || query.isError)
+  if (!loaded || query.isError)
     return (
       <div className="plugin-page">
         <StatePanel
@@ -112,6 +122,19 @@ export default function PluginResourcePage() {
         />
       </div>
     );
+  if (loaded.version !== 1)
+    return (
+      <div className="plugin-page">
+        <StatePanel
+          icon={<AlertCircle aria-hidden="true" />}
+          heading="h1"
+          role="alert"
+          title="Can't show this page"
+          message="This plugin page needs a newer Aurral."
+        />
+      </div>
+    );
+  const data: WorkView = loaded;
   const workTitle = data.work.title;
   const movement = data.work.movements.find((entry) => entry.id === movementId) ?? null;
   const composers = data.work.credits.filter((credit) => credit.role === "composer");

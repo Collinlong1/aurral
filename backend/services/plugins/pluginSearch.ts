@@ -2,6 +2,7 @@
 // from Aurral's search page with typed, bounded result sections and filters.
 // Core renders them with its own components and builds every link itself.
 import * as v from "valibot";
+import { hrefFor, parseFilters, pluginLink as link } from "./pluginLinks.ts";
 import type { RequestUser } from "../../middleware/requestUser.ts";
 import { callPlugin } from "./pluginHost.ts";
 import { activePlugins, isCapabilityOn, pluginInput } from "./pluginStore.ts";
@@ -11,19 +12,6 @@ const text = (max = 500) => v.pipe(v.string(), v.maxLength(max));
 const key = v.pipe(v.string(), v.regex(/^[a-zA-Z0-9_-]{1,40}$/));
 const id = text(200);
 const count = v.pipe(v.number(), v.integer(), v.minValue(0));
-// Where a result leads. Core turns each into an app path.
-const link = v.variant("type", [
-  v.object({ type: v.literal("resource"), pageId: key, resourceId: id }),
-  v.object({ type: v.literal("album"), albumId: id }),
-  // The same search with these filters, as for a person's other recordings.
-  v.object({
-    type: v.literal("filter"),
-    filters: v.pipe(
-      v.record(key, v.pipe(v.array(id), v.maxLength(10))),
-      v.check((f) => Object.keys(f).length <= 10),
-    ),
-  }),
-]);
 const item = v.object({
   id,
   kind: key,
@@ -73,34 +61,6 @@ export const pluginSearchQuery = v.object({
   filters: v.optional(text(2000), ""),
   offset: v.optional(v.pipe(v.string(), v.regex(/^\d{1,5}$/)), "0"),
 });
-
-// "composer=a,b;period=x" -> { composer: ["a","b"], period: ["x"] }.
-function parseFilters(raw: string) {
-  const filters: Record<string, string[]> = {};
-  for (const part of raw.split(";")) {
-    const at = part.indexOf("=");
-    if (at <= 0) continue;
-    const name = part.slice(0, at);
-    if (!/^[a-zA-Z0-9_-]{1,40}$/.test(name)) continue;
-    const values = part
-      .slice(at + 1)
-      .split(",")
-      .map((value) => decodeURIComponent(value))
-      .filter((value) => value && value.length <= 200)
-      .slice(0, 10);
-    if (values.length) filters[name] = values;
-    if (Object.keys(filters).length >= 10) break;
-  }
-  return filters;
-}
-
-const hrefFor = (pluginId: string, value: v.InferOutput<typeof link> | null) => {
-  if (!value) return null;
-  if (value.type === "resource")
-    return `/plugins/${pluginId}/${encodeURIComponent(value.pageId)}/${encodeURIComponent(value.resourceId)}`;
-  if (value.type === "album") return `/album/${encodeURIComponent(value.albumId)}`;
-  return null;
-};
 
 // Searches each search provider, at most 3 seconds each. A provider that
 // fails or times out is reported, never fatal: the rest of search renders.
