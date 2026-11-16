@@ -803,8 +803,14 @@ test("album and track actions get the Library's album and tracks", async (t) => 
   const item = `{id:'item-1',trackId:${JSON.stringify(firstTrack)},fileId:${JSON.stringify(String(firstFile.id))},albumId:${JSON.stringify(albumId)},title:'I. First',artist:'Glass Coast',album:'Lowlands',durationMs:1000,startMs:100,endMs:900}`;
   const itemOn = (id: string, trackNumber: number) =>
     `{id:'${id}',trackId:${JSON.stringify(trackAt(trackNumber))},fileId:'${id}-file',albumId:${JSON.stringify(albumId)},title:'${id}',artist:'Glass Coast',album:'Lowlands',durationMs:1000,startMs:0,endMs:null}`;
+  // A track the plugin still names after it left the Library, or after a
+  // retag gave it, or its album, a new id.
+  const staleOn = (id: string, onAlbum = albumId) =>
+    `{id:'${id}',trackId:'999999',fileId:'${id}-file',albumId:${JSON.stringify(onAlbum)},title:'${id}',artist:'Glass Coast',album:'Lowlands',durationMs:1000,startMs:0,endMs:null}`;
   const movement = `{id:'movement-1',title:'I. First',position:1}`;
-  const work = `{version:1,work:{id:'work-1',title:'Fixture Work',nickname:'user-'+input.user.id,description:'',credits:[],movements:[${movement}],collections:[]},favourite:false,pickedRealizationId:null,pickScope:null,recordings:[{id:'realization-1',label:'Owned recording',recordingIds:['recording-1'],credits:[],items:[${item}],missing:[],complete:true}]}`;
+  const recordingOf = (id: string, items: string) =>
+    `{id:'${id}',label:'${id}',recordingIds:['${id}'],credits:[],items:[${items}],missing:[],complete:true}`;
+  const work = `{version:1,work:{id:'work-1',title:'Fixture Work',nickname:'user-'+input.user.id,description:'',credits:[],movements:[${movement}],collections:[]},favourite:false,pickedRealizationId:null,pickScope:null,recordings:[${recordingOf("realization-1", item)},${recordingOf("realization-mixed", `${staleOn("mixed-gone")},${itemOn("mixed-kept", 2)}`)},${recordingOf("realization-gone", staleOn("gone"))},${recordingOf("realization-retagged-album", staleOn("moved", "retagged-away"))},${recordingOf("realization-not-owned", "")}]}`;
   await install(
     "views",
     {
@@ -812,7 +818,7 @@ test("album and track actions get the Library's album and tracks", async (t) => 
       albumPresentation: true,
     },
     `export default {
-      albumPresentation:()=>({version:1,albumId:${JSON.stringify(albumId)},supportsToggle:true,groups:[{id:'piece-2',workId:null,title:'Single Piece',composer:'Composer',detail:'Not matched to a work',items:[${itemOn("later", 2)}],missing:[],movementCount:1},{id:'realization-1',workId:'work-1',title:'Fixture Work',composer:'Composer',items:[${item}],missing:[],movementCount:2},...Array.from({length:300},(_,i)=>({id:'box-'+i,workId:null,title:'Box piece '+i,composer:'Composer',items:[${itemOn("box", 2)}],missing:[],movementCount:1}))]}),
+      albumPresentation:()=>({version:1,albumId:${JSON.stringify(albumId)},supportsToggle:true,groups:[{id:'piece-2',workId:null,title:'Single Piece',composer:'Composer',detail:'Not matched to a work',items:[${staleOn("later-gone")},${itemOn("later", 2)}],missing:[],movementCount:1},{id:'stale-piece',workId:null,title:'Gone Piece',composer:'Composer',items:[${staleOn("stale-piece")}],missing:[],movementCount:1},{id:'realization-1',workId:'work-1',title:'Fixture Work',composer:'Composer',items:[${item}],missing:[],movementCount:2},...Array.from({length:300},(_,i)=>({id:'box-'+i,workId:null,title:'Box piece '+i,composer:'Composer',items:[${itemOn("box", 2)}],missing:[],movementCount:1}))]}),
       pages:{read:(input)=>(${work}),mutate:()=>({ok:true})}
     }`,
   );
@@ -832,8 +838,11 @@ test("album and track actions get the Library's album and tracks", async (t) => 
     }),
     await presentation.json(),
   );
-  // A box set has far more pieces than a work has movements.
+  // A box set has far more pieces than a work has movements. A stale track
+  // is left out, and so is a group it leaves empty, instead of failing the page.
   assert.equal(presentationBody.groups.length, 302);
+  assert.ok(!presentationBody.groups.some((group) => group.id === "stale-piece"));
+  assert.equal(presentationBody.groups.find((group) => group.id === "piece-2")?.items.length, 1);
   assert.deepEqual(
     presentationBody.groups.slice(0, 2).map((group) => group.id),
     ["realization-1", "piece-2"],
@@ -849,8 +858,22 @@ test("album and track actions get the Library's album and tracks", async (t) => 
   assert.match(presentedItem.streamPath, /\/library\/stream\//);
   const ownerWork = await routes(owner).request("/plugins/views/resources/work/work-1");
   assert.equal(ownerWork.status, 200);
-  const workResponse = v.object({ work: v.object({ nickname: v.string() }) });
-  assert.equal(v.parse(workResponse, await ownerWork.json()).work.nickname, `user-${owner.id}`);
+  const workResponse = v.object({
+    work: v.object({ nickname: v.string() }),
+    recordings: v.array(v.object({ id: v.string(), items: v.array(v.object({ id: v.string() })) })),
+  });
+  const ownerWorkBody = v.parse(workResponse, await ownerWork.json());
+  assert.equal(ownerWorkBody.work.nickname, `user-${owner.id}`);
+  // Recordings keep their playable items; one left with none is dropped. One
+  // the plugin sent without items (not owned) still shows.
+  assert.deepEqual(
+    ownerWorkBody.recordings.map((recording) => [recording.id, recording.items.map((i) => i.id)]),
+    [
+      ["realization-1", ["item-1"]],
+      ["realization-mixed", ["mixed-kept"]],
+      ["realization-not-owned", []],
+    ],
+  );
   // A comparison saved as the person's own playlist, pinned to exact files.
   const enqueue = vi
     .spyOn(playlistOperationQueue, "enqueuePayload")
