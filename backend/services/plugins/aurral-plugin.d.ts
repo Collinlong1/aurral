@@ -1,7 +1,15 @@
 export type SettingValue = string | number | boolean;
 
 export interface Base {
-  capabilities?: { adminForms?: 1; resourceView?: 1; albumPresentation?: 1; search?: 1 };
+  capabilities?: {
+    adminForms?: 1;
+    resourceView?: 1 | 2;
+    albumPresentation?: 1;
+    search?: 1;
+    // Items may carry `links` (classical fork).
+    itemLinks?: 1;
+    trackLinks?: 1;
+  };
   userOperations?: { version: 1; url: string; token: string };
   settings: Record<string, SettingValue>;
   libraryFolder: string;
@@ -20,6 +28,19 @@ export interface PresentationQueueItem {
   durationMs: number | null;
   startMs: number;
   endMs: number | null;
+  links?: ItemLink[];
+}
+
+// Typed links; Aurral builds every path. A filter link applies its filters
+// to the page it is on, or opens the plugin's search results elsewhere.
+export type PluginLink =
+  | { type: "resource"; pageId: string; resourceId: string }
+  | { type: "album"; albumId: string }
+  | { type: "filter"; filters: Record<string, string[]> };
+// Up to six on one item, for its menu.
+export interface ItemLink {
+  label: string;
+  link: PluginLink;
 }
 
 export interface AlbumPresentationInput extends Base {
@@ -40,10 +61,7 @@ export interface SearchInput extends Base {
     limit: number;
   };
 }
-export type SearchLink =
-  | { type: "resource"; pageId: string; resourceId: string }
-  | { type: "album"; albumId: string }
-  | { type: "filter"; filters: Record<string, string[]> };
+export type SearchLink = PluginLink;
 export interface SearchItem {
   id: string;
   kind: string;
@@ -51,6 +69,7 @@ export interface SearchItem {
   subtitle?: string;
   detail?: string;
   link?: SearchLink | null;
+  links?: ItemLink[];
 }
 export interface SearchResult {
   version: 1;
@@ -69,11 +88,90 @@ export interface ResourcePageInput extends Base {
   user: User;
   pageId: string;
   resourceId: string;
-  mutation?: {
-    command: "favourite" | "pick" | "admin-pick";
-    value?: boolean;
-    realizationId?: string | null;
+  // View 2 hosts: what the page's URL asks for.
+  query?: {
+    q: string;
+    sort: string;
+    tab: string;
+    page: number;
+    filters: Record<string, string[]>;
   };
+  mutation?: ResourceMutation;
+}
+export type ResourceMutation =
+  | { command: "favourite" | "pick" | "admin-pick"; value?: boolean; realizationId?: string | null }
+  | { command: "favourite-item"; target: string; value?: boolean }
+  | { command: "delete-queue"; target: string }
+  | { command: "save-queue"; name: string; itemIds: string[] };
+
+// A Library page (`capabilities.resourceView: 2`), rendered by core.
+export interface ViewRow {
+  id: string;
+  label: string;
+  detail?: string;
+  badge?: string;
+  link?: PluginLink | null;
+}
+export interface ViewFact {
+  label: string;
+  value: string;
+  link?: PluginLink | null;
+}
+export type ViewAction = { label: string; pressed?: boolean } & (
+  | { link: PluginLink }
+  | { mutation: ResourceMutation }
+);
+export type ViewSection =
+  | {
+      type: "header";
+      title: string;
+      subtitle?: string;
+      facts?: ViewFact[];
+      badges?: string[];
+      actions?: ViewAction[];
+    }
+  | { type: "rows"; id: string; title?: string; rows: ViewRow[]; empty?: string }
+  | {
+      type: "groups";
+      id: string;
+      title?: string;
+      groups: { heading: string; detail?: string; link?: PluginLink | null; rows: ViewRow[] }[];
+    }
+  | {
+      type: "tracks";
+      id: string;
+      title?: string;
+      context?: string;
+      items: (PresentationQueueItem & { link?: PluginLink | null })[];
+    }
+  | { type: "details"; id: string; title?: string; items: ViewFact[] }
+  | { type: "pager"; total: number; offset: number; limit: number }
+  | { type: "tabs"; active?: string; tabs: { id: string; label: string; count?: number }[] }
+  | {
+      type: "filters";
+      filters: {
+        key: string;
+        label: string;
+        options: { value: string; label: string; count?: number }[];
+        selected?: string[];
+      }[];
+    }
+  | { type: "sort"; active?: string; options: { value: string; label: string }[] }
+  | { type: "empty"; message: string };
+export interface ResourceViewV2 {
+  version: 2;
+  title: string;
+  sections: ViewSection[];
+}
+
+// `"trackLinks": true`: links for Library tracks, by track ID.
+export interface TrackLinksInput extends Base {
+  user: User;
+  trackIds: string[];
+}
+export interface TrackLinksResult {
+  version: 1;
+  tracks: Record<string, ItemLink[]>;
 }
 
 // Optional admin-only, host-rendered forms. No browser scripts/assets are accepted.
@@ -355,4 +453,6 @@ export interface AurralPlugin {
   downloadSource?: DownloadSource;
   importList?: { fetch(input: Base & { url: string }): Answer<ImportedPlaylist> };
   scheduled?(input: Base): Answer<unknown>;
+  search?(input: SearchInput): Answer<SearchResult>;
+  trackLinks?(input: TrackLinksInput): Answer<TrackLinksResult>;
 }
