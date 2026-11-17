@@ -3,7 +3,7 @@ import proxyaddr from "proxy-addr";
 import type { AppEnv } from "./requestUser.ts";
 
 function trustProxy(value: string | undefined) {
-  if (value === undefined) return (_address: string, hop: number) => hop < 1;
+  if (value === undefined) return proxyaddr.compile(["loopback", "linklocal", "uniquelocal"]);
   if (value === "true") return () => true;
   if (value === "false") return () => false;
   const hops = Number(value);
@@ -20,7 +20,7 @@ export const clientAddress = createMiddleware<AppEnv>(async (c, next) => {
   const forwardedProto =
     socketAddress && trust(socketAddress, 0) && c.req.header("x-forwarded-proto");
   c.set("clientIp", addresses.at(-1) ?? "");
-  c.set("clientIps", addresses);
+  c.set("peerIp", socketAddress ?? "");
   c.set("protocol", forwardedProto ? (forwardedProto.split(",")[0] ?? "").trim() : "http");
   await next();
 });

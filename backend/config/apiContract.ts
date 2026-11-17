@@ -7,5 +7,7 @@ export const API_CONTRACT: { version: number; features: string[] } = {
     "librarySorts",
     "queueCancelAll",
     "queuePause",
+    "streamTranscoding",
+    "communityPlaylists",
   ],
 };
