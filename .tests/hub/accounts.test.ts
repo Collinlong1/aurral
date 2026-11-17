@@ -87,8 +87,8 @@ const rows = async () => ({
 
 const reset = () =>
   db.batch(
-    ["publications", "links", "instances", "handles", "accounts"].map((table) =>
-      db.prepare(`DELETE FROM ${table}`),
+    ["listening", "friends", "publications", "links", "instances", "handles", "accounts"].map(
+      (table) => db.prepare(`DELETE FROM ${table}`),
     ),
   );
 
@@ -312,6 +312,181 @@ test("a server links a user once a signed-in account approves its code, and eith
   assert.equal((await revoke("x".repeat(43))).status, 403);
   assert.equal((await revoke(INSTANCE.secret)).status, 204);
   assert.equal((await serverStatus()).status, 401);
+});
+
+test("linked servers add friends by handle, both asking makes friends, friends see what each other plays, and either side ends it", async () => {
+  await reset();
+  const now = new Date().toISOString();
+  const tokens = { ann: "a".repeat(43), bob: "b".repeat(43) };
+  for (const [handle, token] of Object.entries(tokens)) {
+    await db
+      .prepare(
+        "INSERT INTO accounts (id, name, email, email_verified, created_at, updated_at) VALUES (?, '', ?, 1, ?, ?)",
+      )
+      .bind(handle, `test-${handle}@users.aurral.org`, now, now)
+      .run();
+    await claimHandle(db, handle, handle);
+    await db
+      .prepare(
+        "INSERT INTO links (id, instance_id, user_name, token_hash, account_id, linked_at) VALUES (?, 'inst', ?, ?, ?, 1)",
+      )
+      .bind(handle, handle, await sha256Hex(token), handle)
+      .run();
+  }
+  const friends = (token: string, method = "GET", handle = "") =>
+    api(`/v1/friends${handle && `/${handle}`}`, {
+      method,
+      headers: { authorization: `Bearer ${token}` },
+    });
+  const lists = async (token: string): Promise<unknown> => (await friends(token)).json();
+  const rowCount = async () =>
+    (await db.prepare("SELECT COUNT(*) AS n FROM friends").first("n")) ?? 0;
+
+  assert.equal((await friends("x".repeat(43))).status, 401);
+  assert.equal((await friends(tokens.ann, "PUT", "nobody")).status, 404);
+  assert.equal((await friends(tokens.ann, "PUT", "ANN")).status, 422);
+  assert.deepEqual(await (await friends(tokens.ann, "PUT", "Bob")).json(), { status: "sent" });
+  assert.deepEqual(await lists(tokens.ann), {
+    friends: [],
+    incoming: [],
+    outgoing: [{ handle: "bob" }],
+  });
+  assert.deepEqual(await lists(tokens.bob), {
+    friends: [],
+    incoming: [{ handle: "ann" }],
+    outgoing: [],
+  });
+
+  const share = (link: string, nowPlaying: object | null, until: number, top: object, at: number) =>
+    db
+      .prepare(
+        "INSERT INTO listening (link_id, now_playing, playing_until, top_plays, top_plays_at) VALUES (?, ?, ?, ?, ?)",
+      )
+      .bind(link, nowPlaying && JSON.stringify(nowPlaying), until, JSON.stringify(top), at)
+      .run();
+  const time = Date.now();
+  const top = (plays: number) => ({
+    artists: [{ name: "Radiohead", plays }],
+    albums: [],
+    tracks: [{ title: "Nude", artist: "Radiohead", plays }],
+  });
+  await share(
+    "bob",
+    { title: "Nude", artist: "Radiohead", album: null },
+    time + 60_000,
+    top(3),
+    time,
+  );
+  assert.deepEqual(await lists(tokens.ann), {
+    friends: [],
+    incoming: [],
+    outgoing: [{ handle: "bob" }],
+  });
+
+  assert.deepEqual(await (await friends(tokens.bob, "PUT", "ann")).json(), { status: "friends" });
+  await db
+    .prepare(
+      "INSERT INTO links (id, instance_id, user_name, token_hash, account_id, linked_at) VALUES ('bob-2', 'inst', 'bob', 'h2', 'bob', 1), ('bob-3', 'inst', 'bob', 'h3', 'bob', 1)",
+    )
+    .run();
+  await share(
+    "bob-2",
+    { title: "Old", artist: "Radiohead", album: null },
+    time - 1,
+    {
+      ...top(2),
+      artists: [
+        { name: "radiohead", plays: 2 },
+        { name: "Björk", plays: 4 },
+      ],
+    },
+    time,
+  );
+  await share("bob-3", null, 0, top(50), time - 8 * 86_400_000);
+  assert.deepEqual(await lists(tokens.ann), {
+    friends: [
+      {
+        handle: "bob",
+        nowPlaying: { title: "Nude", artist: "Radiohead", album: null },
+        topPlays: {
+          artists: [
+            { name: "Radiohead", plays: 5 },
+            { name: "Björk", plays: 4 },
+          ],
+          albums: [],
+          tracks: [{ title: "Nude", artist: "Radiohead", plays: 5 }],
+        },
+      },
+    ],
+    incoming: [],
+    outgoing: [],
+  });
+  assert.deepEqual(await lists(tokens.bob), {
+    friends: [{ handle: "ann", nowPlaying: null, topPlays: null }],
+    incoming: [],
+    outgoing: [],
+  });
+
+  assert.equal((await friends(tokens.bob, "DELETE", "ann")).status, 204);
+  assert.equal(await rowCount(), 0);
+  assert.equal((await friends(tokens.bob, "PUT", "ann")).status, 200);
+  await friends(tokens.ann, "DELETE", "bob");
+  assert.equal(await rowCount(), 0);
+
+  assert.equal((await friends(tokens.bob, "PUT", "ann")).status, 200);
+  assert.equal(await rowCount(), 1);
+  await deleteAccount(db, "bob");
+  assert.equal(await rowCount(), 0);
+});
+
+test("a linked server shares now playing and top plays, and they leave with the link", async () => {
+  await reset();
+  githubId = 4242;
+  const jar = await signInWithGitHub();
+  await startServerLink();
+  const code = await db.prepare("SELECT user_code FROM links").first<string>("user_code");
+  assert.ok(code);
+  await form("/account/handle", jar, { handle: "lee_k", code });
+  await form("/link", jar, { code });
+  const share = (path: string, method: string, body?: unknown) =>
+    api(`/v1/listening${path}`, {
+      method,
+      headers: { authorization: `Bearer ${linkToken}`, "content-type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  const stored = () =>
+    db
+      .prepare("SELECT now_playing, playing_until, top_plays FROM listening")
+      .first<{ now_playing: string | null; playing_until: number; top_plays: string | null }>();
+
+  const before = Date.now();
+  const track = { title: " Reckoner ", artist: "Radiohead", album: null, durationMs: 290_000 };
+  assert.equal((await share("/now-playing", "PUT", track)).status, 204);
+  const top = {
+    artists: [{ name: "Radiohead", plays: 12 }],
+    albums: [{ title: "In Rainbows", artist: "Radiohead", plays: 9 }],
+    tracks: [{ title: "Reckoner", artist: "Radiohead", plays: 4 }],
+  };
+  assert.equal((await share("/top-plays", "PUT", top)).status, 204);
+  const shared = await stored();
+  assert.deepEqual(JSON.parse(shared?.now_playing ?? ""), {
+    title: "Reckoner",
+    artist: "Radiohead",
+    album: null,
+  });
+  assert.ok(shared && shared.playing_until >= before + 290_000);
+  assert.deepEqual(JSON.parse(shared?.top_plays ?? ""), top);
+
+  const tooMany = { ...top, tracks: Array.from({ length: 11 }, () => top.tracks[0]) };
+  assert.equal((await share("/top-plays", "PUT", tooMany)).status, 400);
+  assert.equal((await share("", "DELETE")).status, 204);
+  assert.equal(await stored(), null);
+
+  await share("/now-playing", "PUT", track);
+  const linkId = await db.prepare("SELECT id FROM links").first<string>("id");
+  await form(`/account/unlink/${linkId}`, jar, {});
+  assert.equal(await stored(), null);
+  assert.equal((await share("/now-playing", "PUT", track)).status, 401);
 });
 
 test("a code approves one account once and only before it expires", async () => {
