@@ -1258,6 +1258,67 @@ test("search providers answer the search page with typed results; a failing one 
   );
 });
 
+test("track links answer per asked track, merged across plugins, and only when declared and on", async () => {
+  const trackLinksAnswer = v.object({
+    links: v.record(v.string(), v.array(v.object({ label: v.string(), href: v.string() }))),
+  });
+  const ask = async (ids: string) => {
+    const response = await routes(owner).request(`/plugins/track-links?trackIds=${ids}`);
+    return {
+      status: response.status,
+      body: response.ok ? v.parse(trackLinksAnswer, await response.json()) : null,
+    };
+  };
+  const tracksFlag = async () =>
+    v.parse(
+      v.looseObject({ trackLinks: v.boolean() }),
+      await (await routes(owner).request("/plugins/actions")).json(),
+    ).trackLinks;
+  // Without a plugin that declares it, nothing is asked or answered.
+  assert.equal(await tracksFlag(), false);
+  assert.deepEqual((await ask("7,8")).body, { links: { 7: [], 8: [] } });
+  await install(
+    "linker",
+    { trackLinks: true },
+    `export default { trackLinks: (input) => ({ version: 1, tracks: {
+      "7": [
+        { label: "Open the work " + input.trackIds.join("+") + " " + input.capabilities.trackLinks, link: { type: "resource", pageId: "work", resourceId: "w1" } },
+        { label: "More by Pianist", link: { type: "filter", filters: { performer: ["p 1"] } } },
+      ],
+      "99": [{ label: "Not asked", link: { type: "album", albumId: "1" } }],
+    } }) }`,
+  );
+  await install(
+    "undeclared",
+    {},
+    `export default { trackLinks: () => ({ version: 1, tracks: { "7": [{ label: "Never", link: { type: "album", albumId: "2" } }] } }) }`,
+  );
+  await install(
+    "faulty",
+    { trackLinks: true },
+    `export default { trackLinks: () => ({ version: 2 }) }`,
+  );
+  await turnOn("linker");
+  await turnOn("undeclared");
+  await turnOn("faulty");
+  assert.equal(await tracksFlag(), true);
+  const answered = await ask("7,8,7");
+  assert.deepEqual(answered.body, {
+    links: {
+      7: [
+        { label: "Open the work 7+8 1", href: "/plugins/linker/work/w1" },
+        { label: "More by Pianist", href: "/search?plugin=linker&pf=performer%3Dp%25201" },
+      ],
+      8: [],
+    },
+  });
+  assert.equal((await ask("not-a-track")).status, 400);
+  assert.equal((await ask(Array.from({ length: 101 }, (_, i) => i + 1).join(","))).status, 400);
+  // The admin's switch turns it off like any other capability.
+  await turnOn("linker", { capabilities: { trackLinks: false } });
+  assert.deepEqual((await ask("7")).body, { links: { 7: [] } });
+});
+
 test("a background action answers right away and reports its result to the user who ran it", async () => {
   await install(
     "slow",

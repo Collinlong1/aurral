@@ -22,10 +22,11 @@ export const pluginLink = v.variant("type", [
 export type PluginLink = v.InferOutput<typeof pluginLink>;
 
 // Up to six labelled links on one item, for a menu.
-export const pluginItemLinks = v.optional(
-  v.pipe(v.array(v.object({ label: text(80), link: pluginLink })), v.maxLength(6)),
-  [],
+export const pluginItemLinkList = v.pipe(
+  v.array(v.object({ label: text(80), link: pluginLink })),
+  v.maxLength(6),
 );
+export const pluginItemLinks = v.optional(pluginItemLinkList, []);
 
 // The app path of a link; a filter link has none of its own: the page it is
 // shown on applies `filters`.
