@@ -400,6 +400,78 @@ test("one crash with several calls waiting is one failure, not one per call", as
   assert.equal(activePlugin("crashy")?.enabled, true);
 });
 
+test("a plugin's Library entry shows once declared for a Library page and switched on", async () => {
+  const { pluginLibraryEntries } =
+    await import("../../backend/services/plugins/pluginPresentation.ts");
+  await install(
+    "shelf",
+    {
+      pages: [
+        { id: "library", label: "Library", admin: false },
+        { id: "editor", label: "Editor" },
+      ],
+      library: { pageId: "library", resourceId: "home", label: "Shelf" },
+    },
+    "export default { pages: { read: () => ({ version: 2, title: 'Shelf', sections: [] }) } }",
+  );
+  // An entry naming an admin page is never offered.
+  await install(
+    "hidden",
+    {
+      pages: [{ id: "editor", label: "Editor" }],
+      library: { pageId: "editor", resourceId: "home", label: "Hidden" },
+    },
+    "export default {}",
+  );
+  await turnOn("shelf");
+  await turnOn("hidden");
+  const entries = () =>
+    pluginLibraryEntries().filter((entry) => ["shelf", "hidden"].includes(entry.pluginId));
+  assert.deepEqual(entries(), [
+    { pluginId: "shelf", label: "Shelf", path: "/plugins/shelf/library/home" },
+  ]);
+  // People get them from their own endpoint, not on every app load.
+  const listed = v.parse(
+    v.object({
+      entries: v.array(v.object({ pluginId: v.string(), label: v.string(), path: v.string() })),
+    }),
+    await (await routes(owner).request("/plugins/library")).json(),
+  );
+  assert.deepEqual(
+    listed.entries.filter((entry) => entry.pluginId === "shelf"),
+    [{ pluginId: "shelf", label: "Shelf", path: "/plugins/shelf/library/home" }],
+  );
+  const capabilities = v.parse(
+    v.object({
+      plugins: v.array(
+        v.looseObject({
+          id: v.string(),
+          capabilities: v.array(v.looseObject({ key: v.string(), kind: v.string() })),
+        }),
+      ),
+    }),
+    await (await routes(admin).request("/plugins")).json(),
+  );
+  assert.deepEqual(
+    capabilities.plugins
+      .find((plugin) => plugin.id === "shelf")
+      ?.capabilities.filter((c) => c.key === "library")
+      .map((c) => c.kind),
+    ["Library navigation"],
+  );
+  assert.equal(
+    capabilities.plugins
+      .find((plugin) => plugin.id === "hidden")
+      ?.capabilities.some((c) => c.key === "library"),
+    false,
+  );
+  // The admin's switch, or the page's, takes it out.
+  await turnOn("shelf", { capabilities: { library: false } });
+  assert.deepEqual(entries(), []);
+  await turnOn("shelf", { capabilities: { library: true, "page:library": false } });
+  assert.deepEqual(entries(), []);
+});
+
 test("old plugins stay page-free and invalid page output fails with a bounded error", async () => {
   await install("legacy", {}, "export default {}");
   await turnOn("legacy");
@@ -818,7 +890,7 @@ test("album and track actions get the Library's album and tracks", async (t) => 
       albumPresentation: true,
     },
     `export default {
-      albumPresentation:()=>({version:1,albumId:${JSON.stringify(albumId)},supportsToggle:true,groups:[{id:'piece-2',workId:null,title:'Single Piece',composer:'Composer',detail:'Not matched to a work',items:[${staleOn("later-gone")},${itemOn("later", 2)}],missing:[],movementCount:1},{id:'stale-piece',workId:null,title:'Gone Piece',composer:'Composer',items:[${staleOn("stale-piece")}],missing:[],movementCount:1},{id:'realization-1',workId:'work-1',title:'Fixture Work',composer:'Composer',items:[${item}],missing:[],movementCount:2},...Array.from({length:300},(_,i)=>({id:'box-'+i,workId:null,title:'Box piece '+i,composer:'Composer',items:[${itemOn("box", 2)}],missing:[],movementCount:1}))]}),
+      albumPresentation:()=>({version:1,albumId:${JSON.stringify(albumId)},supportsToggle:true,groups:[{id:'piece-2',workId:null,title:'Single Piece',composer:'Composer',detail:'Not matched to a work',items:[${staleOn("later-gone")},${itemOn("later", 2)}],missing:[],movementCount:1},{id:'stale-piece',workId:null,title:'Gone Piece',composer:'Composer',items:[${staleOn("stale-piece")}],missing:[],movementCount:1},{id:'realization-1',workId:'work-1',title:'Fixture Work',composer:'Composer',links:[{label:'More by Composer',link:{type:'filter',filters:{composer:['c 1']}}}],items:[{...${item},links:[{label:'Open the work',link:{type:'resource',pageId:'work',resourceId:'work-1'}}]}],missing:[],movementCount:2},...Array.from({length:300},(_,i)=>({id:'box-'+i,workId:null,title:'Box piece '+i,composer:'Composer',items:[${itemOn("box", 2)}],missing:[],movementCount:1}))]}),
       pages:{read:(input)=>(${work}),mutate:()=>({ok:true})}
     }`,
   );
@@ -832,7 +904,13 @@ test("album and track actions get the Library's album and tracks", async (t) => 
           id: v.string(),
           href: v.nullable(v.string()),
           detail: v.optional(v.string()),
-          items: v.array(v.object({ streamPath: v.string() })),
+          links: v.array(v.object({ label: v.string(), href: v.string() })),
+          items: v.array(
+            v.object({
+              streamPath: v.string(),
+              links: v.array(v.object({ label: v.string(), href: v.string() })),
+            }),
+          ),
         }),
       ),
     }),
@@ -856,6 +934,13 @@ test("album and track actions get the Library's album and tracks", async (t) => 
   assert.ok(presentedItem);
   assert.equal(presentedGroup.href, "/plugins/views/work/work-1");
   assert.match(presentedItem.streamPath, /\/library\/stream\//);
+  // Item links become app paths; a filter link opens that plugin's search.
+  assert.deepEqual(presentedItem.links, [
+    { label: "Open the work", href: "/plugins/views/work/work-1" },
+  ]);
+  assert.deepEqual(presentedGroup.links, [
+    { label: "More by Composer", href: "/search?plugin=views&pf=composer%3Dc%25201" },
+  ]);
   const ownerWork = await routes(owner).request("/plugins/views/resources/work/work-1");
   assert.equal(ownerWork.status, 200);
   const workResponse = v.object({
@@ -937,6 +1022,139 @@ test("album and track actions get the Library's album and tracks", async (t) => 
     ).status,
     403,
   );
+  // View 2: a generic page built from sections. The plugin gets the URL's
+  // query and capabilities; links become paths; a stale track is dropped.
+  await install(
+    "pages2",
+    { pages: [{ id: "library", label: "Library", admin: false }] },
+    `export default { pages: {
+      read: (input) => ({ version: 2, title: 'Fixture Library', sections: [
+        { type: 'header', title: 'Fixture Library', subtitle: JSON.stringify([input.capabilities, input.query]),
+          facts: [{ label: 'Works', value: '1', link: { type: 'resource', pageId: 'library', resourceId: 'list:work' } }],
+          actions: [{ label: 'Favourite', mutation: { command: 'favourite-item', target: 'work-1', value: true } }] },
+        { type: 'rows', id: 'works', rows: [
+          { id: 'w', label: 'Fixture Work', link: { type: 'resource', pageId: 'library', resourceId: 'work:work-1' } },
+          { id: 'a', label: 'Lowlands', link: { type: 'album', albumId: ${JSON.stringify(albumId)} } },
+          { id: 'f', label: 'More by Glass Coast', link: { type: 'filter', filters: { performer: ['glass-coast'] } } },
+        ] },
+        { type: 'tracks', id: 'play', context: 'Fixture Work', items: [{ ...${item}, links: [{ label: 'Glass Coast', link: { type: 'filter', filters: { performer: ['glass-coast'] } } }] }, ${staleOn("gone-in-view")}] },
+        { type: 'pager', total: 120, offset: 100, limit: 100 },
+        { type: 'sort', active: 'title', options: [{ value: 'title', label: 'Title' }] },
+      ] }),
+      mutate: (input) => ({ ok: input.mutation.command === 'favourite-item' || input.mutation.command === 'save-queue' }),
+    } }`,
+  );
+  await turnOn("pages2");
+  const viewResponse = await routes(owner).request(
+    "/plugins/pages2/resources/library/home?q=sonata&sort=title&filters=composer%3Dc1%2Cc2%3Bperiod%3Dbaroque&page=2&tab=works",
+  );
+  assert.equal(viewResponse.status, 200);
+  const viewBody = v.parse(
+    v.object({
+      version: v.literal(2),
+      sections: v.array(
+        v.looseObject({
+          type: v.string(),
+          subtitle: v.optional(v.string()),
+          facts: v.optional(
+            v.array(
+              v.looseObject({ link: v.nullable(v.looseObject({ href: v.nullable(v.string()) })) }),
+            ),
+          ),
+          rows: v.optional(
+            v.array(
+              v.object({
+                id: v.string(),
+                label: v.string(),
+                detail: v.string(),
+                badge: v.string(),
+                link: v.nullable(
+                  v.object({
+                    href: v.nullable(v.string()),
+                    filters: v.nullable(v.record(v.string(), v.array(v.string()))),
+                  }),
+                ),
+              }),
+            ),
+          ),
+          items: v.optional(
+            v.array(
+              v.looseObject({
+                id: v.string(),
+                streamPath: v.string(),
+                links: v.array(v.object({ label: v.string(), href: v.string() })),
+              }),
+            ),
+          ),
+        }),
+      ),
+    }),
+    await viewResponse.json(),
+  );
+  const [header, rows, tracks] = viewBody.sections;
+  assert.deepEqual(JSON.parse(header?.subtitle ?? "null"), [
+    { resourceView: 2, itemLinks: 1 },
+    {
+      q: "sonata",
+      sort: "title",
+      tab: "works",
+      page: 2,
+      filters: { composer: ["c1", "c2"], period: ["baroque"] },
+    },
+  ]);
+  assert.equal(header?.facts?.[0]?.link?.href, "/plugins/pages2/library/list%3Awork");
+  assert.deepEqual(
+    rows?.rows?.map((row) => [row.id, row.link?.href ?? null, row.link?.filters ?? null]),
+    [
+      ["w", "/plugins/pages2/library/work%3Awork-1", null],
+      ["a", `/album/${albumId}`, null],
+      ["f", null, { performer: ["glass-coast"] }],
+    ],
+  );
+  assert.deepEqual(
+    tracks?.items?.map((entry) => entry.id),
+    ["item-1"],
+  );
+  assert.match(tracks?.items?.[0]?.streamPath ?? "", /\/library\/stream\//);
+  assert.deepEqual(tracks?.items?.[0]?.links, [
+    { label: "Glass Coast", href: "/search?plugin=pages2&pf=performer%3Dglass-coast" },
+  ]);
+  // The new mutations, each with what it needs.
+  const mutateView = (body: object) =>
+    routes(owner).request("/plugins/pages2/resources/library/home", json("POST", body));
+  assert.equal(
+    (await mutateView({ command: "favourite-item", target: "work-1", value: true })).status,
+    200,
+  );
+  assert.equal((await mutateView({ command: "favourite-item", value: true })).status, 400);
+  assert.equal(
+    (await mutateView({ command: "save-queue", name: "Evening", itemIds: ["item-1"] })).status,
+    200,
+  );
+  assert.equal((await mutateView({ command: "save-queue", name: "Evening" })).status, 400);
+  assert.equal(
+    (await routes(owner).request("/plugins/pages2/resources/library/home?sort=not%20a%20key"))
+      .status,
+    400,
+  );
+  // A view 2 page's playable rows can be saved as a playlist too.
+  const enqueueView = vi
+    .spyOn(playlistOperationQueue, "enqueuePayload")
+    .mockResolvedValue({ operationId: 2, queued: true } as never);
+  try {
+    const savedView = await routes(owner).request(
+      "/plugins/pages2/resources/library/home/playlist",
+      json("POST", { name: "From the library", itemIds: ["item-1"] }),
+    );
+    assert.equal(savedView.status, 200);
+    assert.equal(
+      v.parse(v.looseObject({ sourceName: v.string() }), enqueueView.mock.calls[0]?.[0]).sourceName,
+      "Fixture Library",
+    );
+  } finally {
+    enqueueView.mockRestore();
+  }
+
   await turnOn("views", { capabilities: { albumPresentation: false, "page:work": false } });
   assert.equal(
     await (await routes(owner).request(`/plugins/album-presentation/${album.id}`)).json(),
@@ -960,6 +1178,7 @@ const searchItemSchema = v.object({
   title: v.string(),
   href: v.nullable(v.string()),
   filters: v.nullable(v.record(v.string(), v.array(v.string()))),
+  links: v.array(v.object({ label: v.string(), href: v.string() })),
 });
 const searchAnswerSchema = v.object({
   providers: v.array(
@@ -985,7 +1204,8 @@ test("search providers answer the search page with typed results; a failing one 
       best: { id: "work:w1", kind: "work", title: "Moonlight Sonata", link: { type: "resource", pageId: "work", resourceId: "w1" } },
       sections: [{ id: "work", title: "Works", total: 3, items: [
         { id: "work:w1", kind: "work", title: input.query.q + " " + JSON.stringify(input.query.filters) + " " + input.user.role + " " + input.query.limit, link: { type: "resource", pageId: "work", resourceId: "w1" } },
-        { id: "release:9", kind: "release", title: "Album", subtitle: "Pianist", link: { type: "album", albumId: "9" } },
+        { id: "release:9", kind: "release", title: "Album", subtitle: "Pianist", link: { type: "album", albumId: "9" },
+          links: [{ label: "Pianist", link: { type: "filter", filters: { performer: ["p"] } } }, { label: "Work", link: { type: "resource", pageId: "work", resourceId: "w1" } }] },
         { id: "performer:p", kind: "performer", title: "Pianist", link: { type: "filter", filters: { performer: ["p"] } } },
       ] }],
       facets: [{ key: "composer", label: "Composer", options: [{ value: "c1", label: "Beethoven", count: 1 }] }],
@@ -1011,6 +1231,10 @@ test("search providers answer the search page with typed results; a failing one 
     ["/plugins/finder/work/w1", "/album/9", null],
   );
   assert.deepEqual(items[2]?.filters, { performer: ["p"] });
+  assert.deepEqual(items[1]?.links, [
+    { label: "Pianist", href: "/search?plugin=finder&pf=performer%3Dp" },
+    { label: "Work", href: "/plugins/finder/work/w1" },
+  ]);
   assert.equal(finder?.best?.href, "/plugins/finder/work/w1");
   const broken = answer.providers.find((p) => p.pluginId === "broken");
   assert.deepEqual([broken?.ok, broken?.pluginName], [false, "Plugin broken"]);
@@ -1032,6 +1256,67 @@ test("search providers answer the search page with typed results; a failing one 
     off.providers.some((p) => p.pluginId === "finder"),
     false,
   );
+});
+
+test("track links answer per asked track, merged across plugins, and only when declared and on", async () => {
+  const trackLinksAnswer = v.object({
+    links: v.record(v.string(), v.array(v.object({ label: v.string(), href: v.string() }))),
+  });
+  const ask = async (ids: string) => {
+    const response = await routes(owner).request(`/plugins/track-links?trackIds=${ids}`);
+    return {
+      status: response.status,
+      body: response.ok ? v.parse(trackLinksAnswer, await response.json()) : null,
+    };
+  };
+  const tracksFlag = async () =>
+    v.parse(
+      v.looseObject({ trackLinks: v.boolean() }),
+      await (await routes(owner).request("/plugins/actions")).json(),
+    ).trackLinks;
+  // Without a plugin that declares it, nothing is asked or answered.
+  assert.equal(await tracksFlag(), false);
+  assert.deepEqual((await ask("7,8")).body, { links: { 7: [], 8: [] } });
+  await install(
+    "linker",
+    { trackLinks: true },
+    `export default { trackLinks: (input) => ({ version: 1, tracks: {
+      "7": [
+        { label: "Open the work " + input.trackIds.join("+") + " " + input.capabilities.trackLinks, link: { type: "resource", pageId: "work", resourceId: "w1" } },
+        { label: "More by Pianist", link: { type: "filter", filters: { performer: ["p 1"] } } },
+      ],
+      "99": [{ label: "Not asked", link: { type: "album", albumId: "1" } }],
+    } }) }`,
+  );
+  await install(
+    "undeclared",
+    {},
+    `export default { trackLinks: () => ({ version: 1, tracks: { "7": [{ label: "Never", link: { type: "album", albumId: "2" } }] } }) }`,
+  );
+  await install(
+    "faulty",
+    { trackLinks: true },
+    `export default { trackLinks: () => ({ version: 2 }) }`,
+  );
+  await turnOn("linker");
+  await turnOn("undeclared");
+  await turnOn("faulty");
+  assert.equal(await tracksFlag(), true);
+  const answered = await ask("7,8,7");
+  assert.deepEqual(answered.body, {
+    links: {
+      7: [
+        { label: "Open the work 7+8 1", href: "/plugins/linker/work/w1" },
+        { label: "More by Pianist", href: "/search?plugin=linker&pf=performer%3Dp%25201" },
+      ],
+      8: [],
+    },
+  });
+  assert.equal((await ask("not-a-track")).status, 400);
+  assert.equal((await ask(Array.from({ length: 101 }, (_, i) => i + 1).join(","))).status, 400);
+  // The admin's switch turns it off like any other capability.
+  await turnOn("linker", { capabilities: { trackLinks: false } });
+  assert.deepEqual((await ask("7")).body, { links: { 7: [] } });
 });
 
 test("a background action answers right away and reports its result to the user who ran it", async () => {

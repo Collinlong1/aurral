@@ -73,7 +73,11 @@ export type QueueTrackInput = {
   libraryAlbumId?: string | number | null;
   libraryArtistId?: string | number | null;
   favoriteId?: string | null;
+  // Where a plugin says this track leads (pluginLinks.ts), for its menus.
+  links?: QueueTrackLink[] | null;
 };
+
+export type QueueTrackLink = { label: string; href: string };
 
 function extensionFromPath(value: unknown) {
   const [path = ""] = String(value || "").split("?");
@@ -160,6 +164,7 @@ export function normalizeQueueTrack(track: QueueTrackInput, overrides: QueueTrac
     libraryAlbumId: track?.libraryAlbumId ?? null,
     libraryArtistId: track?.libraryArtistId ?? null,
     favoriteId: track?.favoriteId ?? null,
+    links: track?.links?.length ? track.links : null,
     ...overrides,
   };
   return {

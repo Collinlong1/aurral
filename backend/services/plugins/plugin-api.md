@@ -266,6 +266,35 @@ Return `SearchResult` from the TypeScript reference: version 1, `total`, an opti
 
 `GET /api/plugins/search?q=&filters=&plugin=&section=&offset=` calls every provider at once with 3 seconds each. Filters are written `name=value1,value2;name2=value`. A provider that fails or times out is listed with `ok: false` and the rest of search still renders.
 
+## Links on items (classical fork)
+
+A link is typed, never a URL: `{type:"resource",pageId,resourceId}` (a page of the same plugin), `{type:"album",albumId}` (a Library album) or `{type:"filter",filters}` (`{ name: [values] }`). Aurral builds every path. Besides its own `link`, a playable item (album presentation and resource page `items`), an album presentation group and a search result may send `links`: up to six `{label, link}` for its menu, such as "Open the work" or "More by this pianist". They travel with the track into the queue, so the player's track menu offers them too. A filter link away from the page that sent it opens that plugin's search results with those filters. Hosts with this send `capabilities.itemLinks: 1` to pages, album presentation and search; older hosts drop `links`.
+
+## Library pages: resource view 2 (classical fork)
+
+A non-admin page (`"admin": false` in `pages`) is read with `pages.read(input)` and `input.resourceId`. Hosts with view 2 send `capabilities.resourceView: 2` and `input.query`: `q`, `sort`, `tab`, `page` (0-based) and `filters`, read from the page's URL so links, Back and reloads keep them. Return `{version: 2, title, sections}` with up to 30 typed sections, rendered by Aurral's own components:
+
+| Section   | Fields                                                                                                                          |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `header`  | `title`, `subtitle`, up to 20 `facts` (`{label,value,link}`), 6 `badges` and 6 `actions` (`{label, link or mutation, pressed}`) |
+| `rows`    | `id`, `title`, up to 100 `rows` (`{id,label,detail,badge,link}`), `empty`                                                       |
+| `groups`  | `id`, `title`, up to 50 `groups` (`{heading,detail,link,rows}`)                                                                 |
+| `tracks`  | `id`, `title`, `context` (prefixes queued titles), up to 500 playable `items` (the items work pages send)                       |
+| `details` | `id`, `title`, up to 50 `items` (`{label,value,link}`)                                                                          |
+| `pager`   | `total`, `offset`, `limit` (at most 500)                                                                                        |
+| `tabs`    | `active`, up to 10 `tabs` (`{id,label,count}`)                                                                                  |
+| `filters` | up to 10 `filters` (`{key,label,options,selected}`)                                                                             |
+| `sort`    | `active`, up to 10 `options` (`{value,label}`)                                                                                  |
+| `empty`   | `message`                                                                                                                       |
+
+A filter link on a row applies its filters to the same page. Tracks that are no longer in the Library are left out. Version 1 work pages still work. A page's actions and the page's playlist button send `pages.mutate(input)` with `input.mutation.command`: `favourite`, `pick`, `admin-pick`, `favourite-item` and `delete-queue` (with `target`), or `save-queue` (with `name` and `itemIds`). Return `{ok: true}`.
+
+Add `"library": {"pageId", "resourceId", "label"}` to put one Library page in the Library's navigation. It opts into the `library` capability, shown only for a non-admin page, which an admin can turn off. `GET /api/plugins/library` lists the entries switched on.
+
+## Track links (classical fork)
+
+Set `"trackLinks": true` and export `trackLinks(input)` to add links to any Library track's menu and the player, for tracks queued from ordinary pages. It opts into the `trackLinks` capability. `input.trackIds` holds up to 100 Library track IDs (strings) and `input.capabilities.trackLinks` is `1`. Return `{version: 1, tracks: { "<trackId>": [{label, link}] }}`, at most six links a track, and leave out tracks with none. `GET /api/plugins/track-links?trackIds=1,2` merges every plugin's answer, six links at most a track, with 3 seconds each; a plugin that fails adds nothing. `GET /api/plugins/actions` says `trackLinks: true` when any plugin answers, so the app asks only then: a track menu when it opens, the player when a track starts. Answers are cached per track ID.
+
 ### Admin pages v2: selection and pages (classical fork)
 
 A `rows` section and the browse `list` may add `select: { key, actions }`. Each row then gets a checkbox, with "Select all" and "Clear"; an action runs with its own `arguments` plus `key`: the ticked rows' IDs (only rows on screen). An action's `confirm` text is shown with the number selected. A `rows` section may add `pager: { label, previous?, next? }`, where `previous` and `next` are selections the host opens, so a plugin can page a long section (an album of 600 tracks) without passing the 500-row limit. After a mutation that returns a `selection`, the list keeps its tab, search and page. A mutation result may also name `focus`, a section id of the resulting page: the host keeps the reader's scroll position and brings that section into view (for example the next step of a task further down the page). Results of commands other than `open` keep the scroll position; a section's pager opens its next page at that section. Pagers show above and below a long list. A read may receive `offset` as an empty string: links that open another entry send it, and the plugin should then show the list page that holds the selection (a plugin that ignores it gets the first page, as `Number("")` is 0).

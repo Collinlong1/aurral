@@ -85,6 +85,8 @@ import ManualMissingSearchModal, {
 } from "../activity/ManualMissingSearchModal.tsx";
 import { queryClient, queryKeys } from "../../queryClient.ts";
 import { usePluginActions } from "../../hooks/usePluginActions.ts";
+import { usePluginTrackLinks } from "../../hooks/usePluginTrackLinks.ts";
+import { pluginLinkMenuItems } from "../../utils/pluginQueue.ts";
 import { showFavoriteRemoved } from "../../utils/favoriteUndo.ts";
 import { libraryAlbumPath as albumLink } from "../../../../lib/albumPath.ts";
 import {
@@ -184,6 +186,7 @@ export function useLibraryActions({
   const toast = useToast();
   const shareLibrary = useLibraryShareAction();
   const pluginActions = usePluginActions();
+  const trackLinks = usePluginTrackLinks();
   const pluginMenuItems: typeof pluginActions = (target, input) =>
     isPreviewLibrary ? [] : pluginActions(target, input);
   const { showError, showSuccess } = toast;
@@ -1340,6 +1343,7 @@ export function useLibraryActions({
           ]
         : []),
       ...pluginMenuItems("track", { trackIds: [track.id] }),
+      ...(isPreviewLibrary ? [] : pluginLinkMenuItems(trackLinks.linksFor(track.id))),
       ...(monitoringItem ? [monitoringItem] : []),
       ...(canDeleteTrack && (hasDeletableTrackFile(track) || hasAurralTrackFile(track))
         ? [
@@ -1400,7 +1404,10 @@ export function useLibraryActions({
       menu: {
         items: trackMenuItems,
         additionalItemsAfter: queueItems.at(-1)?.id ?? "play",
-        onMenuOpen: loadStaticPlaylists,
+        onMenuOpen: () => {
+          void loadStaticPlaylists();
+          if (!isPreviewLibrary) trackLinks.load(track.id);
+        },
         renderAdditionalItems: ({ closeMenu }) => (
           <>
             <div className="native-library-item-menu__separator" />

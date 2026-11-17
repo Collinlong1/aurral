@@ -12,6 +12,8 @@ import {
   pluginResourceMutation,
   readPluginResource,
   mutatePluginResource,
+  pluginResourceQuery,
+  pluginLibraryEntries,
   resourcePlaylistInput,
   saveResourcePlaylist,
 } from "../services/plugins/pluginPresentation.ts";
@@ -52,6 +54,11 @@ import {
 import { setSafeMode } from "../services/plugins/pluginStore.ts";
 import { listPluginImportLists } from "../services/plugins/pluginImportList.ts";
 import { pluginSearch, pluginSearchQuery } from "../services/plugins/pluginSearch.ts";
+import {
+  hasTrackLinks,
+  pluginTrackLinks,
+  pluginTrackLinksQuery,
+} from "../services/plugins/pluginTrackLinks.ts";
 import { noCache } from "../middleware/cacheHeaders.ts";
 
 const pluginParam = v.object({ id: v.string() });
@@ -132,18 +139,36 @@ export default new Hono<AppEnv>()
     validate("query", pluginSearchQuery),
     (c) => answer(c, () => pluginSearch(c.var.user, c.req.valid("query"))),
   )
+  .get(
+    "/track-links",
+    requireAuth,
+    requireUserAccount,
+    noCache,
+    validate("query", pluginTrackLinksQuery),
+    (c) => answer(c, () => pluginTrackLinks(c.var.user, c.req.valid("query").trackIds)),
+  )
+  // Plugin pages an admin added to the Library's navigation.
+  .get("/library", requireAuth, requireUserAccount, (c) =>
+    answer(c, () => ({ entries: pluginLibraryEntries() })),
+  )
   .get("/album-presentation/:albumId", requireAuth, requireUserAccount, (c) =>
     answer(c, () => pluginAlbumPresentation(c.var.user, c.req.param("albumId"))),
   )
-  .get("/:id/resources/:pageId/:resourceId", requireAuth, requireUserAccount, (c) =>
-    answer(c, () =>
-      readPluginResource(
-        c.var.user,
-        c.req.param("id"),
-        c.req.param("pageId"),
-        c.req.param("resourceId"),
+  .get(
+    "/:id/resources/:pageId/:resourceId",
+    requireAuth,
+    requireUserAccount,
+    validate("query", pluginResourceQuery),
+    (c) =>
+      answer(c, () =>
+        readPluginResource(
+          c.var.user,
+          c.req.param("id"),
+          c.req.param("pageId"),
+          c.req.param("resourceId"),
+          c.req.valid("query"),
+        ),
       ),
-    ),
   )
   .post(
     "/:id/resources/:pageId/:resourceId/playlist",
@@ -232,7 +257,9 @@ export default new Hono<AppEnv>()
       return c.json({ safeMode: enabled }, 200);
     },
   )
-  .get("/actions", requireAuth, (c) => c.json({ actions: listPluginActions(c.var.user) }, 200))
+  .get("/actions", requireAuth, (c) =>
+    c.json({ actions: listPluginActions(c.var.user), trackLinks: hasTrackLinks() }, 200),
+  )
   .get("/import-lists", requireAuth, (c) => c.json({ importLists: listPluginImportLists() }, 200))
   .post(
     "/install/inspect",

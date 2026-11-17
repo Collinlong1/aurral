@@ -4,7 +4,9 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { parseResponse } from "hono/client";
 import RouteLink from "../components/RouteLink";
 import { Select } from "../components/Select";
-import { AlertCircle } from "../components/icons";
+import { LibraryItemMenu } from "../components/LibraryItemMenu";
+import { AlertCircle, Ellipsis } from "../components/icons";
+import { pluginLinkMenuItems } from "../utils/pluginQueue.ts";
 import { pluginsClient } from "../utils/api/clients/plugins.ts";
 import type { pluginSearch } from "../../../backend/services/plugins/pluginSearch.ts";
 import "./PluginSearchResults.css";
@@ -63,8 +65,19 @@ function ResultRow({
   );
   return (
     <li className="plugin-search__row">
-      {title}
-      {meta ? <span className="plugin-search__meta">{meta}</span> : null}
+      <span className="plugin-search__text">
+        {title}
+        {meta ? <span className="plugin-search__meta">{meta}</span> : null}
+      </span>
+      {item.links.length ? (
+        <LibraryItemMenu
+          label={item.title}
+          triggerClassName="btn btn-ghost btn-icon"
+          triggerIcon={<Ellipsis aria-hidden="true" />}
+          triggerLabel={`More for ${item.title}`}
+          items={pluginLinkMenuItems(item.links)}
+        />
+      ) : null}
     </li>
   );
 }

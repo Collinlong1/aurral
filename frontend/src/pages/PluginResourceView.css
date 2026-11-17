@@ -1,0 +1,231 @@
+/* A plugin's view 2 page: one title, plain section headings, rows without
+   dividers, as the Library's own pages. */
+.plugin-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--aurral-space-stack);
+}
+
+.plugin-view__title {
+  margin: 0;
+}
+
+.plugin-view__subtitle,
+.plugin-view__facts {
+  margin: 0;
+  color: var(--aurral-text-muted);
+  font-size: var(--aurral-font-sm);
+}
+
+.plugin-view__facts a,
+.plugin-view__row-title a {
+  color: inherit;
+}
+
+.plugin-view__badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+}
+
+.plugin-view__badge {
+  padding: 2px 8px;
+  border-radius: var(--aurral-radius-round);
+  background: var(--aurral-surface-raised);
+  color: var(--aurral-text-muted);
+  font-size: var(--aurral-font-2xs);
+}
+
+.plugin-view__actions,
+.plugin-view__controls,
+.plugin-view__pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.plugin-view__select {
+  min-width: 180px;
+}
+
+.plugin-view__tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.plugin-view__tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 0;
+  border-radius: var(--aurral-radius-sm);
+  background: transparent;
+  color: var(--aurral-text-muted);
+  font: inherit;
+  font-size: var(--aurral-font-base);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .plugin-view__tab:hover {
+    background: var(--aurral-surface-hover);
+    color: var(--aurral-text);
+  }
+}
+
+.plugin-view__tab[aria-current="page"] {
+  background: var(--aurral-surface-selected);
+  color: var(--aurral-text);
+}
+
+.plugin-view__count {
+  color: var(--aurral-text-subtle);
+  font-size: var(--aurral-font-2xs);
+}
+
+.plugin-view__section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.plugin-view__section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.plugin-view__heading {
+  margin: 0;
+  font-size: var(--aurral-font-xl);
+  font-weight: 700;
+  letter-spacing: var(--aurral-tracking-title);
+}
+
+.plugin-view__group-heading {
+  margin: 8px 0 0;
+  font-size: var(--aurral-font-base);
+  font-weight: 600;
+}
+
+.plugin-view__group-heading a {
+  color: inherit;
+}
+
+.plugin-view__rows,
+.plugin-view__tracks {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.plugin-view__row,
+.plugin-view__track {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 4px 8px;
+  border-radius: var(--aurral-radius-sm);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .plugin-view__row:hover,
+  .plugin-view__track:hover {
+    background: var(--aurral-surface-hover);
+  }
+}
+
+.plugin-view__row-title {
+  overflow: hidden;
+  font-size: var(--aurral-font-base);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plugin-view__row-detail {
+  overflow: hidden;
+  color: var(--aurral-text-subtle);
+  font-size: var(--aurral-font-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plugin-view__row .plugin-view__row-detail {
+  flex: 1;
+}
+
+.plugin-view__link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.plugin-view__track-play {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.plugin-view__time {
+  color: var(--aurral-text-subtle);
+  font-size: var(--aurral-font-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.plugin-view__details {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 16px;
+  margin: 0;
+  font-size: var(--aurral-font-sm);
+}
+
+.plugin-view__details > div {
+  display: contents;
+}
+
+.plugin-view__details dt {
+  color: var(--aurral-text-subtle);
+}
+
+.plugin-view__details dd {
+  margin: 0;
+}
+
+@media (max-width: 640px) {
+  .plugin-view__row {
+    flex-wrap: wrap;
+  }
+
+  .plugin-view__row .plugin-view__row-detail {
+    flex-basis: 100%;
+  }
+
+  /* Two filters a row, each wide enough to read its choice. */
+  .plugin-view__select {
+    min-width: 0;
+    flex: 1 1 140px;
+  }
+}

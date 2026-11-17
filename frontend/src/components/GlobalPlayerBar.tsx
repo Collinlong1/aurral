@@ -36,6 +36,8 @@ import {
   VolumeX,
 } from "./icons";
 import { useAudioQueue } from "../contexts/audioQueueContext";
+import { pluginLinkMenuItems } from "../utils/pluginQueue.ts";
+import { usePluginTrackLinksFor } from "../hooks/usePluginTrackLinks.ts";
 import { useToast } from "../contexts/ToastContext.tsx";
 import { useAuth } from "../contexts/AuthContext.tsx";
 import { usePlayerFavorite } from "../hooks/usePlayerFavorite.ts";
@@ -201,6 +203,11 @@ function GlobalPlayerBar({ minimized, onMinimizedChange }: GlobalPlayerBarProps)
     initialFocusRef: sheetCloseRef,
   });
   const artTint = useCollectionTint(currentTrack?.artwork);
+  // A track queued from an ordinary page asks plugins for its links.
+  const trackLinks = usePluginTrackLinksFor(
+    isActive ? currentTrack?.libraryTrackId : null,
+    Boolean(currentTrack?.links?.length),
+  );
 
   useEffect(() => {
     setSheetOpen(false);
@@ -449,6 +456,11 @@ function GlobalPlayerBar({ minimized, onMinimizedChange }: GlobalPlayerBarProps)
       : []),
   ];
   const playlistItemAfter = trackMenuItems.at(-1)?.id;
+  // A plugin's own places for this track, as its work or a performer, after
+  // the playlist item.
+  trackMenuItems.push(
+    ...pluginLinkMenuItems(currentTrack?.links?.length ? currentTrack.links : trackLinks),
+  );
   const renderPlaylistItem = ({ closeMenu }: { closeMenu: () => void }) => (
     <PlayerPlaylistSubmenu
       track={savePayload}

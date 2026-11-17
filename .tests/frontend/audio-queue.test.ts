@@ -15,7 +15,7 @@ import {
   shouldRestartTrack,
 } from "../../frontend/src/utils/audioQueue.ts";
 import { requireFixture } from "../playlists/fixtures.ts";
-import { pluginQueueTrack } from "../../frontend/src/utils/pluginQueue.ts";
+import { pluginLinkMenuItems, pluginQueueTrack } from "../../frontend/src/utils/pluginQueue.ts";
 
 const track = {
   id: "flow-track",
@@ -51,6 +51,14 @@ test("bounded work items expose range-relative duration and clamp coordinates", 
   assert.equal(queued.segmentEndMs, 81000);
   assert.equal(queued.durationMs, 39000);
   assert.ok(queued.src?.endsWith(item.streamPath));
+  // A plugin's item links ride along to the player's menu.
+  assert.equal(queued.links, null);
+  const work = { label: "Open the work", href: "/plugins/classical/work/w1" };
+  assert.deepEqual(pluginQueueTrack({ ...item, links: [work] }, "").links, [work]);
+  assert.deepEqual(
+    pluginLinkMenuItems([work, work]).map((entry) => [entry.label, entry.to]),
+    [["Open the work", work.href]],
+  );
   assert.equal(
     pluginQueueTrack({ ...item, title: queued.title, startMs: 0, endMs: null }, "Études, Op. 5")
       .title,

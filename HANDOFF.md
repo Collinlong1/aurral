@@ -1,3 +1,16 @@
+# v0.3 Phase 3: generic plugin pages, Library entry and links (November 17, 2026)
+
+Branch `claude/pensive-bardeen-5dat3q`, for review into `aurral-classical` (never `main`). Seven commits, each generic, additive and off unless a plugin declares it and the admin's capability switch is on:
+
+- **3.1 (#51)** resource view 2: typed sections hydrated by core (links become paths, stale tracks dropped), `capabilities.resourceView: 2`, the URL's `q`/`sort`/`tab`/`page`/`filters` passed to the plugin, and the `favourite-item`, `save-queue` and `delete-queue` mutations.
+- **3.2 (#53)** `PluginResourceView.tsx` renders those pages; a later commit wraps its filters two a row at phone width.
+- **3.3 (#52)** manifest `library` adds one Library navigation entry, listed lazily by `GET /plugins/library` (kept off bootstrap: putting it there raised app-shell queries from 13 to 15; the perf baseline was not refreshed).
+- **3.4 (#54)** item links on playable items, album groups and search results; they ride into the queue and the player's track menu.
+- **3.5 (#56)** `trackLinks` hook, `GET /plugins/track-links`, cached per track on the client; `/plugins/actions` says whether any plugin answers.
+- **3.6 (#55)** `plugin-api.md` and `aurral-plugin.d.ts`.
+
+Node 26.12 (the `.nvmrc` version): `pnpm check` clean at the 1089 unsafe-any baseline, `pnpm test` 2671/2671 across 389 files with the perf budget, `pnpm build` passes. Under the container's default Node 22, 14 network-mocked tests fail in unrelated files (undici 8's dispatcher does not fit Node 22's fetch); not a regression. The companion plugin branch (4.1–4.3: the Classical Library home and six lists) pins `2639010` and adds `dev/classical-pages-browser.mjs`, which renders those pages with this renderer in Chromium. Not run: `pnpm eden test`, integration tests. No merge, release or deployment.
+
 # Synced with upstream through #1891 (November 16, 2026)
 
 At the user's request, fork `main` merged upstream lklynet/aurral #1891 (pause and resume the download queue) as `dabeef5`, fast-forwarded from a short-lived branch. Two conflicts: `downloadWorker.start()` keeps both the fork's wake of a running worker and upstream's no-start while paused; `.tests/perf/baseline.json` was regenerated on the merged tree (app shell 1563 bytes). Then `aurral-classical` merged `main` with no conflicts. Node 26.12 on both trees: `pnpm check` clean at the 1089 unsafe-any baseline, frontend build passes; unit tests 2651/2651 on `main` and 2668/2668 across 388 files on `aurral-classical`. Not run: `pnpm eden test`, integration tests, remote CI, and the companion plugin's Compose and Chromium workflow, which AGENTS.md asks for after a sync. No PR, release or deployment.
