@@ -4685,6 +4685,12 @@ textarea:disabled {
   font-size: var(--aurral-font-base);
 }
 
+.artist-modal__error {
+  margin: -0.5rem 0 1.25rem;
+  color: var(--aurral-danger);
+  font-size: var(--aurral-font-base);
+}
+
 .file-browser-modal__error {
   margin: 0;
   padding: 0.75rem 1.25rem 0;
@@ -8294,19 +8300,23 @@ button.native-library-card__artist:focus-visible {
   color: var(--aurral-accent);
 }
 
-.native-library-track__title > span > .preview-chip {
+.native-library-track__title > span > .preview-chip,
+.artist-track__title > .preview-chip {
   display: none;
   float: right;
   margin-left: 0.75rem;
 }
 
 .native-library-track.is-active .native-library-track__title > span > .preview-chip,
-.native-library-track:focus-within .native-library-track__title > span > .preview-chip {
+.native-library-track:focus-within .native-library-track__title > span > .preview-chip,
+.artist-track.is-active .artist-track__title > .preview-chip,
+.artist-track:focus-within .artist-track__title > .preview-chip {
   display: inline-block;
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .native-library-track:hover .native-library-track__title > span > .preview-chip {
+  .native-library-track:hover .native-library-track__title > span > .preview-chip,
+  .artist-track:hover .artist-track__title > .preview-chip {
     display: inline-block;
   }
 }
@@ -12820,6 +12830,7 @@ button.native-library-genre-row:focus-visible {
   flex-shrink: 0;
   color: var(--aurral-text-muted);
   font-size: var(--aurral-font-xs);
+  font-weight: 400;
 }
 
 .global-player__preview-download {
@@ -14352,10 +14363,6 @@ button.section-show-all {
 
 .app-toast--warning .app-toast__icon {
   color: var(--aurral-warning);
-}
-
-.app-toast--loading .app-toast__icon {
-  color: var(--aurral-text-muted);
 }
 
 .app-toast .app-toast__icon--large {

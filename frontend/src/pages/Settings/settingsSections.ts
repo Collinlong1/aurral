@@ -80,6 +80,7 @@ const SETTINGS_SEARCH: Record<SettingsSectionId, Record<string, SettingsSearchEn
       when: "signInMethods",
     },
     "API access": "API key X-Api-Key api_key token copy rotate",
+    "aurral.org account": "link unlink handle community publish",
   },
   listening: {
     Services: "scrobbling listening history recommendations",
@@ -111,6 +112,7 @@ const SETTINGS_SEARCH: Record<SettingsSectionId, Record<string, SettingsSearchEn
     Users: "create edit add account permissions roles suspended disabled claim",
     "Sign-in": "SSO OIDC single sign-on login form",
     "Local network auto-login": "LAN bypass authentication",
+    "aurral.org": "accounts link publish community playlists turn off",
     Google: { item: "google", keywords: "OAuth sign in client ID secret redirect" },
     "Default permissions": { item: "defaults", keywords: "new users permissions SSO register" },
   },
@@ -141,10 +143,11 @@ const SETTINGS_SEARCH: Record<SettingsSectionId, Record<string, SettingsSearchEn
       item: "prowlarr",
       keywords: "indexers indexer manager search usenet torrent priority",
     },
-    Quality: {
+    Quality: "lossless smaller files quality preference FLAC MP3 AAC",
+    "Advanced quality": {
       item: "quality",
       keywords:
-        "lossless smaller files quality profile FLAC MP3 AAC M4A 128 192 256 320 bitrate hi-res allowed formats rank preference cutoff automatic upgrades",
+        "quality profile tiers FLAC MP3 AAC M4A 128 192 256 320 bitrate hi-res allowed formats rank cutoff automatic upgrades interval",
     },
   },
   discovery: {

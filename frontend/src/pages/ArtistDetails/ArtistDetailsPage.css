@@ -329,6 +329,10 @@ button.artist-track__text {
   white-space: nowrap;
 }
 
+.artist-track__title > .preview-chip {
+  line-height: 1.25rem;
+}
+
 .artist-track__subtitle {
   margin-top: 0.125rem;
   overflow: hidden;

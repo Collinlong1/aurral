@@ -50,7 +50,7 @@ export type PlaylistPanelTrack = Pick<
   PlaylistTrackRow,
   "id" | "artistName" | "trackName" | "status" | "streamUrl"
 > &
-  Partial<PlaylistTrackRow> & { resolvesLinks?: boolean };
+  Partial<PlaylistTrackRow> & { isPreview?: boolean; resolvesLinks?: boolean };
 
 export type PlaylistTrackTarget =
   | { mode: "new"; name: string }
@@ -728,6 +728,7 @@ export function PlaylistTracksPanel<T extends PlaylistPanelTrack>({
       active: isCurrent,
       playing: isCurrent && isRunning,
       loading: isCurrent && isLoading,
+      previewOnly: track.isPreview === true && Boolean(track.streamUrl),
       missing: showPlaybackControls && (!canPlay || (!showTrackStatus && track.status === "saved")),
       status:
         !showTrackStatus &&

@@ -338,7 +338,9 @@ const SYSTEM_TASKS = {
     schedule: { everyMs: 24 * HOUR },
     async run() {
       const { refreshPlaylistShares } = await import("../shareLinks/refresh.ts");
+      const { refreshPublicPlaylists } = await import("../publicPlaylists.ts");
       await refreshPlaylistShares();
+      await refreshPublicPlaylists();
     },
   },
   "aurral-monitoring-reconcile": {
@@ -406,6 +408,15 @@ const SYSTEM_TASKS = {
         throw new TypeError("downloadWorker.releaseReadOnlyFolderFiles is not a function");
       }
       await downloadWorker.releaseReadOnlyFolderFiles(stringList(payload.folders) ?? []);
+    },
+  },
+  "hub-link-revoke": {
+    queue: "maintenance",
+    label: "aurral.org unlink",
+    description: "Tells aurral.org to forget a link after a user unlinks or is deleted.",
+    async run(payload) {
+      const { revokeHubLink } = await import("../hubLink.ts");
+      await revokeHubLink(payload);
     },
   },
   "lidarr-files-release": retired("system"),
