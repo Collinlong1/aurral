@@ -17,6 +17,13 @@ type PluginQueueItem = {
   links?: QueueTrackLink[];
 };
 
+// A queued track that plays only part of its file (one movement of a track
+// holding several). Playlists hold whole files, so adding one adds all of it.
+export const isPartOfTrack = (track: {
+  segmentStartMs?: number | null;
+  segmentEndMs?: number | null;
+}) => (track.segmentStartMs ?? 0) > 0 || track.segmentEndMs != null;
+
 export const pluginItemDurationMs = (item: PluginQueueItem) =>
   item.endMs != null ? item.endMs - item.startMs : item.durationMs;
 

@@ -36,7 +36,7 @@ import {
   VolumeX,
 } from "./icons";
 import { useAudioQueue } from "../contexts/audioQueueContext";
-import { pluginLinkMenuItems } from "../utils/pluginQueue.ts";
+import { isPartOfTrack, pluginLinkMenuItems } from "../utils/pluginQueue.ts";
 import { usePluginTrackLinksFor } from "../hooks/usePluginTrackLinks.ts";
 import { useToast } from "../contexts/ToastContext.tsx";
 import { useAuth } from "../contexts/AuthContext.tsx";
@@ -107,10 +107,13 @@ type SavePayload = ReturnType<typeof buildStaticPlaylistTrackPayload> & { id: st
 function PlayerPlaylistSubmenu({
   track,
   separator,
+  wholeTrack,
   onClose,
 }: {
   track: SavePayload;
   separator: boolean;
+  // The player plays part of the file; a playlist gets all of it.
+  wholeTrack: boolean;
   onClose: () => void;
 }) {
   const save = useTrackSaveActions();
@@ -120,7 +123,7 @@ function PlayerPlaylistSubmenu({
     <>
       {separator ? <div className="native-library-item-menu__separator" /> : null}
       <TrackPlaylistSubmenu
-        label="Add to playlist"
+        label={wholeTrack ? "Add whole track to playlist" : "Add to playlist"}
         icon={Plus}
         track={track}
         playlists={save.playlists}
@@ -464,6 +467,7 @@ function GlobalPlayerBar({ minimized, onMinimizedChange }: GlobalPlayerBarProps)
     <PlayerPlaylistSubmenu
       track={savePayload}
       separator={!canAddToLibrary && trackMenuItems.length > 0}
+      wholeTrack={isPartOfTrack(currentTrack)}
       onClose={closeMenu}
     />
   );
