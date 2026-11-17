@@ -36,6 +36,7 @@ import {
   VolumeX,
 } from "./icons";
 import { useAudioQueue } from "../contexts/audioQueueContext";
+import { pluginLinkMenuItems } from "../utils/pluginQueue.ts";
 import { useToast } from "../contexts/ToastContext.tsx";
 import { useAuth } from "../contexts/AuthContext.tsx";
 import { usePlayerFavorite } from "../hooks/usePlayerFavorite.ts";
@@ -449,6 +450,9 @@ function GlobalPlayerBar({ minimized, onMinimizedChange }: GlobalPlayerBarProps)
       : []),
   ];
   const playlistItemAfter = trackMenuItems.at(-1)?.id;
+  // A plugin's own places for this track, as its work or a performer, after
+  // the playlist item.
+  trackMenuItems.push(...pluginLinkMenuItems(currentTrack?.links));
   const renderPlaylistItem = ({ closeMenu }: { closeMenu: () => void }) => (
     <PlayerPlaylistSubmenu
       track={savePayload}

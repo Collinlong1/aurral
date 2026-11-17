@@ -5,7 +5,14 @@ import { playlistOperationQueue } from "../playlists/playlistOperationQueue.ts";
 import type { RequestUser } from "../../middleware/requestUser.ts";
 import { logger } from "../logger.ts";
 import { albumTarget, PluginTargetMissing } from "./pluginContext.ts";
-import { hrefFor, parseFilters, pluginLink, resolvedLink } from "./pluginLinks.ts";
+import {
+  hrefFor,
+  parseFilters,
+  pluginItemLinks,
+  pluginLink,
+  resolvedItemLinks,
+  resolvedLink,
+} from "./pluginLinks.ts";
 import { callPlugin, PluginError } from "./pluginHost.ts";
 import { activePlugin, activePlugins, isCapabilityOn, pluginInput } from "./pluginStore.ts";
 import { PluginRequestError } from "./pluginService.ts";
@@ -30,6 +37,8 @@ const queueItem = v.object({
   endMs: v.nullable(v.pipe(v.number(), v.integer(), v.minValue(1))),
   // The work's movements this item plays, for comparing one movement.
   movementIds: v.optional(v.pipe(v.array(id), v.maxLength(50)), []),
+  // Up to six labelled links (a work page, an album, a filtered search).
+  links: pluginItemLinks,
 });
 const movement = v.object({ id, title: text(), position: v.pipe(v.number(), v.integer()) });
 const credit = v.object({
@@ -104,6 +113,7 @@ const albumPresentationSchema = v.nullable(
           movementCount: v.pipe(v.number(), v.integer(), v.minValue(1)),
           // A short note under the heading, such as why a block has no work page.
           detail: v.optional(v.pipe(v.string(), v.trim(), v.maxLength(200))),
+          links: pluginItemLinks,
         }),
       ),
       v.maxLength(ALBUM_TRACKS),
@@ -289,8 +299,14 @@ const playableTracks = (album: AlbumTarget) =>
 // retag gives a track or album a new id, so an item can name a track that is
 // gone. Drop those; a malformed reference or range is still a plugin bug.
 function playableItems<
-  Item extends { trackId: string; albumId: string; startMs: number; endMs: number | null },
->(items: Item[], albums: PlayableAlbums, expectedAlbumId?: string) {
+  Item extends {
+    trackId: string;
+    albumId: string;
+    startMs: number;
+    endMs: number | null;
+    links: { label: string; link: v.InferOutput<typeof pluginLink> }[];
+  },
+>(pluginId: string, items: Item[], albums: PlayableAlbums, expectedAlbumId?: string) {
   return items.flatMap((item) => {
     if (expectedAlbumId !== undefined && item.albumId !== expectedAlbumId)
       throw new PluginRequestError(502, "Plugin returned a track from another album");
@@ -314,6 +330,7 @@ function playableItems<
     return [
       {
         ...item,
+        links: resolvedItemLinks(pluginId, item.links),
         streamPath: `/library/stream/${encodeURIComponent(item.albumId)}/${encodeURIComponent(item.trackId)}`,
       },
     ];
@@ -332,7 +349,7 @@ function hydrateWork(pluginId: string, view: v.InferOutput<typeof workView>) {
   let before = 0;
   let after = 0;
   const recordings = view.recordings.flatMap((recording) => {
-    const items = playableItems(recording.items, albums);
+    const items = playableItems(pluginId, recording.items, albums);
     before += recording.items.length;
     after += items.length;
     // A recording whose every track is gone has nothing left to show.
@@ -373,7 +390,7 @@ function hydrateView(pluginId: string, view: v.InferOutput<typeof viewV2>) {
       case "details":
         return { ...section, items: section.items.map(fact) };
       case "tracks": {
-        const items = playableItems(section.items, albums);
+        const items = playableItems(pluginId, section.items, albums);
         before += section.items.length;
         after += items.length;
         return { ...section, items };
@@ -421,7 +438,7 @@ export async function readPluginResource(
           resourceId,
           // 2: generic view 2 pages with `input.query`; a plugin may still
           // answer with a version 1 work page.
-          capabilities: { resourceView: 2 },
+          capabilities: { resourceView: 2, itemLinks: 1 },
           query: resourceInputQuery(query),
           user: { id: user.id, username: user.username, role: user.role },
         },
@@ -491,7 +508,7 @@ export async function pluginAlbumPresentation(user: RequestUser, albumId: string
           path: "albumPresentation",
           input: {
             ...pluginInput(plugin),
-            capabilities: { albumPresentation: 1 },
+            capabilities: { albumPresentation: 1, itemLinks: 1 },
             user: { id: user.id, username: user.username, role: user.role },
             album,
           },
@@ -506,10 +523,10 @@ export async function pluginAlbumPresentation(user: RequestUser, albumId: string
         Math.min(...group.items.map((item) => position.get(item.trackId) ?? Infinity));
       const albums: PlayableAlbums = new Map([[String(album.id), playableTracks(album)]]);
       const groups = result.groups.flatMap((group) => {
-        const items = playableItems(group.items, albums, String(album.id));
+        const items = playableItems(plugin.id, group.items, albums, String(album.id));
         if (!items.length) return [];
         const href = group.workId ? `/plugins/${plugin.id}/work/${group.workId}` : null;
-        return [{ ...group, href, items }];
+        return [{ ...group, href, items, links: resolvedItemLinks(plugin.id, group.links) }];
       });
       logDropped(
         plugin.id,

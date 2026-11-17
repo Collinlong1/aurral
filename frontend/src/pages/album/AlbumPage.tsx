@@ -74,6 +74,7 @@ import { pluginsClient } from "../../utils/api/clients/plugins.ts";
 import { parseResponse } from "hono/client";
 import {
   pluginItemDurationMs as itemDurationMs,
+  pluginLinkMenuItems,
   pluginQueueTrack,
 } from "../../utils/pluginQueue.ts";
 import type { pluginAlbumPresentation } from "../../../../backend/services/plugins/pluginPresentation.ts";
@@ -535,6 +536,8 @@ function AlbumPage() {
             },
             ...queueItems,
             ...(base?.menu?.items || []).filter((entry) => !WORK_PLAYBACK_MENU_IDS.has(entry.id)),
+            // The plugin's places for this movement and its work.
+            ...pluginLinkMenuItems([...item.links, ...group.links]),
           ],
           additionalItemsAfter: queueItems.at(-1)?.id ?? "play",
         },

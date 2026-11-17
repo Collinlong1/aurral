@@ -2,7 +2,13 @@
 // from Aurral's search page with typed, bounded result sections and filters.
 // Core renders them with its own components and builds every link itself.
 import * as v from "valibot";
-import { hrefFor, parseFilters, pluginLink as link } from "./pluginLinks.ts";
+import {
+  hrefFor,
+  parseFilters,
+  pluginItemLinks,
+  pluginLink as link,
+  resolvedItemLinks,
+} from "./pluginLinks.ts";
 import type { RequestUser } from "../../middleware/requestUser.ts";
 import { callPlugin } from "./pluginHost.ts";
 import { activePlugins, isCapabilityOn, pluginInput } from "./pluginStore.ts";
@@ -19,6 +25,8 @@ const item = v.object({
   subtitle: v.optional(text(), ""),
   detail: v.optional(text(), ""),
   link: v.optional(v.nullable(link), null),
+  // More places the result leads, for a menu.
+  links: pluginItemLinks,
 });
 const resultSchema = v.object({
   version: v.literal(1),
@@ -86,7 +94,7 @@ export async function pluginSearch(
             path: "search",
             input: {
               ...pluginInput(plugin),
-              capabilities: { search: 1 },
+              capabilities: { search: 1, itemLinks: 1 },
               user: { id: user.id, username: user.username, role: user.role },
               query: {
                 q: query.q,
@@ -105,6 +113,7 @@ export async function pluginSearch(
           ...entry,
           href: hrefFor(plugin.id, entry.link),
           filters: entry.link?.type === "filter" ? entry.link.filters : null,
+          links: resolvedItemLinks(plugin.id, entry.links),
         });
         return {
           pluginId: plugin.id,

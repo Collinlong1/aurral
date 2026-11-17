@@ -8,8 +8,13 @@ import { useAudioQueue } from "../contexts/audioQueueContext.ts";
 import { useToast } from "../contexts/ToastContext.tsx";
 import { Select } from "../components/Select";
 import TooltipButton from "../components/TooltipButton.tsx";
-import { Inbox, ListEnd, ListStart } from "../components/icons";
-import { pluginItemDurationMs, pluginQueueTrack } from "../utils/pluginQueue.ts";
+import { LibraryItemMenu } from "../components/LibraryItemMenu";
+import { Ellipsis, Inbox, ListEnd, ListStart } from "../components/icons";
+import {
+  pluginItemDurationMs,
+  pluginLinkMenuItems,
+  pluginQueueTrack,
+} from "../utils/pluginQueue.ts";
 import { formatDuration } from "./library/libraryShared.tsx";
 import type { readPluginResource } from "../../../backend/services/plugins/pluginPresentation.ts";
 import "./PluginResourceView.css";
@@ -327,6 +332,15 @@ export default function PluginResourceView({ data, search, setSearch, onMutate, 
                       >
                         <ListEnd aria-hidden="true" />
                       </TooltipButton>
+                      {item.links.length ? (
+                        <LibraryItemMenu
+                          label={item.title}
+                          triggerClassName="btn btn-ghost btn-icon"
+                          triggerIcon={<Ellipsis aria-hidden="true" />}
+                          triggerLabel={`More for ${item.title}`}
+                          items={pluginLinkMenuItems(item.links)}
+                        />
+                      ) : null}
                     </li>
                   ))}
                 </ol>

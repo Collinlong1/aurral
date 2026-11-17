@@ -43,13 +43,23 @@ export const resolvedLink = (pluginId: string, link: PluginLink | null | undefin
     ? { href: hrefFor(pluginId, link), filters: link.type === "filter" ? link.filters : null }
     : null;
 
+// Item links travel into menus, the queue and the player, away from the
+// page that sent them: a filter link opens that plugin's search results.
+const searchPath = (pluginId: string, filters: Record<string, string[]>) =>
+  `/search?${new URLSearchParams({
+    plugin: pluginId,
+    pf: Object.entries(filters)
+      .map(([key, values]) => `${key}=${values.map(encodeURIComponent).join(",")}`)
+      .join(";"),
+  })}`;
 export const resolvedItemLinks = (
   pluginId: string,
   links: { label: string; link: PluginLink }[] = [],
 ) =>
   links.flatMap(({ label, link }) => {
-    const resolved = resolvedLink(pluginId, link);
-    return resolved ? [{ label, ...resolved }] : [];
+    const href =
+      link.type === "filter" ? searchPath(pluginId, link.filters) : hrefFor(pluginId, link);
+    return href ? [{ label, href }] : [];
   });
 
 // "composer=a,b;period=x" -> { composer: ["a","b"], period: ["x"] }, as

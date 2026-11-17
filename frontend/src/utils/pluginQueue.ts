@@ -1,4 +1,5 @@
-import { normalizeStreamQueueTrack } from "./audioQueue.ts";
+import { ExternalLink } from "../components/icons";
+import { normalizeStreamQueueTrack, type QueueTrackLink } from "./audioQueue.ts";
 
 // What a plugin's playable item needs to play: album and resource pages both
 // send these (pluginPresentation.ts).
@@ -13,6 +14,7 @@ type PluginQueueItem = {
   startMs: number;
   endMs: number | null;
   streamPath: string;
+  links?: QueueTrackLink[];
 };
 
 export const pluginItemDurationMs = (item: PluginQueueItem) =>
@@ -31,6 +33,19 @@ export function pluginQueueTrack(item: PluginQueueItem, workTitle: string) {
     segmentStartMs: item.startMs,
     segmentEndMs: item.endMs,
     streamPath: item.streamPath,
+    links: item.links,
     recordHistory: true,
   });
 }
+
+// A plugin item's links (pluginLinks.ts) as menu entries, each place once.
+export const pluginLinkMenuItems = (links: QueueTrackLink[] | null | undefined) =>
+  (links ?? [])
+    .filter((link, at, all) => all.findIndex((other) => other.href === link.href) === at)
+    .map((link, at) => ({
+      id: `plugin-link-${at}`,
+      label: link.label,
+      icon: ExternalLink,
+      separatorBefore: at === 0,
+      to: link.href,
+    }));
