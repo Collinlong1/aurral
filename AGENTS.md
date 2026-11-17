@@ -4,7 +4,7 @@ Status, November 14, 2026 (America/Chicago): v0.2 (authorized by the user on Nov
 
 Branches and sync:
 
-- `aurral-classical` is fork `main` plus the generic classical hooks. It last synced on November 16 with fork `main` at upstream lklynet/aurral #1891 (fork `main` `dabeef5`; the previous classical head `4ef6932` is the merge's first parent). The November 14 head is kept as `aurral-classical-backup-2026-11-14`.
+- `aurral-classical` is fork `main` plus the generic classical hooks. It last synced on November 17 with fork `main` at upstream lklynet/aurral #1930 (fork `main` `30285cd`; the previous classical head `4f5b5de` is the merge's first parent). The November 14 head is kept as `aurral-classical-backup-2026-11-14`.
 - Sync order is upstream → fork `main` → `aurral-classical`. Never merge upstream straight into the classical branch, and never merge classical work into `main`.
 - Fork `main` changes only to follow upstream, and only when the user asks. Upstream's pre-commit hook blocks commits on `main`: commit the sync on a short-lived branch, keep upstream as a merge parent (do not switch branches mid-merge; that drops it), then fast-forward `main`.
 - After a sync, rerun the companion plugin's Compose and Chromium workflow: its fixtures (`dev/seed.mjs`, `dev/smoke.mjs`) import core internals that upstream may move.

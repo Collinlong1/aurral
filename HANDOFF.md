@@ -1,3 +1,7 @@
+# Synced with upstream through #1930 (November 17, 2026)
+
+At the user's request, fork `main` merged upstream lklynet/aurral through #1930 (18 commits: the aurral.org hub and Community playlists, auth hardening for spoofed forwarded addresses, stream transcoding without the Subsonic password, Android lock-screen playback, download quality on the Downloads page) as `30285cd`, from a short-lived branch with upstream as a merge parent, then fast-forwarded. One conflict: `docs/src/content/docs/api/endpoints.mdx` takes upstream's playlists table and keeps fork `main`'s rows for library-files, link-file, disk-files, import-file and track-order. Then `aurral-classical` merged `main` as `da34f6a`. One conflict: `.tests/frontend/audio-queue.test.ts`, where both sides added a test at the same place; both kept. Node 26.12 on both trees: `pnpm check` clean at the 1089 unsafe-any baseline, build passes; unit tests 2686/2686 (392 files) on `main` and 2706/2706 (393 files) on `aurral-classical`, perf budgets included. Not run: `pnpm eden test`, integration tests, and the companion plugin's Compose and Chromium workflow, which AGENTS.md asks for after a sync. No PR, release or deployment.
+
 # v0.3 Phase 3: generic plugin pages, Library entry and links (November 17, 2026)
 
 Branch `claude/pensive-bardeen-5dat3q`, for review into `aurral-classical` (never `main`). Seven commits, each generic, additive and off unless a plugin declares it and the admin's capability switch is on:
