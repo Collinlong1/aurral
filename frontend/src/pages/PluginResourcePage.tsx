@@ -9,7 +9,7 @@ import { Select } from "../components/Select";
 import StatePanel from "../components/StatePanel";
 import { AlertCircle, Play } from "../components/icons";
 import { pluginsClient } from "../utils/api/clients/plugins.ts";
-import { pluginQueueTrack } from "../utils/pluginQueue.ts";
+import { isPartOfTrack, pluginQueueTrack } from "../utils/pluginQueue.ts";
 import { albumPath } from "../../../lib/albumPath.ts";
 import { getApiErrorMessage, readApiError } from "../utils/api/errors.ts";
 import { formatDuration } from "./library/libraryShared.tsx";
@@ -153,6 +153,10 @@ export default function PluginResourcePage() {
   const comparisonItems = recordings.flatMap((recording) =>
     movement ? itemsFor(recording, movement.id) : recording.items,
   );
+  // Playlists hold whole files: a comparison of cuts saves their whole tracks.
+  const savesWholeTracks = comparisonItems.some((item) =>
+    isPartOfTrack({ segmentStartMs: item.startMs, segmentEndMs: item.endMs }),
+  );
   const comparisonName = movement
     ? `Compare: ${workTitle} – ${movement.title}`
     : `Compare: ${workTitle}`;
@@ -264,7 +268,7 @@ export default function PluginResourcePage() {
                 })
               }
             >
-              Save as playlist
+              {savesWholeTracks ? "Save whole tracks as playlist" : "Save as playlist"}
             </button>
           </div>
         ) : null}

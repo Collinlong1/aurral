@@ -15,7 +15,11 @@ import {
   shouldRestartTrack,
 } from "../../frontend/src/utils/audioQueue.ts";
 import { requireFixture } from "../playlists/fixtures.ts";
-import { pluginLinkMenuItems, pluginQueueTrack } from "../../frontend/src/utils/pluginQueue.ts";
+import {
+  isPartOfTrack,
+  pluginLinkMenuItems,
+  pluginQueueTrack,
+} from "../../frontend/src/utils/pluginQueue.ts";
 
 const track = {
   id: "flow-track",
@@ -79,6 +83,13 @@ test("bounded work items expose range-relative duration and clamp coordinates", 
     end: 120,
     duration: 78,
   });
+});
+
+test("a queued cut is part of its track; playlists say they add the whole file", () => {
+  assert.equal(isPartOfTrack({ segmentStartMs: 0, segmentEndMs: null }), false);
+  assert.equal(isPartOfTrack({}), false);
+  assert.equal(isPartOfTrack({ segmentStartMs: 120000, segmentEndMs: null }), true);
+  assert.equal(isPartOfTrack({ segmentStartMs: 0, segmentEndMs: 60000 }), true);
 });
 
 test("a Deezer preview in a playlist reaches the player as a preview", () => {
