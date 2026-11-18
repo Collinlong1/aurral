@@ -24,7 +24,7 @@ export default defineConfig({
     categories: { correctness: "error" },
     env: { builtin: true, node: true },
     ignorePatterns: ["docs/**", "**/dist/**"],
-    options: { typeAware: true },
+    options: { typeAware: true, typeCheck: true },
     rules: {
       "no-undef": "error",
       "no-unused-vars": [
@@ -111,6 +111,7 @@ export default defineConfig({
           "frontend/src/components/Layout.tsx",
           "frontend/src/pages/Login.tsx",
           "frontend/src/pages/SsoComplete.tsx",
+          "frontend/src/hosted/screens.tsx",
         ],
         rules: { "aurral/single-main": "off" },
       },

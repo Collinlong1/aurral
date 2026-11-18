@@ -1,10 +1,10 @@
 {
   "app shell": {
     "queries": {
-      "cold": 13,
-      "warm": 13
+      "cold": 12,
+      "warm": 12
     },
-    "bytes": 1563,
+    "bytes": 1693,
     "scans": []
   },
   "library home": {
@@ -12,7 +12,7 @@
       "cold": 127,
       "warm": 121
     },
-    "bytes": 180583,
+    "bytes": 181304,
     "scans": []
   },
   "library albums": {
@@ -291,6 +291,22 @@
     "bytes": 16,
     "scans": []
   },
+  "people on this server": {
+    "queries": {
+      "cold": 5,
+      "warm": 5
+    },
+    "bytes": 372,
+    "scans": []
+  },
+  "person profile": {
+    "queries": {
+      "cold": 31,
+      "warm": 27
+    },
+    "bytes": 3077,
+    "scans": []
+  },
   "community playlists": {
     "queries": {
       "cold": 3,
@@ -302,6 +318,20 @@
       "aurral.org": {
         "cold": 1,
         "warm": 0
+      }
+    }
+  },
+  "aurral.org profile": {
+    "queries": {
+      "cold": 5,
+      "warm": 5
+    },
+    "bytes": 46,
+    "scans": [],
+    "calls": {
+      "aurral.org": {
+        "cold": 1,
+        "warm": 1
       }
     }
   },
@@ -358,7 +388,7 @@
       "cold": 15,
       "warm": 15
     },
-    "bytes": 44055,
+    "bytes": 44434,
     "scans": []
   },
   "subsonic getGenres": {

@@ -11,7 +11,12 @@ import {
   createMockHttpServer,
   listeningAddress,
 } from "../helpers/backendTestHarness.ts";
-import { seedPerfLibrary, seedPerfListening, seedPerfPlaylistJobs } from "./seed.ts";
+import {
+  seedPerfLibrary,
+  seedPerfListening,
+  seedPerfNeighbor,
+  seedPerfPlaylistJobs,
+} from "./seed.ts";
 import type { PerfContext, Scenario } from "./scenarios.ts";
 
 const SUBSONIC_AUTH = { u: "test", p: "password", v: "1.16.1", c: "perf", f: "json" };
@@ -110,9 +115,10 @@ async function startFakeMetadata() {
   };
 }
 
-const LISTENBRAINZ_ANSWERS = new Map<string, unknown>([
+const FAKE_ANSWERS = new Map<string, unknown>([
   ["/similar-artists/json", []],
   ["/1/metadata/artist", []],
+  ["/v1/profiles/mia_k", { handle: "mia_k", playlists: [] }],
 ]);
 
 function fakeListenbrainz() {
@@ -120,9 +126,11 @@ function fakeListenbrainz() {
   const realFetch = globalThis.fetch;
   globalThis.fetch = async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : input);
-    if (!url.hostname.endsWith("listenbrainz.org")) return realFetch(input, init);
+    if (!url.hostname.endsWith("listenbrainz.org") && url.hostname !== "aurral.org") {
+      return realFetch(input, init);
+    }
     calls.set(url.host, (calls.get(url.host) ?? 0) + 1);
-    const answer = LISTENBRAINZ_ANSWERS.get(url.pathname.replace(/\/$/, ""));
+    const answer = FAKE_ANSWERS.get(url.pathname.replace(/\/$/, ""));
     return Response.json(answer ?? { error: "Not found" }, { status: answer ? 200 : 404 });
   };
   return {
@@ -190,6 +198,9 @@ export async function startPerfApp({ artists }: { artists: number }) {
   const { token } = createSession(user.id);
   const library = seedPerfLibrary(db, { artists, musicRoot: join(paths.baseDir, "music") });
   seedPerfListening(db, user.id, library);
+  const neighbor = userOps.createUser("mia", hashPassword("password"));
+  if (!neighbor) throw new Error("Couldn't create the perf neighbor");
+  seedPerfNeighbor(db, neighbor.id, library);
   rebuildLibrarySearchIndex();
   rebuildStoredLibraryGenreStats(db);
   const { playlists: playlistTracks, editSongs } = seedPerfPlaylistJobs(db, library);

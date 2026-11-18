@@ -1,3 +1,4 @@
+import * as v from "valibot";
 import { db } from "../config/db-sqlite.ts";
 import { dbOps } from "../db/helpers/index.ts";
 import { findDeezerAlbumCover, getDeezerArtist } from "./apiClients/deezer.ts";
@@ -46,3 +47,40 @@ export async function friendArt(artist: string, album: string | undefined) {
   }
   return { url: await lookup };
 }
+
+export const friendArtUrl = (artist: string, album?: string | null) =>
+  `/api/hub-link/friends/art?${new URLSearchParams(album ? { artist, album } : { artist })}`;
+
+export const withArt = <Track extends { artist: string; album: string | null }>(track: Track) => ({
+  ...track,
+  artworkUrl: friendArtUrl(track.artist, track.album),
+});
+
+const ranked = <Entries extends v.ObjectEntries>(entries: Entries) =>
+  v.array(v.object({ ...entries, plays: v.number() }));
+const mbid = v.nullish(v.string());
+
+export const topPlaysSchema = v.object({
+  artists: ranked({ name: v.string(), mbid }),
+  albums: ranked({ title: v.string(), artist: v.string(), mbid }),
+  tracks: ranked({ title: v.string(), artist: v.string(), mbid, albumMbid: mbid }),
+  stats: v.nullish(
+    v.object({
+      plays: v.number(),
+      minutes: v.number(),
+      artists: v.number(),
+      hours: v.array(v.number()),
+    }),
+  ),
+});
+
+export type TopPlays = v.InferOutput<typeof topPlaysSchema>;
+
+export const topPlaysWithArt = (top: TopPlays) => ({
+  ...top,
+  artists: top.artists.map((artist) => ({ ...artist, artworkUrl: friendArtUrl(artist.name) })),
+  albums: top.albums.map((album) => ({
+    ...album,
+    artworkUrl: friendArtUrl(album.artist, album.title),
+  })),
+});

@@ -31,6 +31,7 @@ import type { DownloadJob } from "./downloadJobs/downloadTracker.ts";
 import type { StaticPlaylist, StaticPlaylistUpdates } from "./playlists/flowPlaylistConfig.ts";
 import type { PlaylistTrack, PlaylistTrackInput } from "./playlists/playlistTracks.ts";
 import { flowPlaylistConfig } from "./playlists/flowPlaylistConfig.ts";
+import { listPlaylistMembers } from "./playlists/playlistMembers.ts";
 import { normalizePlaylistTrack } from "./playlists/playlistTracks.ts";
 import { playlistManager } from "./playlists/playlistManager.ts";
 import { getPlaylistArtworkRevisions, getPlaylistArtworkState } from "./playlistArtworkState.ts";
@@ -74,6 +75,7 @@ import {
   linkTracksToLibrary,
   releaseLibraryJobs,
 } from "./playlists/playlistLibrary.ts";
+import type { QueueEntry } from "./queueEntry.ts";
 import { getCachedArtistByMbid } from "./providers/brainzmashProvider.ts";
 import {
   getCustomArtwork,
@@ -186,6 +188,7 @@ type SubsonicPlaylist = {
   created: string;
   changed: string;
   comment?: string;
+  allowedUser?: string[];
 };
 
 const parseId = (value: unknown): ParsedId | null => {
@@ -1151,6 +1154,7 @@ const replaceSubsonicPlaylistTracks = async (
     return flowPlaylistConfig.updateStaticPlaylist(playlist.id, {
       ...updates,
       tracks: linked.tracks,
+      actorUserId: user?.id ?? null,
     });
   }).catch(async (error: unknown) => {
     await discardLibraryJobs(linked.createdJobIds);
@@ -1197,6 +1201,12 @@ export async function createSubsonicPlaylist(
 const playlistEditError = (code: string, message: string) =>
   Object.assign(new Error(message), { code });
 
+const allowedUsers = (playlist: Pick<StaticPlaylist, "memberUserIds">) =>
+  listPlaylistMembers(playlist).map((member) => member.username);
+
+const ownerOnlyEdit = () =>
+  playlistEditError("SUBSONIC_PLAYLIST_READ_ONLY", "Only the playlist owner can change this");
+
 export async function updateSubsonicPlaylist(
   user: SubsonicUser,
   {
@@ -1224,6 +1234,18 @@ export async function updateSubsonicPlaylist(
       normalizeStaticPlaylistId(playlistId),
     );
     if (!playlist || !hasPermission(user, "accessPlaylists")) return null;
+    const renamed = name !== undefined && String(name || "").trim() !== playlist.name;
+    const described =
+      comment !== undefined && (String(comment || "").trim() || null) !== playlist.description;
+    if ((renamed || described) && !flowPlaylistConfig.canUserManageStaticPlaylist(user, playlist)) {
+      throw ownerOnlyEdit();
+    }
+    if (songIds !== undefined && playlist.memberUserIds) {
+      throw playlistEditError(
+        "SUBSONIC_PLAYLIST_READ_ONLY",
+        "Add or remove songs on a playlist with collaborators",
+      );
+    }
     const entries = playlistJobEntries(playlist);
     const visibleEntries = entries.filter(({ job }) => isPlayableJob(job));
     const removedEntries =
@@ -1259,6 +1281,7 @@ export async function deleteSubsonicPlaylist(user: SubsonicUser, playlistId: str
     normalizeStaticPlaylistId(playlistId),
   );
   if (!playlist || !hasPermission(user, "accessPlaylists")) return false;
+  if (!flowPlaylistConfig.canUserManageStaticPlaylist(user, playlist)) throw ownerOnlyEdit();
   return processPlaylistOperation({
     kind: "static-playlist-delete",
     playlistId: playlist.id,
@@ -1747,6 +1770,7 @@ export function getSubsonicPlaylists(user: SubsonicUser) {
       id: idFor("shared", playlist.id),
       name: playlist.name,
       owner: userOps.getUserById(playlist.ownerUserId)?.username || "",
+      ...(playlist.memberUserIds && { allowedUser: allowedUsers(playlist) }),
       coverArt: playlistCoverArt("shared", playlist.id, coverRevisions.get(playlist.id)),
       songCount: jobs.length,
       duration: jobs.reduce((total, job) => total + seconds(job.durationMs), 0),
@@ -1790,6 +1814,8 @@ export function getSubsonicPlaylist(value: string, user: SubsonicUser) {
     name: playlist.name,
     ...(playlist.description && { comment: playlist.description }),
     owner: userOps.getUserById(playlist.ownerUserId)?.username || "",
+    ...("memberUserIds" in playlist &&
+      playlist.memberUserIds && { allowedUser: allowedUsers(playlist) }),
     coverArt: playlistCoverArt(kind, playlist.id, coverRevision),
     songCount: jobs.length,
     duration: jobs.reduce((total, job) => total + seconds(job.durationMs), 0),
@@ -1874,8 +1900,6 @@ function playlistSongIdsFor(user: SubsonicUser) {
     return shared ? idFor("shared-song", `${shared}:${job.id}`) : null;
   };
 }
-
-export type QueueEntry = { trackId: number } | { jobId: string };
 
 export function songIdsForQueueEntries(user: SubsonicUser, entries: (QueueEntry | null)[]) {
   const jobs = downloadTracker.getJobs(

@@ -13,3 +13,7 @@ export const BROWSE_IMPORT_PROVIDERS = {
 
 export const isBrowseProvider = (value: unknown): value is BrowseProvider =>
   BROWSE_PROVIDERS.some((provider) => provider === value);
+
+export const BLEND_MIX_PREFIX = "blend-";
+export const LISTENS_MIX_PREFIX = "listens-";
+export const FRIEND_BLEND_MIX_PREFIX = "friend-blend-";

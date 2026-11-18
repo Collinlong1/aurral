@@ -338,7 +338,24 @@ test("linked servers add friends by handle, both asking makes friends, friends s
       method,
       headers: { authorization: `Bearer ${token}` },
     });
-  const lists = async (token: string): Promise<unknown> => (await friends(token)).json();
+  const timed = v.object({
+    handle: v.string(),
+    sentAt: v.nullable(v.number()),
+    receivedAt: v.nullable(v.number()),
+  });
+  const listsSchema = v.object({
+    friends: v.array(v.looseObject(timed.entries)),
+    incoming: v.array(timed),
+    outgoing: v.array(timed),
+  });
+  const timesOf = async (token: string) =>
+    v.parse(listsSchema, await (await friends(token)).json());
+  const lists = async (token: string) => {
+    const untimed = <Row extends { sentAt: unknown; receivedAt: unknown }>(rows: Row[]) =>
+      rows.map(({ sentAt: _sent, receivedAt: _received, ...row }) => row);
+    const { friends: mutual, incoming, outgoing } = await timesOf(token);
+    return { friends: untimed(mutual), incoming: untimed(incoming), outgoing: untimed(outgoing) };
+  };
   const rowCount = async () =>
     (await db.prepare("SELECT COUNT(*) AS n FROM friends").first("n")) ?? 0;
 
@@ -357,18 +374,45 @@ test("linked servers add friends by handle, both asking makes friends, friends s
     outgoing: [],
   });
 
-  const share = (link: string, nowPlaying: object | null, until: number, top: object, at: number) =>
+  const share = (
+    link: string,
+    nowPlaying: object | null,
+    until: number,
+    top: object,
+    at: number,
+    blend: string[] = [],
+    playedAt: number | null = null,
+  ) =>
     db
       .prepare(
-        "INSERT INTO listening (link_id, now_playing, playing_until, top_plays, top_plays_at) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO listening (link_id, now_playing, played_at, playing_until, top_plays, top_plays_at, blend_tracks) VALUES (?, ?, ?, ?, ?, ?, ?)",
       )
-      .bind(link, nowPlaying && JSON.stringify(nowPlaying), until, JSON.stringify(top), at)
+      .bind(
+        link,
+        nowPlaying && JSON.stringify(nowPlaying),
+        playedAt,
+        until,
+        JSON.stringify(top),
+        at,
+        blend.length
+          ? JSON.stringify(blend.map((title) => ({ title, artist: "Radiohead" })))
+          : null,
+      )
       .run();
+  const blendTracks = (token: string) =>
+    api("/v1/friends/blend-tracks", { headers: { authorization: `Bearer ${token}` } });
   const time = Date.now();
-  const top = (plays: number) => ({
-    artists: [{ name: "Radiohead", plays }],
+  const radiohead = "a74b1b7f-71a5-4011-9441-d0b5e4122711";
+  const top = (plays: number, artists = 1) => ({
+    artists: [{ name: "Radiohead", plays, mbid: radiohead }],
     albums: [],
     tracks: [{ title: "Nude", artist: "Radiohead", plays }],
+    stats: {
+      plays,
+      minutes: plays * 4,
+      artists,
+      hours: Array.from({ length: 24 }, (_, hour) => (hour === 20 ? plays : 0)),
+    },
   });
   await share(
     "bob",
@@ -376,14 +420,22 @@ test("linked servers add friends by handle, both asking makes friends, friends s
     time + 60_000,
     top(3),
     time,
+    ["Nude", "Reckoner"],
   );
+  assert.deepEqual(await (await blendTracks(tokens.ann)).json(), { friends: [] });
   assert.deepEqual(await lists(tokens.ann), {
     friends: [],
     incoming: [],
     outgoing: [{ handle: "bob" }],
   });
 
+  const requested = (await timesOf(tokens.bob)).incoming[0]?.receivedAt;
+  assert.equal(typeof requested, "number");
   assert.deepEqual(await (await friends(tokens.bob, "PUT", "ann")).json(), { status: "friends" });
+  const accepted = (await timesOf(tokens.ann)).friends[0];
+  assert.ok(accepted);
+  assert.equal(accepted.sentAt, requested);
+  assert.ok(Number(accepted.receivedAt) >= Number(requested));
   await db
     .prepare(
       "INSERT INTO links (id, instance_id, user_name, token_hash, account_id, linked_at) VALUES ('bob-2', 'inst', 'bob', 'h2', 'bob', 1), ('bob-3', 'inst', 'bob', 'h3', 'bob', 1)",
@@ -394,23 +446,41 @@ test("linked servers add friends by handle, both asking makes friends, friends s
     { title: "Old", artist: "Radiohead", album: null },
     time - 1,
     {
-      ...top(2),
+      ...top(2, 2),
       artists: [
         { name: "radiohead", plays: 2 },
         { name: "Björk", plays: 4 },
       ],
     },
-    time,
+    time - 1,
+    ["nude", "Lucky"],
+    time - 300_000,
   );
-  await share("bob-3", null, 0, top(50), time - 8 * 86_400_000);
+  await share("bob-3", null, 0, top(50), time - 8 * 86_400_000, ["Creep"]);
+  assert.deepEqual(await (await blendTracks(tokens.ann)).json(), {
+    friends: [
+      {
+        handle: "bob",
+        tracks: ["Nude", "Reckoner", "Lucky"].map((title) => ({ title, artist: "Radiohead" })),
+      },
+    ],
+  });
+  assert.deepEqual(await (await blendTracks(tokens.bob)).json(), { friends: [] });
   assert.deepEqual(await lists(tokens.ann), {
     friends: [
       {
         handle: "bob",
         nowPlaying: { title: "Nude", artist: "Radiohead", album: null },
+        lastPlayed: { title: "Old", artist: "Radiohead", album: null, at: time - 300_000 },
         topPlays: {
+          stats: {
+            plays: 5,
+            minutes: 20,
+            artists: 2,
+            hours: Array.from({ length: 24 }, (_, hour) => (hour === 20 ? 5 : 0)),
+          },
           artists: [
-            { name: "Radiohead", plays: 5 },
+            { name: "Radiohead", plays: 5, mbid: radiohead },
             { name: "Björk", plays: 4 },
           ],
           albums: [],
@@ -422,7 +492,7 @@ test("linked servers add friends by handle, both asking makes friends, friends s
     outgoing: [],
   });
   assert.deepEqual(await lists(tokens.bob), {
-    friends: [{ handle: "ann", nowPlaying: null, topPlays: null }],
+    friends: [{ handle: "ann", nowPlaying: null, lastPlayed: null, topPlays: null }],
     incoming: [],
     outgoing: [],
   });
@@ -456,8 +526,16 @@ test("a linked server shares now playing and top plays, and they leave with the 
     });
   const stored = () =>
     db
-      .prepare("SELECT now_playing, playing_until, top_plays FROM listening")
-      .first<{ now_playing: string | null; playing_until: number; top_plays: string | null }>();
+      .prepare(
+        "SELECT now_playing, played_at, playing_until, top_plays, blend_tracks FROM listening",
+      )
+      .first<{
+        now_playing: string | null;
+        played_at: number;
+        playing_until: number;
+        top_plays: string | null;
+        blend_tracks: string | null;
+      }>();
 
   const before = Date.now();
   const track = { title: " Reckoner ", artist: "Radiohead", album: null, durationMs: 290_000 };
@@ -467,18 +545,30 @@ test("a linked server shares now playing and top plays, and they leave with the 
     albums: [{ title: "In Rainbows", artist: "Radiohead", plays: 9 }],
     tracks: [{ title: "Reckoner", artist: "Radiohead", plays: 4 }],
   };
-  assert.equal((await share("/top-plays", "PUT", top)).status, 204);
+  const blendTracks = Array.from({ length: 100 }, (_, index) => ({
+    title: `Track ${index}`,
+    artist: "Radiohead",
+  }));
+  assert.equal((await share("/top-plays", "PUT", { ...top, blendTracks })).status, 204);
   const shared = await stored();
   assert.deepEqual(JSON.parse(shared?.now_playing ?? ""), {
     title: "Reckoner",
     artist: "Radiohead",
     album: null,
   });
-  assert.ok(shared && shared.playing_until >= before + 290_000);
+  assert.ok(shared && shared.played_at >= before);
+  assert.equal(shared.playing_until, shared.played_at + 290_000);
   assert.deepEqual(JSON.parse(shared?.top_plays ?? ""), top);
+  assert.deepEqual(JSON.parse(shared?.blend_tracks ?? ""), blendTracks);
 
   const tooMany = { ...top, tracks: Array.from({ length: 11 }, () => top.tracks[0]) };
   assert.equal((await share("/top-plays", "PUT", tooMany)).status, 400);
+  const tooManyBlend = { ...top, blendTracks: [...blendTracks, blendTracks[0]] };
+  assert.equal((await share("/top-plays", "PUT", tooManyBlend)).status, 400);
+  assert.equal((await share("/top-plays", "PUT", top)).status, 204);
+  assert.equal((await stored())?.blend_tracks, null);
+  const notMbid = { ...top, artists: [{ name: "Radiohead", plays: 12, mbid: "12" }] };
+  assert.equal((await share("/top-plays", "PUT", notMbid)).status, 400);
   assert.equal((await share("", "DELETE")).status, 204);
   assert.equal(await stored(), null);
 
@@ -556,6 +646,15 @@ test("a linked server publishes playlists to the shelf, and they leave with the 
     ),
   });
   const shelf = async () => v.parse(listed, await (await api("/v1/playlists")).json()).playlists;
+  const profile = async (handle: string) => {
+    const response = await api(`/v1/profiles/${handle}`);
+    if (!response.ok) return response.status;
+    const body = v.parse(
+      v.strictObject({ handle: v.string(), playlists: listed.entries.playlists }),
+      await response.json(),
+    );
+    return body.playlists.map(({ title, handle: owner }) => `${owner}:${title}`);
+  };
 
   assert.equal((await send("POST", "/v1/publications", "fuck this")).status, 422);
   assert.equal((await send("POST", "/v1/publications", "Late", "u".repeat(43))).status, 401);
@@ -571,6 +670,24 @@ test("a linked server publishes playlists to the shelf, and they leave with the 
     (await shelf()).map(({ title, handle, artist }) => `${handle}:${title}:${artist}`),
     ["lee_k:Late night:Band", "lee_k:Three:Band", "lee_k:Two:Band"],
   );
+  await db
+    .prepare(
+      "INSERT INTO listening (link_id, now_playing, playing_until, top_plays, top_plays_at) VALUES ('link', ?, ?, ?, ?)",
+    )
+    .bind(
+      JSON.stringify({ title: "Song", artist: "Band", album: null }),
+      Date.now() + 60_000,
+      JSON.stringify({ artists: [{ name: "Band", plays: 3 }], albums: [], tracks: [] }),
+      Date.now(),
+    )
+    .run();
+  assert.deepEqual(await profile("@LEE_K"), [
+    "lee_k:Late night",
+    "lee_k:Three",
+    "lee_k:Two",
+    "lee_k:One",
+  ]);
+  assert.equal(await profile("nobody"), 404);
 
   assert.equal((await send("PUT", `/v1/publications/${latest}`, "shit list")).status, 422);
   assert.equal((await send("PUT", `/v1/publications/${latest}`, "Later night")).status, 204);
@@ -589,6 +706,7 @@ test("a linked server publishes playlists to the shelf, and they leave with the 
     (await shelf()).map(({ title }) => title),
     ["Three", "Two", "One"],
   );
+  assert.deepEqual(await profile("lee_k"), ["lee_k:Three", "lee_k:Two", "lee_k:One"]);
   assert.equal((await send("DELETE", `/v1/publications/${latest}`, "")).status, 204);
   const republished = await send("POST", "/v1/publications", "Late night");
   const refusal: unknown = await republished.json();
@@ -601,4 +719,5 @@ test("a linked server publishes playlists to the shelf, and they leave with the 
   assert.equal((await shelf()).length, 2);
   await deleteAccount(db, "lee");
   assert.equal(await db.prepare("SELECT COUNT(*) AS n FROM publications").first("n"), 0);
+  assert.equal(await profile("lee_k"), 404);
 });

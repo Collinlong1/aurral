@@ -22,7 +22,7 @@ import { SkeletonStatus, SkeletonTrackList } from "../../../components/Skeletons
 import { useActiveDownloads } from "../../../hooks/useActiveDownloads";
 import TooltipButton from "../../../components/TooltipButton";
 import { matchesPlaylistTrackQuery, sortPlaylistTracks } from "../../../utils/playlistTrackSort";
-import { Link } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import { useAudioQueue } from "../../../contexts/audioQueueContext";
 import { normalizePlaylistQueueTrack } from "../../../utils/audioQueue";
 import {
@@ -363,7 +363,6 @@ const FLOW_EXCEPTIONS = [
   { status: "downloading", label: "downloading", tone: "subtle" },
   { status: "pending", label: "queued", tone: "subtle" },
   { status: "blocked", label: "need review", tone: "review" },
-  { status: "failed", label: "missing", tone: "warning" },
 ] as const;
 
 function FlowTrackStatus({ track, searching }: { track: PlaylistPanelTrack; searching: boolean }) {
@@ -510,6 +509,7 @@ export function PlaylistTracksPanel<T extends PlaylistPanelTrack>({
   onReorder,
   bulkActionLoading = false,
 }: PlaylistTracksPanelProps<T>) {
+  const [searchParams] = useSearchParams();
   const [sortKey, setSortKey] = useState("index");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
   const [editMode, setEditMode] = useState(false);
@@ -565,6 +565,7 @@ export function PlaylistTracksPanel<T extends PlaylistPanelTrack>({
     () => showReasons && new Set(tracks.map((track) => track.reason).filter(Boolean)).size > 1,
     [showReasons, tracks],
   );
+  const showAddedBy = tracks.some((track) => track.addedBy !== undefined);
   const exceptions = useMemo(() => {
     if (!showTrackStatus) return [];
     const counts = new Map<string, number>();
@@ -708,6 +709,7 @@ export function PlaylistTracksPanel<T extends PlaylistPanelTrack>({
         track.artistName
       ),
       reason,
+      addedBy: track.addedBy,
       artist: {
         label: track.artistName,
         ...artistLink,
@@ -965,9 +967,11 @@ export function PlaylistTracksPanel<T extends PlaylistPanelTrack>({
       ) : (
         <TrackList
           label={label}
+          highlightKey={searchParams.get("track")}
           rows={rows}
           showYear={showYear}
           showReason={reasonsVary}
+          showAddedBy={showAddedBy}
           wideTime={rows.some((row) => typeof row.time !== "string")}
           sort={{ key: sortKey, direction: sortDirection, onSort: handleSort }}
           onReorder={

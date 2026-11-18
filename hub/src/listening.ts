@@ -1,9 +1,11 @@
 import type { D1Database } from "@cloudflare/workers-types/index.ts";
 import * as v from "valibot";
+import { MBID_PATTERN } from "../../lib/mbid.ts";
 
 const DEFAULT_TRACK_MS = 4 * 60_000;
 const MAX_TRACK_MS = 30 * 60_000;
 const TOP_LIMIT = 10;
+const BLEND_LIMIT = 100;
 const TOP_PLAYS_FRESH_MS = 7 * 86_400_000;
 
 const text = v.pipe(
@@ -13,6 +15,8 @@ const text = v.pipe(
   v.transform((value) => value.slice(0, 500)),
 );
 const plays = v.pipe(v.number(), v.integer(), v.minValue(1));
+const count = v.pipe(v.number(), v.integer(), v.minValue(0));
+const mbid = v.nullish(v.pipe(v.string(), v.regex(MBID_PATTERN)));
 const top = <Entries extends v.ObjectEntries>(entries: Entries) =>
   v.pipe(v.array(v.object({ ...entries, plays })), v.maxLength(TOP_LIMIT));
 
@@ -24,9 +28,27 @@ export const nowPlayingSchema = v.object({
 });
 
 export const topPlaysSchema = v.object({
-  artists: top({ name: text }),
-  albums: top({ title: text, artist: text }),
-  tracks: top({ title: text, artist: text }),
+  artists: top({ name: text, mbid }),
+  albums: top({ title: text, artist: text, mbid }),
+  tracks: top({ title: text, artist: text, mbid, albumMbid: mbid }),
+  stats: v.nullish(
+    v.object({
+      plays: count,
+      minutes: count,
+      artists: count,
+      hours: v.pipe(v.array(count), v.length(24)),
+    }),
+  ),
+});
+
+const blendTracksSchema = v.pipe(
+  v.array(v.object({ title: text, artist: text })),
+  v.maxLength(BLEND_LIMIT),
+);
+
+export const sharedTopPlaysSchema = v.object({
+  ...topPlaysSchema.entries,
+  blendTracks: v.optional(blendTracksSchema),
 });
 
 export const setNowPlaying = (
@@ -37,13 +59,15 @@ export const setNowPlaying = (
 ) =>
   db
     .prepare(
-      `INSERT INTO listening (link_id, now_playing, playing_until) VALUES (?, ?, ?)
+      `INSERT INTO listening (link_id, now_playing, played_at, playing_until) VALUES (?, ?, ?, ?)
        ON CONFLICT (link_id) DO UPDATE SET
-         now_playing = excluded.now_playing, playing_until = excluded.playing_until`,
+         now_playing = excluded.now_playing, played_at = excluded.played_at,
+         playing_until = excluded.playing_until`,
     )
     .bind(
       linkId,
       JSON.stringify({ title, artist, album: album ?? null }),
+      now,
       now + Math.min(durationMs ?? DEFAULT_TRACK_MS, MAX_TRACK_MS),
     )
     .run();
@@ -51,29 +75,33 @@ export const setNowPlaying = (
 export const setTopPlays = (
   db: D1Database,
   linkId: string,
-  snapshot: v.InferOutput<typeof topPlaysSchema>,
+  { blendTracks, ...snapshot }: v.InferOutput<typeof sharedTopPlaysSchema>,
   now = Date.now(),
 ) =>
   db
     .prepare(
-      `INSERT INTO listening (link_id, top_plays, top_plays_at) VALUES (?, ?, ?)
+      `INSERT INTO listening (link_id, top_plays, top_plays_at, blend_tracks) VALUES (?, ?, ?, ?)
        ON CONFLICT (link_id) DO UPDATE SET
-         top_plays = excluded.top_plays, top_plays_at = excluded.top_plays_at`,
+         top_plays = excluded.top_plays, top_plays_at = excluded.top_plays_at,
+         blend_tracks = excluded.blend_tracks`,
     )
-    .bind(linkId, JSON.stringify(snapshot), now)
+    .bind(linkId, JSON.stringify(snapshot), now, blendTracks ? JSON.stringify(blendTracks) : null)
     .run();
 
 export const clearListening = (db: D1Database, linkId: string) =>
   db.prepare("DELETE FROM listening WHERE link_id = ?").bind(linkId).run();
 
 type TopPlays = v.InferOutput<typeof topPlaysSchema>;
+type Track = v.InferOutput<typeof storedNowPlaying>;
 type Listening = {
-  nowPlaying: { title: string; artist: string; album: string | null } | null;
+  nowPlaying: Track | null;
+  lastPlayed: (Track & { at: number }) | null;
   topPlays: TopPlays | null;
 };
-export type ListeningRow = {
+type ListeningRow = {
   handle: string;
   now_playing: string | null;
+  played_at: number | null;
   playing_until: number | null;
   top_plays: string | null;
   top_plays_at: number | null;
@@ -109,9 +137,23 @@ const sum = <Entry extends { plays: number }>(
 
 const lower = (...parts: string[]) => parts.map((part) => part.toLowerCase()).join("\u0000");
 
+const mergeStats = (snapshots: TopPlays[]) => {
+  const stats = snapshots.flatMap((top) => (top.stats ? [top.stats] : []));
+  if (!stats.length) return null;
+  return {
+    plays: stats.reduce((total, each) => total + each.plays, 0),
+    minutes: stats.reduce((total, each) => total + each.minutes, 0),
+    artists: Math.max(...stats.map((each) => each.artists)),
+    hours: Array.from({ length: 24 }, (_, hour) =>
+      stats.reduce((total, each) => total + (each.hours[hour] ?? 0), 0),
+    ),
+  };
+};
+
 export function mergeTopPlays(snapshots: TopPlays[]): TopPlays | null {
   if (!snapshots.length) return null;
   return {
+    stats: mergeStats(snapshots),
     artists: sum(
       snapshots.map((top) => top.artists),
       (entry) => lower(entry.name),
@@ -133,27 +175,35 @@ export function mergeTopPlays(snapshots: TopPlays[]): TopPlays | null {
 export async function friendsListening(db: D1Database, accountId: string, now = Date.now()) {
   const { results } = await db
     .prepare(
-      `SELECT handles.handle, listening.now_playing, listening.playing_until,
+      `SELECT handles.handle, listening.now_playing, listening.played_at, listening.playing_until,
          listening.top_plays, listening.top_plays_at
        FROM friends AS asked
        JOIN friends AS back ON back.account_id = asked.friend_id AND back.friend_id = asked.account_id
        JOIN handles ON handles.account_id = asked.friend_id
        JOIN links ON links.account_id = asked.friend_id
        JOIN listening ON listening.link_id = links.id
-       WHERE asked.account_id = ?1 AND (listening.playing_until > ?2 OR listening.top_plays_at > ?3)`,
+       WHERE asked.account_id = ?1`,
     )
-    .bind(accountId, now, now - TOP_PLAYS_FRESH_MS)
+    .bind(accountId)
     .all<ListeningRow>();
   const byHandle = new Map<
     string,
-    { until: number; nowPlaying: Listening["nowPlaying"]; snapshots: TopPlays[] }
+    Omit<Listening, "topPlays"> & { until: number; snapshots: TopPlays[] }
   >();
   for (const row of results) {
-    const entry = byHandle.get(row.handle) ?? { until: 0, nowPlaying: null, snapshots: [] };
+    const entry = byHandle.get(row.handle) ?? {
+      until: 0,
+      nowPlaying: null,
+      lastPlayed: null,
+      snapshots: [],
+    };
     const until = row.playing_until ?? 0;
-    if (until > now && until > entry.until) {
-      const playing = stored(storedNowPlaying, row.now_playing);
-      if (playing) Object.assign(entry, { until, nowPlaying: playing });
+    const playing = stored(storedNowPlaying, row.now_playing);
+    if (playing && until > now && until > entry.until) {
+      Object.assign(entry, { until, nowPlaying: playing });
+    }
+    if (playing && row.played_at && row.played_at > (entry.lastPlayed?.at ?? 0)) {
+      entry.lastPlayed = { ...playing, at: row.played_at };
     }
     const top =
       (row.top_plays_at ?? 0) > now - TOP_PLAYS_FRESH_MS && stored(topPlaysSchema, row.top_plays);
@@ -161,9 +211,49 @@ export async function friendsListening(db: D1Database, accountId: string, now = 
     byHandle.set(row.handle, entry);
   }
   return new Map(
-    [...byHandle].map(([handle, { nowPlaying, snapshots }]): [string, Listening] => [
+    [...byHandle].map(([handle, { nowPlaying, lastPlayed, snapshots }]): [string, Listening] => [
       handle,
-      { nowPlaying, topPlays: mergeTopPlays(snapshots) },
+      { nowPlaying, lastPlayed, topPlays: mergeTopPlays(snapshots) },
     ]),
   );
+}
+
+export async function friendsBlendTracks(db: D1Database, accountId: string, now = Date.now()) {
+  const { results } = await db
+    .prepare(
+      `SELECT handles.handle, listening.blend_tracks
+       FROM friends AS asked
+       JOIN friends AS back ON back.account_id = asked.friend_id AND back.friend_id = asked.account_id
+       JOIN handles ON handles.account_id = asked.friend_id
+       JOIN links ON links.account_id = asked.friend_id
+       JOIN listening ON listening.link_id = links.id
+       WHERE asked.account_id = ?1 AND listening.top_plays_at > ?2
+         AND listening.blend_tracks IS NOT NULL
+       ORDER BY handles.handle, listening.top_plays_at DESC`,
+    )
+    .bind(accountId, now - TOP_PLAYS_FRESH_MS)
+    .all<{ handle: string; blend_tracks: string }>();
+  const byHandle = new Map<string, v.InferOutput<typeof blendTracksSchema>[]>();
+  for (const row of results) {
+    const tracks = stored(blendTracksSchema, row.blend_tracks);
+    if (tracks) byHandle.set(row.handle, [...(byHandle.get(row.handle) ?? []), tracks]);
+  }
+  return [...byHandle].map(([handle, lists]) => {
+    const seen = new Set<string>();
+    const tracks = [];
+    for (
+      let rank = 0;
+      tracks.length < BLEND_LIMIT && lists.some((list) => rank < list.length);
+      rank += 1
+    ) {
+      for (const track of lists.flatMap((list) => list[rank] ?? [])) {
+        const key = lower(track.artist, track.title);
+        if (tracks.length < BLEND_LIMIT && !seen.has(key)) {
+          seen.add(key);
+          tracks.push(track);
+        }
+      }
+    }
+    return { handle, tracks };
+  });
 }

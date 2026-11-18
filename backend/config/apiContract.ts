@@ -10,5 +10,11 @@ export const API_CONTRACT: { version: number; features: string[] } = {
     "streamTranscoding",
     "communityPlaylists",
     "friends",
+    "playlistMembers",
+    "blends",
+    "localPeople",
+    "friendProfiles",
+    "friendBlends",
+    "pairing",
   ],
 };

@@ -1,6 +1,6 @@
 import { useEffect, useId, useState, type FormEvent } from "react";
-import { useLocation, useNavigate } from "react-router";
-import { useQueryClient } from "@tanstack/react-query";
+import { Link, useLocation, useNavigate } from "react-router";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { parseResponse } from "hono/client";
 import { useAuth } from "../../../contexts/AuthContext";
 import { useToast } from "../../../contexts/ToastContext";
@@ -10,8 +10,12 @@ import { setStoredAuth } from "../../../utils/api/core.ts";
 import { isReauthRequiredError, promptReauth } from "../../../utils/reauth.ts";
 import { logIn } from "../../../utils/session.ts";
 import { DotLoader } from "../../../components/DotLoader";
+import PillToggle from "../../../components/PillToggle";
+import { useHubLink } from "../../../components/PlayerFriends";
+import { friendPath, personPath } from "../../../../../lib/profilePaths.ts";
 import { ApiKeyRow } from "../components/ApiKeyRow";
 import { ConnectedAccountsSection, useMyIdentities } from "../components/ConnectedAccountsSection";
+import { DevicesGroup } from "../components/DevicesGroup";
 import { HubLinkGroup } from "../components/HubLinkGroup";
 import { SettingsInput } from "../components/SettingsField";
 import {
@@ -22,6 +26,7 @@ import {
   SettingsRow,
 } from "../SettingsLayout";
 import { readApiError } from "../../../utils/api/errors.ts";
+import { continueOnServer, HOSTED } from "../../../utils/server.ts";
 
 const CONNECTED_LABELS: Partial<Record<string, string>> = {
   google: "Google",
@@ -98,7 +103,10 @@ function PasswordGroup() {
       setNewPassword("");
       setConfirmPassword("");
       showSuccess(hasLocalPassword ? "Password changed" : "Password set");
-      await queryClient.invalidateQueries({ queryKey: queryKeys.myIdentities(user?.id) });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.myIdentities(user?.id) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.mySessions(user?.id) }),
+      ]);
     } catch (err) {
       const failure = readApiError(err);
       showError(failure.error || failure.message || failure.text || "Couldn't save your password");
@@ -165,10 +173,21 @@ function PasswordGroup() {
         </SettingsRow>
         {needsSignIn ? (
           <SettingsNote tone="warning">
-            Sign in again to set a password.{" "}
-            <button type="button" className="settings-link" onClick={() => logout()}>
-              Sign in again
-            </button>
+            {HOSTED ? (
+              <>
+                Set a password on your server&apos;s own page.{" "}
+                <button type="button" className="settings-link" onClick={continueOnServer}>
+                  Open it
+                </button>
+              </>
+            ) : (
+              <>
+                Sign in again to set a password.{" "}
+                <button type="button" className="settings-link" onClick={() => logout()}>
+                  Sign in again
+                </button>
+              </>
+            )}
           </SettingsNote>
         ) : null}
         <SettingsActions>
@@ -180,6 +199,52 @@ function PasswordGroup() {
         </SettingsActions>
       </form>
     </SettingsGroup>
+  );
+}
+
+const nameList = new Intl.ListFormat("en", { style: "long", type: "conjunction" });
+
+function BlendRow({ userId }: { userId: number }) {
+  const { showError } = useToast();
+  const queryClient = useQueryClient();
+  const queryKey = queryKeys.myBlend(userId);
+  const blend = useQuery({
+    queryKey,
+    queryFn: ({ signal }) => parseResponse(usersClient.me.blend.$get({}, { init: { signal } })),
+  });
+  const toggle = useMutation({
+    mutationFn: (enabled: boolean) =>
+      parseResponse(usersClient.me.blend.$put({ json: { enabled } })),
+    onSuccess: (next) => {
+      queryClient.setQueryData(queryKey, next);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.madeForYou(userId) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.people(userId) });
+    },
+    onError: (error) => showError(readApiError(error).error || "Couldn't save your Blend setting"),
+  });
+  const waiting = blend.data?.waiting ?? [];
+  return (
+    <>
+      <SettingsRow
+        label="Share listening on this server"
+        help="People on this server see what you play and get Blends with you."
+      >
+        <PillToggle
+          id="profile-blend"
+          checked={toggle.isPending ? toggle.variables : (blend.data?.enabled ?? false)}
+          disabled={!blend.data || toggle.isPending}
+          aria-label="Share listening on this server"
+          onChange={(event) => toggle.mutate(event.target.checked)}
+        />
+      </SettingsRow>
+      {waiting.length ? (
+        <SettingsNote>
+          {waiting.length === 1
+            ? `The Blend with ${waiting[0]} fills in once you both have played a few more tracks.`
+            : `Your Blends with ${nameList.format(waiting)} fill in once you each have played a few more tracks.`}
+        </SettingsNote>
+      ) : null}
+    </>
   );
 }
 
@@ -203,15 +268,26 @@ function ApiAccessGroup({ userId }: { userId: number }) {
 
 export function ProfileSection() {
   const { user } = useAuth();
+  const hubLink = useHubLink();
   useConnectedNotice();
+  const profilePath =
+    hubLink.data?.state === "linked"
+      ? friendPath(hubLink.data.handle)
+      : personPath(user?.username ?? "");
 
   return (
     <SettingsPage title="Profile">
       {user?.username ? (
         <SettingsGroup>
           <SettingsRow label="Username">
-            <span className="settings-row__value">{user.username}</span>
+            <>
+              <span className="settings-row__value">{user.username}</span>
+              <Link className="btn btn-secondary btn-sm" to={profilePath}>
+                View profile
+              </Link>
+            </>
           </SettingsRow>
+          {user.id != null ? <BlendRow userId={user.id} /> : null}
         </SettingsGroup>
       ) : null}
       {user?.id != null ? (
@@ -219,6 +295,7 @@ export function ProfileSection() {
           <PasswordGroup />
           <ConnectedAccountsSection />
           <HubLinkGroup />
+          <DevicesGroup userId={user.id} />
           <ApiAccessGroup userId={user.id} />
         </>
       ) : null}

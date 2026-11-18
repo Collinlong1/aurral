@@ -8,7 +8,12 @@ import {
   playlistStatusQueryOptions,
 } from "../queryOptions.ts";
 import type { ShelfScope } from "../../../backend/services/importLists/deezerPlaylists.ts";
-import { BROWSE_IMPORT_PROVIDERS, type BrowseProvider } from "../../../lib/browsePlaylists.ts";
+import {
+  BLEND_MIX_PREFIX,
+  BROWSE_IMPORT_PROVIDERS,
+  FRIEND_BLEND_MIX_PREFIX,
+  type BrowseProvider,
+} from "../../../lib/browsePlaylists.ts";
 
 const GROUP_ORDER = ["mood", "decade", "genre"] as const;
 
@@ -21,7 +26,20 @@ export function useMadeForYou() {
   const { user } = useAuth();
   return useQuery({
     ...madeForYouQueryOptions(user?.id),
-    select: ({ discovery, mixes }) => ({ mixes, playlists: [...discovery, ...mixes] }),
+    select: ({ discovery, mixes }) => {
+      const isBlend = (mix: (typeof mixes)[number]) =>
+        [BLEND_MIX_PREFIX, FRIEND_BLEND_MIX_PREFIX].some((prefix) => mix.id.startsWith(prefix));
+      const afterNewToYou = discovery.findIndex((playlist) => playlist.id === "new-to-you") + 1;
+      return {
+        mixes,
+        playlists: [
+          ...discovery.slice(0, afterNewToYou),
+          ...mixes.filter(isBlend),
+          ...discovery.slice(afterNewToYou),
+          ...mixes.filter((mix) => !isBlend(mix)),
+        ],
+      };
+    },
   });
 }
 

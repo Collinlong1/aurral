@@ -22,7 +22,6 @@ import { logger } from "./logger.ts";
 const SHELF_TTL_MS = 10 * 60 * 1000;
 const SHELF_RETRY_MS = 60 * 1000;
 const SHELF_TIMEOUT_MS = 3000;
-const NOT_REPUBLISHABLE = new Set(["aurral-community", "aurral-share"]);
 
 export class PublicPlaylistError extends Error {
   status: 400 | 404 | 409 | 422 | 502;
@@ -46,6 +45,7 @@ const shelfSchema = v.object({
   ),
 });
 const playlistSchema = v.object({ id: v.string(), handle: v.string(), manifest: v.unknown() });
+const profileSchema = v.object({ handle: v.string(), playlists: shelfSchema.entries.playlists });
 
 const selectPublication = db.prepare<[string], HubPublicationsRow>(
   "SELECT * FROM hub_publications WHERE playlist_id = ?",
@@ -91,10 +91,6 @@ export async function makePlaylistPublic(user: RequestUser, playlistId: string) 
   }
   const link = linkedLink(user.id);
   if (!link) throw new PublicPlaylistError("Link an aurral.org account first.", 409);
-  const source = playlist.importSource;
-  if (source && NOT_REPUBLISHABLE.has(source.provider)) {
-    throw new PublicPlaylistError("Copies of other Aurral playlists can't be public.", 400);
-  }
   const built = playlistManifest(playlistId);
   if (built === "too_large" || !built) {
     throw new PublicPlaylistError("This playlist is too large to make public.", 400);
@@ -246,4 +242,16 @@ export async function communityPlaylist(id: string) {
     });
   }
   return { id, handle: body.output.handle, manifest };
+}
+
+export async function communityProfile(handle: string) {
+  const response = await fetch(`${SHARE_ORIGIN}/v1/profiles/${encodeURIComponent(handle)}`, {
+    signal: AbortSignal.timeout(SHELF_TIMEOUT_MS),
+  }).catch(() => null);
+  if (response?.status === 404 && (await refusalOf(response)) === "no_account") return null;
+  const body = response?.ok
+    ? v.safeParse(profileSchema, await response.json().catch(() => null))
+    : null;
+  if (!body?.success) throw new PublicPlaylistError("Couldn't reach aurral.org. Try again.", 502);
+  return body.output;
 }

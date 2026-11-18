@@ -155,6 +155,13 @@ export interface HistoryServersRow {
   connected_at: number;
 }
 
+export interface HubFriendTracksRow {
+  user_id: number;
+  handle: string;
+  tracks: string;
+  fetched_at: number;
+}
+
 export interface HubLinksRow {
   user_id: number;
   origin: string;
@@ -538,6 +545,7 @@ export interface SessionsRow {
   ip_address: string | null;
   user_agent: string | null;
   reauthenticated_at: number | null;
+  last_used_at: number | null;
 }
 
 export interface SettingsRow {
@@ -671,6 +679,7 @@ export interface UsersRow {
   has_local_password: number;
   api_key: string | null;
   api_key_hash: string | null;
+  blend: number;
 }
 
 export interface WrappedReportsRow {
