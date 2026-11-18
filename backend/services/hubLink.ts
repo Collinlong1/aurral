@@ -16,6 +16,7 @@ const statusSchema = v.variant("status", [
 ]);
 const revokedSchema = v.object({ error: v.literal("link_revoked") });
 const revokeTaskSchema = v.object({ origin: v.string(), tokenHash: v.string() });
+const refusalSchema = v.object({ error: v.string() });
 
 export class HubLinkError extends Error {}
 
@@ -35,6 +36,22 @@ const countPublications = db.prepare<[number], { count: number }>(
 export const hubRequest = (origin: string, path: string, init: RequestInit = {}) =>
   fetch(`${origin}${path}`, { ...init, signal: AbortSignal.timeout(HUB_TIMEOUT_MS) });
 
+export const linkedLink = (userId: number) => {
+  const link = selectLink.get(userId);
+  return link?.linked_at && !link.broken ? link : null;
+};
+
+export const authorized = (link: HubLinksRow, method: string, body?: unknown) => ({
+  method,
+  headers: { Authorization: `Bearer ${link.token}`, "Content-Type": "application/json" },
+  ...(body !== undefined && { body: JSON.stringify(body) }),
+});
+
+export async function refusalOf(response: Response) {
+  const body = v.safeParse(refusalSchema, await response.json().catch(() => null));
+  return body.success ? body.output.error : null;
+}
+
 function queueRevoke(link: HubLinksRow) {
   enqueueSystemTask(
     { kind: "hub-link-revoke", origin: link.origin, tokenHash: hashToken(link.token) },
@@ -42,9 +59,15 @@ function queueRevoke(link: HubLinksRow) {
   );
 }
 
+const forgetFriendNotices = db.prepare<[number]>(
+  "DELETE FROM inbox_items WHERE user_id = ? AND kind = 'friend'",
+);
+
 export const markLinkBroken = db.transaction((userId: number) => {
   db.prepare<[number]>("UPDATE hub_links SET broken = 1 WHERE user_id = ?").run(userId);
   db.prepare<[number]>("DELETE FROM hub_publications WHERE user_id = ?").run(userId);
+  db.prepare<[number]>("DELETE FROM hub_friend_tracks WHERE user_id = ?").run(userId);
+  forgetFriendNotices.run(userId);
 });
 
 export const forgetHubLink = db.transaction((userId: number) => {
@@ -52,6 +75,7 @@ export const forgetHubLink = db.transaction((userId: number) => {
   if (!link) return;
   queueRevoke(link);
   deleteLink.run(userId);
+  forgetFriendNotices.run(userId);
 });
 
 export async function startHubLink(user: { id: number; username: string }) {
@@ -66,10 +90,11 @@ export async function startHubLink(user: { id: number; username: string }) {
   const started = response?.ok ? v.safeParse(startedSchema, await response.json()) : null;
   if (!started?.success) throw new HubLinkError("Couldn't reach aurral.org. Try again.");
   db.transaction(() => {
+    const sharing = selectLink.get(user.id)?.share_listening ?? 1;
     forgetHubLink(user.id);
-    db.prepare<[number, string, string, string, number]>(
-      "INSERT INTO hub_links (user_id, origin, token, user_code, expires_at) VALUES (?, ?, ?, ?, ?)",
-    ).run(user.id, SHARE_ORIGIN, token, started.output.userCode, started.output.expiresAt);
+    db.prepare<[number, string, string, string, number, number]>(
+      "INSERT INTO hub_links (user_id, origin, token, user_code, expires_at, share_listening) VALUES (?, ?, ?, ?, ?, ?)",
+    ).run(user.id, SHARE_ORIGIN, token, started.output.userCode, started.output.expiresAt, sharing);
   })();
   return hubLinkStatus(user.id);
 }
@@ -113,6 +138,7 @@ export async function hubLinkStatus(userId: number) {
       state: link.broken ? ("broken" as const) : ("linked" as const),
       handle: link.handle,
       linkedAt: link.linked_at,
+      sharing: link.share_listening === 1,
     };
   }
   if (link.user_code && link.expires_at && link.expires_at > Date.now()) {

@@ -150,8 +150,8 @@ function getProxyHeaderName() {
   return String(header).trim().toLowerCase();
 }
 
-function getHeaderValue(req: ProxyRequest, headerName: string) {
-  const value = req.headers[headerName];
+function getHeaderValue(req: ClientRequest, headerName: string) {
+  const value = req.headers?.[headerName];
   if (Array.isArray(value)) return value[0];
   return value;
 }
@@ -218,6 +218,17 @@ const peerAddress = (req: ClientRequest) =>
 
 const wasForwarded = (req: ClientRequest) =>
   FORWARDING_HEADERS.some((name) => req.headers?.[name] !== undefined);
+
+export function isCrossSite(req: ClientRequest) {
+  const site = getHeaderValue(req, "sec-fetch-site");
+  if (site) return site === "cross-site" || site === "same-site";
+  const origin = getHeaderValue(req, "origin");
+  if (!origin) return false;
+  if (!URL.canParse(origin)) return true;
+  const { host } = new URL(origin);
+  const forwardedHost = getHeaderValue(req, "x-forwarded-host")?.split(",")[0]?.trim();
+  return host !== getHeaderValue(req, "host") && host !== forwardedHost;
+}
 
 function defaultGateway() {
   let routes;
@@ -366,7 +377,7 @@ export function getSoleAdminUser() {
 }
 
 export function isRequestFromTrustedLocalSubnet(req: ClientRequest) {
-  if (wasForwarded(req)) return false;
+  if (wasForwarded(req) || isCrossSite(req)) return false;
   const peer = peerAddress(req);
   if (isLoopbackIp(peer)) return true;
   if (!isPrivateIpv4(peer)) return false;
@@ -492,7 +503,7 @@ function resolveProxyRole(req: ProxyRequest, username: string) {
 
 export function resolveProxyUser(req: ProxyRequest) {
   if (!isProxyAuthEnabled()) return null;
-  if (!isTrustedProxy(req)) return null;
+  if (!isTrustedProxy(req) || isCrossSite(req)) return null;
   const headerName = getProxyHeaderName();
   const rawUsername = getHeaderValue(req, headerName);
   const username = String(rawUsername || "").trim();

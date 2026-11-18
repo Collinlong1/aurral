@@ -21,6 +21,7 @@ import {
   queueReducer,
   queueSegmentBounds,
   shouldRestartTrack,
+  withOrigin,
 } from "../utils/audioQueue";
 import type {
   ArtworkTarget,
@@ -34,7 +35,7 @@ import type {
 import { AudioQueueContext } from "./audioQueueContext";
 import { useAuth } from "./AuthContext";
 import { useToast } from "./ToastContext";
-import { getRequestToken } from "../utils/api/core";
+import { apiPathOf, getRequestToken } from "../utils/api/core";
 import {
   QUEUE_STORAGE_KEY,
   parseStoredQueue,
@@ -54,6 +55,7 @@ import {
   mediaSessionPosition,
 } from "../utils/mediaSession";
 import { isRecord } from "../../../lib/isRecord.ts";
+import { getAppRoutePath } from "../utils/basePath.ts";
 
 const SHARED_VOLUME_KEY = "aurral.preview.volume";
 const SHARED_MUTED_KEY = "aurral.preview.muted";
@@ -195,7 +197,9 @@ const playEventFields = (track: QueueEntry) => ({
 
 function sendNowPlaying(track: QueueEntry) {
   if (!track.recordHistory) return;
-  playEventsClient["now-playing"].$post({ json: playEventFields(track) }).catch(() => {});
+  playEventsClient["now-playing"]
+    .$post({ json: { ...playEventFields(track), streamPath: apiPathOf(track.src ?? "") } })
+    .catch(() => {});
 }
 
 function recordPlay(track: QueueEntry) {
@@ -447,7 +451,7 @@ export function AudioQueueProvider({ children }: { children: ReactNode }) {
         tracks: normalized,
         startTrackId,
         shuffle,
-        source: nextSource,
+        source: withOrigin(nextSource, getAppRoutePath()),
       });
       return true;
     },
@@ -515,13 +519,14 @@ export function AudioQueueProvider({ children }: { children: ReactNode }) {
       position: "next" | "end",
       { source: nextSource = null }: { source?: QueueSource | null } = {},
     ) => {
+      const source = withOrigin(nextSource, getAppRoutePath());
       const normalized = (Array.isArray(tracks) ? tracks : [tracks])
         .map((track) => normalizeQueueTrack(track))
         .filter((track) => track.src)
-        .map((track) => ({ ...track, queueSource: nextSource }));
+        .map((track) => ({ ...track, queueSource: source }));
       if (normalized.length === 0) return false;
       const started = stateRef.current.currentIndex < 0;
-      dispatch({ type: "INSERT_TRACKS", tracks: normalized, position, source: nextSource });
+      dispatch({ type: "INSERT_TRACKS", tracks: normalized, position, source });
       return started ? "started" : "queued";
     },
     [dispatch],
@@ -1021,6 +1026,7 @@ export function AudioQueueProvider({ children }: { children: ReactNode }) {
       currentTrack,
       currentIndex: state.currentIndex,
       source: state.source,
+      activeSource: activeSource ?? null,
       playbackError: state.error,
       isActive,
       isPlaying: playback.isPlaying,
@@ -1078,6 +1084,7 @@ export function AudioQueueProvider({ children }: { children: ReactNode }) {
     currentTrack,
     isActive,
     matchesSource,
+    activeSource,
     playNext,
     playPrevious,
     playQueue,

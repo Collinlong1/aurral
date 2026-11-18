@@ -1,11 +1,11 @@
 import {
   useCallback,
   useEffect,
-  useId,
   useRef,
   useState,
   type ChangeEvent,
   type PointerEvent,
+  type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
 import { Link, useLocation } from "react-router";
@@ -20,6 +20,7 @@ import {
   ListMusic,
   Maximize,
   Mic,
+  Users,
   Music,
   Pause,
   Play,
@@ -44,9 +45,11 @@ import { usePlayerFavorite } from "../hooks/usePlayerFavorite.ts";
 import Tooltip from "./Tooltip";
 import TooltipButton from "./TooltipButton";
 import { LibraryItemMenu, type LibraryMenuItem } from "./LibraryItemMenu";
-import { PlayerQueuePanel, UpNextQueue, type PlayerPanelView } from "./PlayerQueue";
+import { UpNextQueue, type PlayerRailState } from "./PlayerQueue";
 import PlayerLyrics from "./PlayerLyrics";
+import PlayerFriends, { FriendsDialog } from "./PlayerFriends";
 import FullscreenPlayer from "./FullscreenPlayer";
+import PlayerOriginLink from "./PlayerOriginLink";
 import { PlayerMiniProgress, PlayerSeek } from "./PlayerProgress";
 import { useModalDialog } from "../hooks/useModalDialog.ts";
 import { PLAYER_SHORTCUTS, usePlayerShortcuts } from "../hooks/usePlayerShortcuts.ts";
@@ -142,9 +145,10 @@ function PlayerPlaylistSubmenu({
 type GlobalPlayerBarProps = {
   minimized: boolean;
   onMinimizedChange: (minimized: boolean) => void;
+  rail: PlayerRailState;
 };
 
-function GlobalPlayerBar({ minimized, onMinimizedChange }: GlobalPlayerBarProps) {
+function GlobalPlayerBar({ minimized, onMinimizedChange, rail }: GlobalPlayerBarProps) {
   const [failedArtwork, setFailedArtwork] = useState<string | null>(null);
   const {
     currentTrack,
@@ -178,20 +182,9 @@ function GlobalPlayerBar({ minimized, onMinimizedChange }: GlobalPlayerBarProps)
   const { savingKeys, addTrackToLibrary } = useAddTrackToLibrary();
   const location = useLocation();
   const [sheetOpen, setSheetOpen] = useState(false);
-  const [sheetLyrics, setSheetLyrics] = useState(false);
+  const [sheetView, setSheetView] = useState<"art" | "lyrics" | "friends">("art");
+  const [sheetFriendsDialog, setSheetFriendsDialog] = useState(false);
   const [stageOpen, setStageOpen] = useState(false);
-  const [panel, setPanel] = useState<PlayerPanelView | null>(null);
-  const queuePanelId = useId();
-  const queueTriggerRef = useRef<HTMLButtonElement>(null);
-  const lyricsTriggerRef = useRef<HTMLButtonElement>(null);
-  const queueCloseRef = useRef<HTMLButtonElement>(null);
-  const closeQueue = useCallback(() => {
-    (panel === "lyrics" ? lyricsTriggerRef : queueTriggerRef).current?.focus({
-      preventScroll: true,
-    });
-    setPanel(null);
-  }, [panel]);
-  const togglePanel = (view: PlayerPanelView) => (panel === view ? closeQueue() : setPanel(view));
   const [sheetPresence, setSheetPresence] = useState("closed");
   const [dragOffset, setDragOffset] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
@@ -219,37 +212,13 @@ function GlobalPlayerBar({ minimized, onMinimizedChange }: GlobalPlayerBarProps)
   useEffect(() => {
     if (isActive) return;
     setSheetOpen(false);
-    setPanel(null);
     setStageOpen(false);
   }, [isActive]);
-
-  const queueOpen = panel !== null;
-
-  useEffect(() => {
-    if (queueOpen) queueCloseRef.current?.focus({ preventScroll: true });
-  }, [queueOpen]);
-
-  useEffect(() => {
-    if (!queueOpen) return undefined;
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || event.defaultPrevented) return;
-      if (document.querySelector(".player-queue__item.is-dragging")) return;
-      const panelElement = document.getElementById(queuePanelId);
-      const target = event.target instanceof Node ? event.target : null;
-      const onTrigger = target === queueTriggerRef.current || target === lyricsTriggerRef.current;
-      if (!panelElement?.contains(target) && !onTrigger) return;
-      event.preventDefault();
-      closeQueue();
-    };
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [closeQueue, queueOpen, queuePanelId]);
 
   useEffect(() => {
     const desktop = window.matchMedia("(min-width: 768px)");
     const closeOnDesktop = () => {
       if (desktop.matches) setSheetOpen(false);
-      else setPanel(null);
     };
     desktop.addEventListener("change", closeOnDesktop);
     return () => desktop.removeEventListener("change", closeOnDesktop);
@@ -274,7 +243,6 @@ function GlobalPlayerBar({ minimized, onMinimizedChange }: GlobalPlayerBarProps)
 
   const openStage = () => {
     setSheetOpen(false);
-    setPanel(null);
     setStageOpen(true);
   };
   const closeStage = useCallback(() => setStageOpen(false), []);
@@ -294,12 +262,8 @@ function GlobalPlayerBar({ minimized, onMinimizedChange }: GlobalPlayerBarProps)
     mute: toggleMute,
     lyrics: () => {
       if (stageOpen || !window.matchMedia("(min-width: 768px)").matches) return;
-      if (!minimized) {
-        togglePanel("lyrics");
-        return;
-      }
-      onMinimizedChange(false);
-      setPanel("lyrics");
+      if (rail.open && rail.view === "lyrics") rail.setOpen(false);
+      else rail.show("lyrics");
     },
     fullscreen: () => (stageOpen ? closeStage() : openStage()),
   });
@@ -317,18 +281,17 @@ function GlobalPlayerBar({ minimized, onMinimizedChange }: GlobalPlayerBarProps)
       "success",
     );
   };
-  const minimize = () => {
-    setPanel(null);
-    onMinimizedChange(true);
-  };
   const minimizedClass = minimized ? " global-player--minimized" : "";
-  const minimizeButton = (
+  const minimizeArt = (art: ReactNode) => (
     <TooltipButton
       label="Minimize player"
-      onClick={minimize}
-      className="btn btn-ghost global-player__collapse"
+      onClick={() => onMinimizedChange(true)}
+      className="global-player__minimize"
     >
-      <ChevronLeft />
+      {art}
+      <span className="player-art-hover" aria-hidden="true">
+        <ChevronLeft />
+      </span>
     </TooltipButton>
   );
 
@@ -339,12 +302,13 @@ function GlobalPlayerBar({ minimized, onMinimizedChange }: GlobalPlayerBarProps)
         role="region"
         aria-label="Global audio player"
       >
-        {minimizeButton}
         <div className="global-player__inner">
           <div className="global-player__track">
-            <span className="global-player__art global-player__art--bar" aria-hidden="true">
-              <Music />
-            </span>
+            {minimizeArt(
+              <span className="global-player__art global-player__art--bar" aria-hidden="true">
+                <Music />
+              </span>,
+            )}
             <div className="global-player__meta">
               <span className="global-player__title">Nothing playing</span>
             </div>
@@ -513,7 +477,7 @@ function GlobalPlayerBar({ minimized, onMinimizedChange }: GlobalPlayerBarProps)
     const { fromArt } = dragRef.current;
     dragRef.current = null;
     draggedRef.current = Math.abs(distance) > SHEET_TAP_DISTANCE;
-    if (event.type === "pointerup" && fromArt && !draggedRef.current) setSheetLyrics(true);
+    if (event.type === "pointerup" && fromArt && !draggedRef.current) setSheetView("lyrics");
     setIsDragging(false);
     if (event.type === "pointerup" && distance > SHEET_DISMISS_DISTANCE) {
       setSheetOpen(false);
@@ -522,20 +486,23 @@ function GlobalPlayerBar({ minimized, onMinimizedChange }: GlobalPlayerBarProps)
     setDragOffset(0);
   };
 
+  const artworkImage = (thumbnail: boolean) =>
+    currentTrack.artwork && currentTrack.artwork !== failedArtwork ? (
+      <ArtworkImage
+        src={currentTrack.artwork}
+        thumbnail={thumbnail}
+        sizes="3rem"
+        alt=""
+        loading="eager"
+        onError={() => setFailedArtwork(currentTrack.artwork)}
+      />
+    ) : (
+      <Music />
+    );
+
   const artwork = (className: string, thumbnail = true) => (
     <span className={className} aria-hidden="true">
-      {currentTrack.artwork && currentTrack.artwork !== failedArtwork ? (
-        <ArtworkImage
-          src={currentTrack.artwork}
-          thumbnail={thumbnail}
-          sizes="3rem"
-          alt=""
-          loading="eager"
-          onError={() => setFailedArtwork(currentTrack.artwork)}
-        />
-      ) : (
-        <Music />
-      )}
+      {artworkImage(thumbnail)}
     </span>
   );
 
@@ -555,7 +522,6 @@ function GlobalPlayerBar({ minimized, onMinimizedChange }: GlobalPlayerBarProps)
       role="region"
       aria-label="Global audio player"
     >
-      {minimizeButton}
       <div className="global-player__mini">
         <PlayerMiniProgress />
         <button
@@ -664,15 +630,17 @@ function GlobalPlayerBar({ minimized, onMinimizedChange }: GlobalPlayerBarProps)
                 </div>
 
                 <div className="now-playing__body">
-                  {sheetLyrics ? (
+                  {sheetView === "lyrics" ? (
                     <PlayerLyrics key={currentTrack.entryId} track={currentTrack} variant="sheet" />
+                  ) : sheetView === "friends" ? (
+                    <PlayerFriends variant="sheet" onManage={() => setSheetFriendsDialog(true)} />
                   ) : (
                     <button
                       type="button"
                       className="now-playing__art-button"
                       aria-label="Show lyrics"
                       onClick={() => {
-                        if (!draggedRef.current) setSheetLyrics(true);
+                        if (!draggedRef.current) setSheetView("lyrics");
                         draggedRef.current = false;
                       }}
                     >
@@ -682,7 +650,11 @@ function GlobalPlayerBar({ minimized, onMinimizedChange }: GlobalPlayerBarProps)
 
                   <div className="now-playing__meta">
                     <div className="now-playing__title-row">
-                      <h2 className="now-playing__title">{currentTrack.title}</h2>
+                      <h2 className="now-playing__title">
+                        <PlayerOriginLink className="global-player__link" onClick={closeSheet}>
+                          {currentTrack.title}
+                        </PlayerOriginLink>
+                      </h2>
                       {favorite ? (
                         <button
                           type="button"
@@ -777,12 +749,25 @@ function GlobalPlayerBar({ minimized, onMinimizedChange }: GlobalPlayerBarProps)
                   <div className="now-playing__actions">
                     <button
                       type="button"
-                      className={`now-playing__icon-button now-playing__lyrics-toggle${sheetLyrics ? " is-active" : ""}`}
-                      onClick={() => setSheetLyrics((current) => !current)}
-                      aria-pressed={sheetLyrics}
+                      className={`now-playing__icon-button now-playing__lyrics-toggle${sheetView === "lyrics" ? " is-active" : ""}`}
+                      onClick={() =>
+                        setSheetView((current) => (current === "lyrics" ? "art" : "lyrics"))
+                      }
+                      aria-pressed={sheetView === "lyrics"}
                       aria-label="Lyrics"
                     >
                       <Mic aria-hidden="true" />
+                    </button>
+                    <button
+                      type="button"
+                      className={`now-playing__icon-button now-playing__friends-toggle${sheetView === "friends" ? " is-active" : ""}`}
+                      onClick={() =>
+                        setSheetView((current) => (current === "friends" ? "art" : "friends"))
+                      }
+                      aria-pressed={sheetView === "friends"}
+                      aria-label="Friends"
+                    >
+                      <Users aria-hidden="true" />
                     </button>
                     {canStartRadio ? (
                       <button
@@ -819,24 +804,20 @@ function GlobalPlayerBar({ minimized, onMinimizedChange }: GlobalPlayerBarProps)
           )
         : null}
 
-      {stageOpen ? <FullscreenPlayer track={currentTrack} onClose={closeStage} /> : null}
+      <FriendsDialog open={sheetFriendsDialog} onClose={() => setSheetFriendsDialog(false)} />
 
-      {panel ? (
-        <PlayerQueuePanel
-          id={queuePanelId}
-          view={panel}
-          onViewChange={setPanel}
-          onClose={closeQueue}
-          closeRef={queueCloseRef}
-        />
-      ) : null}
+      {stageOpen ? <FullscreenPlayer track={currentTrack} onClose={closeStage} /> : null}
 
       <div className="global-player__inner">
         <div className="global-player__track">
-          {artwork("global-player__art global-player__art--bar")}
+          {minimizeArt(artwork("global-player__art global-player__art--bar"))}
           <div className="global-player__meta">
             <div className="global-player__title-row">
-              <span className="global-player__title">{currentTrack.title}</span>
+              <span className="global-player__title">
+                <PlayerOriginLink className="global-player__link">
+                  {currentTrack.title}
+                </PlayerOriginLink>
+              </span>
               {currentTrack.isPreview ? <PreviewChip /> : null}
             </div>
             {artistLabel || albumLabel ? (
@@ -964,31 +945,6 @@ function GlobalPlayerBar({ minimized, onMinimizedChange }: GlobalPlayerBarProps)
             additionalItemsAfter={playlistItemAfter}
             renderAdditionalItems={renderPlaylistItem}
           />
-          <TooltipButton
-            tooltipPlacement="top"
-            ref={lyricsTriggerRef}
-            title={`${panel === "lyrics" ? "Hide lyrics" : "Show lyrics"} (${PLAYER_SHORTCUTS.lyrics.label})`}
-            aria-label="Lyrics"
-            aria-keyshortcuts={PLAYER_SHORTCUTS.lyrics.keys}
-            aria-expanded={panel === "lyrics"}
-            aria-controls={panel === "lyrics" ? queuePanelId : undefined}
-            onClick={() => togglePanel("lyrics")}
-            className={`btn btn-ghost btn-icon btn-xs global-player__panel-toggle${panel === "lyrics" ? " is-active" : ""}`}
-          >
-            <Mic className="artist-icon-sm" />
-          </TooltipButton>
-          <TooltipButton
-            tooltipPlacement="top"
-            ref={queueTriggerRef}
-            title={panel === "queue" ? "Hide queue" : "Show queue"}
-            aria-label="Queue"
-            aria-expanded={panel === "queue"}
-            aria-controls={panel === "queue" ? queuePanelId : undefined}
-            onClick={() => togglePanel("queue")}
-            className={`btn btn-ghost btn-icon btn-xs global-player__panel-toggle${panel === "queue" ? " is-active" : ""}`}
-          >
-            <ListMusic className="artist-icon-sm" />
-          </TooltipButton>
           <TooltipButton
             tooltipPlacement="top"
             title={`${volumePercent <= 0 ? "Unmute" : "Mute"} (${PLAYER_SHORTCUTS.mute.label})`}

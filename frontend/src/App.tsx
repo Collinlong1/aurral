@@ -38,6 +38,7 @@ import { routeModules } from "./navigation/routeModules.ts";
 import { LegacyAlbumRedirect } from "./navigation/albumRoute.tsx";
 import { getBootstrapPollIntervalMs } from "./utils/requestScheduling.ts";
 import { useLanternPreview, useWrappedSeason } from "./hooks/useWrapped.ts";
+import { HOSTED } from "./utils/server.ts";
 
 function ActivityRootRedirect() {
   return <Navigate to={buildActivityPath(DEFAULT_ACTIVITY_VIEW)} replace />;
@@ -54,6 +55,8 @@ const LibraryPage = lazy(routeModules.library);
 const PluginPage = lazy(() => import("./pages/PluginPage.tsx"));
 const PluginResourcePage = lazy(() => import("./pages/PluginResourcePage.tsx"));
 const WrappedPage = lazy(routeModules.wrapped);
+const FriendPage = lazy(routeModules.friend);
+const PersonPage = lazy(routeModules.person);
 const WrappedAnnouncement = lazy(() => import("./components/WrappedAnnouncement.tsx"));
 const LidarrConversionReport = lazy(() => import("./components/LidarrConversionReport.tsx"));
 const ArtistDetailsPage = lazy(routeModules.artist);
@@ -377,6 +380,8 @@ const appRoutes = createRoutesFromElements(
         />
         <Route path="/artist/:mbid" element={<ArtistDetailsPage />} />
         <Route path="/wrapped" element={<WrappedPage />} />
+        <Route path="/friends/:handle" element={<FriendPage />} />
+        <Route path="/people/:username" element={<PersonPage />} />
         <Route
           path="/blocklist"
           element={<Navigate to="/?settings=listening/blocklist" replace />}
@@ -389,14 +394,7 @@ const appRoutes = createRoutesFromElements(
   </Route>,
 );
 
-let appRouter: ReturnType<typeof createBrowserRouter> | null = null;
-
-function AppRouter() {
-  appRouter ??= createBrowserRouter(appRoutes, {
-    basename: getAppBasePath(),
-  });
-  return <RouterProvider router={appRouter} />;
-}
+const appRouter = createBrowserRouter(appRoutes, { basename: getAppBasePath() });
 
 function App() {
   return (
@@ -405,9 +403,9 @@ function App() {
         <AuthProvider>
           <AudioQueueProvider>
             <ShareProvider>
-              <AppRouter />
+              <RouterProvider router={appRouter} />
               <ThemeSync />
-              <ReloadPrompt />
+              {!HOSTED && <ReloadPrompt />}
             </ShareProvider>
           </AudioQueueProvider>
         </AuthProvider>

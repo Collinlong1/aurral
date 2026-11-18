@@ -7,6 +7,7 @@ import {
   getUnauthorizedDetails,
   hasPermission,
   isAuthRequiredByConfig,
+  isCrossSite,
   isRecentlyAuthenticated,
   resolveRequestUser,
   resolveTokenUser,
@@ -80,6 +81,7 @@ const openPaths = new Set([
   "/api/filesystem/browse",
   "/api/filesystem/ensure",
   "/api/auth/login",
+  "/api/auth/pair",
   "/api/auth/oidc/login",
   "/api/auth/oidc/exchange",
   "/api/auth/google/login",
@@ -100,6 +102,7 @@ const tokenPaths = [
   /^\/api\/library\/file-stream\/[^/]+\/[^/]+$/i,
   /^\/api\/playlists\/stream\/[^/]+$/i,
   /^\/api\/playlists\/staging-stream\/[^/]+$/i,
+  /^\/api\/deezer\/preview$/i,
 ];
 
 const tokenArtworkPaths = [
@@ -111,6 +114,7 @@ const tokenArtworkPaths = [
   /^\/api\/discover\/playlists\/[^/]+\/[^/]+\/cover$/i,
   /^\/api\/artists\/release-group\/[a-f0-9-]{36}\/cover\/image$/i,
   /^\/api\/artists\/[a-f0-9-]{36}\/image$/i,
+  /^\/api\/hub-link\/friends\/art$/i,
 ];
 
 const acceptsLinkToken = (method: string, path: string) =>
@@ -133,15 +137,19 @@ export const authenticate = createMiddleware<AppEnv>(async (c, next) => {
       return unauthorized(c);
     }
   }
-  if (acceptsLinkToken(method, path)) {
-    const user = resolveTokenUser(requestCredentials(c));
-    if (user) c.set("user", user);
-    return next();
+  const credentials = requestCredentials(c);
+  const crossSite = isCrossSite(credentials);
+  const linkToken = acceptsLinkToken(method, path);
+  if (!crossSite && !linkToken) {
+    if (path.startsWith("/api/onboarding") && !dbOps.getSettings().onboardingComplete) {
+      return next();
+    }
+    if (!isAuthRequiredByConfig()) return next();
   }
-  if (path.startsWith("/api/onboarding") && !dbOps.getSettings().onboardingComplete) return next();
-  if (!isAuthRequiredByConfig()) return next();
-  const user = resolveRequestUser(requestCredentials(c));
-  if (!user) return unauthorized(c);
-  c.set("user", user);
+  const user = linkToken ? resolveTokenUser(credentials) : resolveRequestUser(credentials);
+  if (user) {
+    c.set("user", user);
+    c.res.headers.set("Cross-Origin-Resource-Policy", "cross-origin");
+  } else if (crossSite || !linkToken) return unauthorized(c);
   return next();
 });

@@ -72,6 +72,7 @@ export type TrackListRow = {
   subtitle?: ReactNode;
   detail?: ReactNode;
   reason?: ReactNode;
+  addedBy?: string | null;
   trailing?: ReactNode;
   active?: boolean;
   missing?: boolean;
@@ -303,6 +304,7 @@ export function TrackList({
   highlightKey = null,
   showYear = false,
   showReason = false,
+  showAddedBy = false,
   wideTime = false,
   onReorder = null,
 }: {
@@ -311,6 +313,7 @@ export function TrackList({
   onReorder?: ((keys: TrackListRow["key"][]) => void) | null;
   showYear?: boolean;
   showReason?: boolean;
+  showAddedBy?: boolean;
   wideTime?: boolean;
   variant?: "collection" | "release" | "compact";
   sort?: TrackSort | null;
@@ -321,15 +324,32 @@ export function TrackList({
   const isCollection = variant === "collection";
   const hasCover = variant !== "release";
 
+  const [flashKey, setFlashKey] = useState<string | null>(null);
+  const scrolledKey = useRef<string | null>(null);
+  const target = highlightKey ? String(highlightKey) : null;
+  const targetShown = target !== null && rows.some((row) => String(row.key) === target);
+
   useEffect(() => {
-    if (!highlightKey) return undefined;
-    const row = rowRefs.current.get(String(highlightKey));
-    if (!row) return undefined;
-    row.classList.add("is-search-focused");
-    row.scrollIntoView({ block: "nearest", behavior: "smooth" });
-    const timeout = window.setTimeout(() => row.classList.remove("is-search-focused"), 2400);
+    if (!target) {
+      scrolledKey.current = null;
+      return undefined;
+    }
+    if (!targetShown || scrolledKey.current === target) return undefined;
+    // Layout resets the page scroll after child effects run, so scroll on the next frame.
+    // A smooth scroll renders the content-visibility rows it passes, which shrink and push it off target.
+    const frame = window.requestAnimationFrame(() => {
+      scrolledKey.current = target;
+      rowRefs.current.get(target)?.scrollIntoView({ block: "center" });
+      setFlashKey(target);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [target, targetShown]);
+
+  useEffect(() => {
+    if (!flashKey) return undefined;
+    const timeout = window.setTimeout(() => setFlashKey(null), 2400);
     return () => window.clearTimeout(timeout);
-  }, [highlightKey, rows.length]);
+  }, [flashKey]);
 
   const renderRow = (row: TrackListRow, drag: RowDrag | null) => {
     const playLabel = row.playing
@@ -350,6 +370,7 @@ export function TrackList({
           "native-library-track" +
           (drag?.dragging ? " is-dragging" : "") +
           (row.active ? " is-active" : "") +
+          (flashKey === String(row.key) ? " is-search-focused" : "") +
           (row.missing ? " is-missing" : "") +
           (row.missing && row.previewOnly ? " is-preview" : "")
         }
@@ -439,6 +460,7 @@ export function TrackList({
           <TrackLink link={row.album} className="native-library-track__album" />
         ) : null}
         {showReason ? <span className="native-library-track__reason">{row.reason}</span> : null}
+        {showAddedBy ? <span className="native-library-track__added-by">{row.addedBy}</span> : null}
         {showYear ? <span className="native-library-track__year">{row.year}</span> : null}
         <span className={"native-library-track__time" + (row.timeMissing ? " is-missing" : "")}>
           {row.time}
@@ -495,7 +517,7 @@ export function TrackList({
 
   return (
     <div
-      className={`native-library-track-list native-library-track-list--${variant}${showYear ? " native-library-track-list--year" : ""}${showReason ? " native-library-track-list--reason" : ""}${wideTime ? " native-library-track-list--wide-time" : ""}`}
+      className={`native-library-track-list native-library-track-list--${variant}${showYear ? " native-library-track-list--year" : ""}${showReason ? " native-library-track-list--reason" : ""}${showAddedBy ? " native-library-track-list--added-by" : ""}${wideTime ? " native-library-track-list--wide-time" : ""}`}
     >
       {variant === "compact" ? null : (
         <div
@@ -520,6 +542,7 @@ export function TrackList({
           {isCollection ? <HeadingCell id="artist" label="Artist" sort={sort} /> : null}
           {isCollection ? <HeadingCell id="album" label="Album" sort={sort} /> : null}
           {showReason ? <span className="native-library-track__reason">Why</span> : null}
+          {showAddedBy ? <span className="native-library-track__added-by">Added by</span> : null}
           {showYear ? (
             <HeadingCell
               id="year"

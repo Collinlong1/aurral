@@ -1,20 +1,27 @@
 import { createHash } from "node:crypto";
 import * as v from "valibot";
 import { db } from "../config/db-sqlite.ts";
-import type { HubLinksRow, HubPublicationsRow } from "../db/rows.ts";
+import type { HubPublicationsRow } from "../db/rows.ts";
 import { MAX_SHARE_BYTES, parseShareManifest, withoutShareFiles } from "../../lib/shareManifest.ts";
 import { asAppError } from "../../lib/errors.ts";
 import type { RequestUser } from "../middleware/requestUser.ts";
 import { flowPlaylistConfig } from "./playlists/flowPlaylistConfig.ts";
 import { resolveShareManifest } from "./shareLinks/metadata.ts";
 import { SHARE_ORIGIN } from "./shareLinks/store.ts";
-import { hubLinksEnabled, hubRequest, markLinkBroken, selectLink } from "./hubLink.ts";
+import {
+  authorized,
+  hubLinksEnabled,
+  hubRequest,
+  linkedLink,
+  markLinkBroken,
+  refusalOf,
+  selectLink,
+} from "./hubLink.ts";
 import { logger } from "./logger.ts";
 
 const SHELF_TTL_MS = 10 * 60 * 1000;
 const SHELF_RETRY_MS = 60 * 1000;
 const SHELF_TIMEOUT_MS = 3000;
-const NOT_REPUBLISHABLE = new Set(["aurral-community", "aurral-share"]);
 
 export class PublicPlaylistError extends Error {
   status: 400 | 404 | 409 | 422 | 502;
@@ -25,7 +32,6 @@ export class PublicPlaylistError extends Error {
 }
 
 const createdSchema = v.object({ id: v.string() });
-const refusalSchema = v.object({ error: v.string() });
 const shelfSchema = v.object({
   playlists: v.array(
     v.object({
@@ -39,6 +45,7 @@ const shelfSchema = v.object({
   ),
 });
 const playlistSchema = v.object({ id: v.string(), handle: v.string(), manifest: v.unknown() });
+const profileSchema = v.object({ handle: v.string(), playlists: shelfSchema.entries.playlists });
 
 const selectPublication = db.prepare<[string], HubPublicationsRow>(
   "SELECT * FROM hub_publications WHERE playlist_id = ?",
@@ -46,17 +53,6 @@ const selectPublication = db.prepare<[string], HubPublicationsRow>(
 const deletePublication = db.prepare<[string]>(
   "DELETE FROM hub_publications WHERE playlist_id = ?",
 );
-
-const linkedLink = (userId: number) => {
-  const link = selectLink.get(userId);
-  return link?.linked_at && !link.broken ? link : null;
-};
-
-const authorized = (link: HubLinksRow, method: string, body?: unknown) => ({
-  method,
-  headers: { Authorization: `Bearer ${link.token}`, "Content-Type": "application/json" },
-  ...(body !== undefined && { body: JSON.stringify(body) }),
-});
 
 function playlistManifest(playlistId: string) {
   const manifest = resolveShareManifest(
@@ -68,11 +64,6 @@ function playlistManifest(playlistId: string) {
   const json = JSON.stringify(details);
   if (Buffer.byteLength(json) > MAX_SHARE_BYTES - 1024) return "too_large" as const;
   return { manifest: details, hash: createHash("sha256").update(json).digest("hex") };
-}
-
-async function refusalOf(response: Response) {
-  const body = v.safeParse(refusalSchema, await response.json().catch(() => null));
-  return body.success ? body.output.error : null;
 }
 
 export function publicPlaylistState(userId: number) {
@@ -100,10 +91,6 @@ export async function makePlaylistPublic(user: RequestUser, playlistId: string) 
   }
   const link = linkedLink(user.id);
   if (!link) throw new PublicPlaylistError("Link an aurral.org account first.", 409);
-  const source = playlist.importSource;
-  if (source && NOT_REPUBLISHABLE.has(source.provider)) {
-    throw new PublicPlaylistError("Copies of other Aurral playlists can't be public.", 400);
-  }
   const built = playlistManifest(playlistId);
   if (built === "too_large" || !built) {
     throw new PublicPlaylistError("This playlist is too large to make public.", 400);
@@ -255,4 +242,16 @@ export async function communityPlaylist(id: string) {
     });
   }
   return { id, handle: body.output.handle, manifest };
+}
+
+export async function communityProfile(handle: string) {
+  const response = await fetch(`${SHARE_ORIGIN}/v1/profiles/${encodeURIComponent(handle)}`, {
+    signal: AbortSignal.timeout(SHELF_TIMEOUT_MS),
+  }).catch(() => null);
+  if (response?.status === 404 && (await refusalOf(response)) === "no_account") return null;
+  const body = response?.ok
+    ? v.safeParse(profileSchema, await response.json().catch(() => null))
+    : null;
+  if (!body?.success) throw new PublicPlaylistError("Couldn't reach aurral.org. Try again.", 502);
+  return body.output;
 }

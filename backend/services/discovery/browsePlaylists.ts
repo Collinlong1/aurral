@@ -14,19 +14,24 @@ import {
   getEditorialShelf,
 } from "./editorialPlaylists.ts";
 import { getAurralPlaylist, importAurralPlaylist, withOwnedTracks } from "./aurralPlaylists.ts";
-import { getUserMix, getUserMixes, type Mix } from "./mixes.ts";
+import { getUserMix, getUserMixes, visiblePeople, type Mix } from "./mixes.ts";
 import { browseCoverTemplate, browseCoverUrl, type BrowseCover } from "./browseCovers.ts";
 import {
+  BLEND_MIX_PREFIX,
+  FRIEND_BLEND_MIX_PREFIX,
   BROWSE_IMPORT_PROVIDERS,
   BROWSE_PROVIDERS,
+  LISTENS_MIX_PREFIX,
   type BrowseProvider,
 } from "../../../lib/browsePlaylists.ts";
 import { getDeezerArtistPlaylists, type ShelfScope } from "../importLists/deezerPlaylists.ts";
 import type { RequestUser } from "../../middleware/requestUser.ts";
 import type { LibraryArtistsRow } from "../../db/rows.ts";
-import { communityPlaylist, communityShelf } from "../publicPlaylists.ts";
+import { communityPlaylist, communityProfile, communityShelf } from "../publicPlaylists.ts";
 import { requireImportList } from "../importLists/importPlaylist.ts";
 import type { ShareManifest } from "../../../lib/shareManifest.ts";
+import { deezerPreviewSearchPath } from "../apiClients/deezer.ts";
+import { releaseGroupCoverImageUrl } from "../releaseGroupCoverService.ts";
 
 export const browseProviderSchema = v.picklist(BROWSE_PROVIDERS);
 
@@ -104,10 +109,9 @@ export async function getBrowseCover(user: RequestUser, provider: BrowseProvider
   return null;
 }
 
-export async function getMadeForYou(user: RequestUser) {
-  const userMixes = await getUserMixes(user.id);
+function mixCards(userMixes: Mix[]) {
   const covers = mixCovers(userMixes);
-  const mixes = userMixes.map((mix, index): BrowsePlaylist<"mix"> => {
+  return userMixes.map((mix, index): BrowsePlaylist<"mix"> => {
     const cover = covers[index];
     return {
       provider: "mix",
@@ -119,6 +123,16 @@ export async function getMadeForYou(user: RequestUser) {
       trackCount: mix.trackIds.length,
     };
   });
+}
+
+export async function getPersonPlaylists(user: RequestUser, personId: number) {
+  const ids = [BLEND_MIX_PREFIX, LISTENS_MIX_PREFIX].map((prefix) => `${prefix}${personId}`);
+  const found = await Promise.all(ids.map((id) => getUserMix(user.id, id)));
+  return mixCards(found.filter((mix) => mix !== null));
+}
+
+export async function getMadeForYou(user: RequestUser) {
+  const mixes = mixCards(await getUserMixes(user.id));
   const discovery = getDiscoveryPlaylists(user.id).map((playlist): BrowsePlaylist<"discovery"> => ({
     provider: "discovery",
     id: playlist.id,
@@ -147,8 +161,8 @@ export async function getPlaylistShelf(user: RequestUser, scope?: ShelfScope) {
   };
 }
 
-export const getCommunityPlaylists = async () =>
-  (await communityShelf()).map((playlist): BrowsePlaylist => ({
+const communityCard = (playlist: Awaited<ReturnType<typeof communityShelf>>[number]) =>
+  ({
     provider: "community",
     id: playlist.id,
     name: playlist.title,
@@ -160,7 +174,27 @@ export const getCommunityPlaylists = async () =>
       communityCover(playlist.id, playlist.title, playlist.artist),
     ),
     trackCount: playlist.trackCount,
-  }));
+  }) satisfies BrowsePlaylist;
+
+export const getCommunityPlaylists = async () => (await communityShelf()).map(communityCard);
+
+export async function getCommunityProfile(user: RequestUser, handle: string) {
+  const here = visiblePeople(user.id).find((person) => person.handle === handle);
+  const [profile, blend] = await Promise.all([
+    communityProfile(handle),
+    getUserMix(
+      user.id,
+      here ? `${BLEND_MIX_PREFIX}${here.id}` : `${FRIEND_BLEND_MIX_PREFIX}${handle}`,
+    ),
+  ]);
+  return (
+    profile && {
+      handle: profile.handle,
+      playlists: profile.playlists.map(communityCard),
+      blend: mixCards(blend ? [blend] : [])[0] ?? null,
+    }
+  );
+}
 
 export const getArtistPlaylists = async (deezerArtistId: string) =>
   (await getDeezerArtistPlaylists(deezerArtistId)).map(deezer);
@@ -185,8 +219,8 @@ export async function getBrowsePlaylist(user: RequestUser, provider: BrowseProvi
           trackName: track.title,
           albumName: track.albumTitle,
           durationMs: track.durationMs,
-          preview_url: null,
-          artworkUrl: null,
+          preview_url: deezerPreviewSearchPath(track.artistName, track.title),
+          artworkUrl: track.albumMbid ? releaseGroupCoverImageUrl(track.albumMbid) : null,
           deezerAlbumId: null,
         })),
       ),

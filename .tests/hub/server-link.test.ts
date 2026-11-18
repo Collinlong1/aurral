@@ -3,7 +3,9 @@ import { afterAll, beforeEach, test, vi } from "vite-plus/test";
 import { cleanupIsolatedState, setupIsolatedBackend } from "../helpers/backendTestHarness.ts";
 import { signedInAs } from "../helpers/honoApp.ts";
 import hub, { type Bindings } from "../../hub/src/index.ts";
+import * as v from "valibot";
 import { approveLink, unlinkForAccount } from "../../hub/src/links.ts";
+import { topPlaysSchema } from "../../hub/src/listening.ts";
 import { localHub } from "../../hub/testing.ts";
 
 const HUB = "http://hub.test";
@@ -21,6 +23,9 @@ const [
   { flowPlaylistConfig },
   { syncStaticPlaylistImportHere },
   browse,
+  friends,
+  playEvents,
+  inbox,
 ] = await setupIsolatedBackend(
   "server-link",
   () => import("../../backend/config/db-sqlite.ts"),
@@ -31,6 +36,9 @@ const [
   () => import("../../backend/services/playlists/flowPlaylistConfig.ts"),
   () => import("../../backend/services/importLists/importListSync.ts"),
   () => import("../../backend/services/discovery/browsePlaylists.ts"),
+  () => import("../../backend/services/hubFriends.ts"),
+  () => import("../../backend/services/playEventService.ts"),
+  () => import("../../backend/services/inboxService.ts"),
 );
 afterAll(async () => {
   await local.dispose();
@@ -86,9 +94,9 @@ const hubAccount = async (id: string, handle: string) => {
   ]);
 };
 
-const approve = async (code: string) => {
-  await hubAccount("account-1", "lee_k");
-  assert.ok(await approveLink(hubEnv.DB, code.replace("-", ""), "account-1"));
+const approve = async (code: string, account = "account-1", handle = "lee_k") => {
+  await hubAccount(account, handle);
+  assert.ok(await approveLink(hubEnv.DB, code.replace("-", ""), account));
 };
 
 test("a user links through a code, and unlinking tells aurral.org to forget the link", async () => {
@@ -177,7 +185,11 @@ test("a public playlist reaches the shelf and its copies, stays fresh, and leave
   const owner = signedInAs(userOps.getUserById(lee.id) || undefined).route("/", api);
   const setPublic = (method: "PUT" | "DELETE", playlistId: string) =>
     owner.request(`/hub-link/public-playlists/${playlistId}`, { method });
-  const track = { trackName: "Song", artistName: "Band" };
+  const track = {
+    trackName: "Song",
+    artistName: "Band",
+    albumMbid: "1b105601-d2d3-4da2-a7d9-114f981b1766",
+  };
   const mine = flowPlaylistConfig.createStaticPlaylist({
     name: "Late night",
     ownerUserId: lee.id,
@@ -213,6 +225,15 @@ test("a public playlist reaches the shelf and its copies, stays fresh, and leave
   const [card] = await browse.getCommunityPlaylists();
   const page = await browse.getBrowsePlaylist(viewer, "community", listed?.id ?? "");
   assert.equal(page.artworkUrl, card?.artworkUrl);
+  assert.deepEqual(
+    page.tracks.map(({ preview_url, artworkUrl }) => ({ preview_url, artworkUrl })),
+    [
+      {
+        preview_url: "/api/deezer/preview?artist=Band&track=Song",
+        artworkUrl: "/api/artists/release-group/1b105601-d2d3-4da2-a7d9-114f981b1766/cover/image",
+      },
+    ],
+  );
 
   const copy = flowPlaylistConfig.createStaticPlaylist({
     name: "Later night",
@@ -247,4 +268,287 @@ test("a public playlist reaches the shelf and its copies, stays fresh, and leave
   await revoked(1);
   published.resetCommunityShelf();
   assert.deepEqual(await published.communityShelf(), []);
+});
+
+test("linked users add each other as friends, and a failing aurral.org changes nothing", async () => {
+  const mia = userOps.createUser("mia", "hash");
+  assert.ok(mia);
+  for (const [user, account, handle] of [
+    [lee, "account-1", "lee_k"],
+    [mia, "account-2", "mia_k"],
+  ] as const) {
+    const pending = await link.startHubLink(user);
+    await approve(pending.state === "pending" ? pending.code : "", account, handle);
+    await link.hubLinkStatus(user.id);
+  }
+
+  await assert.rejects(friends.addFriend(lee.id, "@nobody"), { status: 404 });
+  hubCalls = 0;
+  await assert.rejects(friends.addFriend(lee.id, "not a handle"), { status: 404 });
+  assert.equal(hubCalls, 0);
+  assert.deepEqual(await friends.addFriend(lee.id, "@Mia_K"), { status: "sent" });
+  assert.deepEqual(await friends.friendLists(mia.id), {
+    state: "linked",
+    sharing: true,
+    friends: [],
+    incoming: [{ handle: "lee_k" }],
+    outgoing: [],
+  });
+  assert.deepEqual(await friends.addFriend(mia.id, "lee_k"), { status: "friends" });
+  const sharedAt = Date.now();
+  await playEvents.sendNowPlaying(lee.id, {
+    title: "Nude",
+    artist: "Radiohead",
+    album: "In Rainbows",
+  });
+  const miasFriends = await friends.friendLists(mia.id);
+  const at = miasFriends.state === "linked" ? (miasFriends.friends[0]?.lastPlayed?.at ?? 0) : 0;
+  assert.ok(at >= sharedAt && at <= Date.now());
+  const nude = {
+    title: "Nude",
+    artist: "Radiohead",
+    album: "In Rainbows",
+    artworkUrl: "/api/hub-link/friends/art?artist=Radiohead&album=In+Rainbows",
+  };
+  assert.deepEqual(miasFriends, {
+    state: "linked",
+    sharing: true,
+    friends: [
+      {
+        handle: "lee_k",
+        nowPlaying: nude,
+        lastPlayed: { ...nude, at },
+        topPlays: null,
+      },
+    ],
+    incoming: [],
+    outgoing: [],
+  });
+
+  hubReachable = false;
+  await assert.rejects(friends.friendLists(lee.id), { status: 502 });
+  assert.equal((await link.hubLinkStatus(lee.id)).state, "linked");
+
+  hubReachable = true;
+  dbOps.updateSettings({
+    security: { localNetworkBypass: { enabled: false }, aurralAccounts: false },
+  });
+  hubCalls = 0;
+  assert.deepEqual(await friends.friendLists(lee.id), { state: "off" });
+  await assert.rejects(friends.addFriend(lee.id, "mia_k"), { status: 409 });
+  assert.equal(hubCalls, 0);
+  await friends.removeFriend(lee.id, "mia_k");
+  dbOps.updateSettings({
+    security: { localNetworkBypass: { enabled: false }, aurralAccounts: true },
+  });
+  assert.deepEqual(await friends.friendLists(mia.id), {
+    state: "linked",
+    sharing: true,
+    friends: [],
+    incoming: [],
+    outgoing: [],
+  });
+
+  const linkId = await hubEnv.DB.prepare(
+    "SELECT id FROM links WHERE account_id = 'account-2' AND token_hash IS NOT NULL ORDER BY linked_at DESC",
+  ).first<string>("id");
+  await unlinkForAccount(hubEnv.DB, "account-2", linkId ?? "");
+  assert.deepEqual(await friends.friendLists(mia.id), { state: "broken" });
+  hubCalls = 0;
+  assert.deepEqual(await friends.friendLists(mia.id), { state: "broken" });
+  assert.equal(hubCalls, 0);
+});
+
+test("friend requests and acceptances reach the Inbox at most every 15 minutes and leave once answered", async () => {
+  const ana = userOps.createUser("ana", "hash");
+  const ben = userOps.createUser("ben", "hash");
+  assert.ok(ana && ben);
+  for (const [user, account, handle] of [
+    [ana, "account-5", "ana_k"],
+    [ben, "account-6", "ben_k"],
+  ] as const) {
+    const pending = await link.startHubLink(user);
+    await approve(pending.state === "pending" ? pending.code : "", account, handle);
+    await link.hubLinkStatus(user.id);
+  }
+  const notices = (userId: number) =>
+    inbox.getInboxForUser(userId).items.map((item) => `${item?.title} ${item?.subtitle}`);
+  let clock = Date.now();
+  const time = vi.spyOn(Date, "now").mockImplementation(() => clock);
+  const check = async (userId: number) => {
+    clock += 15 * 60_000;
+    await friends.refreshFriendNotices(userId);
+  };
+
+  await friends.addFriend(ana.id, "ben_k");
+  await check(ben.id);
+  assert.deepEqual(notices(ben.id), ["@ana_k Wants to be friends"]);
+  hubCalls = 0;
+  clock += 60_000;
+  await friends.refreshFriendNotices(ben.id);
+  assert.equal(hubCalls, 0);
+
+  await friends.removeFriend(ana.id, "ben_k");
+  await check(ben.id);
+  assert.deepEqual(notices(ben.id), []);
+
+  await friends.addFriend(ana.id, "ben_k");
+  await check(ben.id);
+  await friends.addFriend(ben.id, "ana_k");
+  assert.deepEqual(notices(ben.id), []);
+  await check(ana.id);
+  await check(ben.id);
+  assert.deepEqual(notices(ana.id), ["@ben_k Accepted your friend request"]);
+  assert.deepEqual(notices(ben.id), []);
+
+  link.forgetHubLink(ana.id);
+  assert.deepEqual(notices(ana.id), []);
+  time.mockRestore();
+});
+
+test("friends' tracks for Blends arrive while both share and leave with sharing or the friendship", async () => {
+  const cara = userOps.createUser("cara", "hash");
+  const dev = userOps.createUser("dev", "hash");
+  assert.ok(cara && dev);
+  for (const [user, account, handle] of [
+    [cara, "account-7", "cara_k"],
+    [dev, "account-8", "dev_k"],
+  ] as const) {
+    const pending = await link.startHubLink(user);
+    await approve(pending.state === "pending" ? pending.code : "", account, handle);
+    await link.hubLinkStatus(user.id);
+  }
+  for (const [index, title] of ["Reckoner", "Reckoner", "Nude"].entries()) {
+    playEvents.recordPlayEvent(cara.id, {
+      trackId: title,
+      title,
+      artist: "Radiohead",
+      playedAt: Date.now() - (index + 1) * 600_000,
+      source: "native-player",
+    });
+  }
+  const stored = (userId: number) =>
+    db
+      .prepare<[number], { handle: string; tracks: string }>(
+        "SELECT handle, tracks FROM hub_friend_tracks WHERE user_id = ?",
+      )
+      .all(userId)
+      .map(({ handle, tracks }) => ({ handle, tracks: JSON.parse(tracks) as unknown }));
+  const caras = [
+    {
+      handle: "cara_k",
+      tracks: [
+        { title: "Reckoner", artist: "Radiohead" },
+        { title: "Nude", artist: "Radiohead" },
+      ],
+    },
+  ];
+
+  await friends.addFriend(cara.id, "dev_k");
+  await friends.addFriend(dev.id, "cara_k");
+  await friends.shareAllTopPlays();
+  assert.deepEqual(stored(dev.id), caras);
+
+  await friends.shareListening(dev.id, false);
+  assert.deepEqual(stored(dev.id), []);
+  await friends.shareListening(dev.id, true);
+  assert.deepEqual(stored(dev.id), caras);
+
+  await friends.shareListening(cara.id, false);
+  await friends.refreshFriendNotices(dev.id);
+  assert.deepEqual(stored(dev.id), []);
+  await friends.shareListening(cara.id, true);
+  await friends.shareAllTopPlays();
+  assert.deepEqual(stored(dev.id), caras);
+
+  await friends.removeFriend(dev.id, "cara_k");
+  assert.deepEqual(stored(dev.id), []);
+});
+
+test("sharing sends now playing and top plays, Off clears aurral.org, and relinking keeps it off", async () => {
+  await hubEnv.DB.prepare("DELETE FROM listening").run();
+  const pending = await link.startHubLink(lee);
+  await approve(pending.state === "pending" ? pending.code : "");
+  await link.hubLinkStatus(lee.id);
+  const listening = () =>
+    hubEnv.DB.prepare("SELECT now_playing, top_plays FROM listening").first<{
+      now_playing: string | null;
+      top_plays: string | null;
+    }>();
+  const sharing = async () => {
+    const status = await link.hubLinkStatus(lee.id);
+    return status.state === "linked" && status.sharing;
+  };
+  const mbids = {
+    artistMbid: "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+    albumMbid: "6e335887-60ba-38f0-95af-fae7774336bf",
+  };
+  const reckoner = "b5a8e5b4-ed5f-4e3c-9a3f-1d2e3c4b5a69";
+  for (const [index, title] of ["Reckoner", "Reckoner", "Nude"].entries()) {
+    playEvents.recordPlayEvent(lee.id, {
+      trackId: title,
+      title,
+      artist: "Radiohead",
+      album: "In Rainbows",
+      ...mbids,
+      trackMbid: title === "Reckoner" ? reckoner : "local-7",
+      playedAt: Date.now() - (index + 1) * 600_000,
+      source: "native-player",
+    });
+  }
+  playEvents.recordPlayEvent(lee.id, {
+    trackId: "old",
+    title: "Creep",
+    artist: "Radiohead",
+    playedAt: Date.now() - 31 * 86_400_000,
+  });
+
+  await playEvents.sendNowPlaying(lee.id, { title: "Nude", artist: "Radiohead" });
+  await friends.shareAllTopPlays();
+  const shared = await listening();
+  assert.deepEqual(JSON.parse(shared?.now_playing ?? ""), {
+    title: "Nude",
+    artist: "Radiohead",
+    album: null,
+  });
+  const { stats, ...top } = v.parse(topPlaysSchema, JSON.parse(shared?.top_plays ?? ""));
+  assert.deepEqual(top, {
+    artists: [{ name: "Radiohead", plays: 3, mbid: mbids.artistMbid }],
+    albums: [{ title: "In Rainbows", artist: "Radiohead", plays: 3, mbid: mbids.albumMbid }],
+    tracks: [
+      {
+        title: "Reckoner",
+        artist: "Radiohead",
+        plays: 2,
+        mbid: reckoner,
+        albumMbid: mbids.albumMbid,
+      },
+      { title: "Nude", artist: "Radiohead", plays: 1, mbid: null, albumMbid: mbids.albumMbid },
+    ],
+  });
+  assert.ok(stats);
+  assert.deepEqual(
+    { ...stats, hours: stats.hours.reduce((total, count) => total + count) },
+    { plays: 3, minutes: 0, artists: 1, hours: 3 },
+  );
+
+  hubReachable = false;
+  await assert.rejects(friends.shareListening(lee.id, false), { status: 502 });
+  hubReachable = true;
+  assert.equal(await sharing(), true);
+
+  await friends.shareListening(lee.id, false);
+  assert.equal(await listening(), null);
+  assert.equal(await sharing(), false);
+  hubCalls = 0;
+  await playEvents.sendNowPlaying(lee.id, { title: "Nude", artist: "Radiohead" });
+  await friends.shareAllTopPlays();
+  assert.equal(hubCalls, 0);
+
+  const relink = await link.startHubLink(lee);
+  await approve(relink.state === "pending" ? relink.code : "");
+  assert.equal(await sharing(), false);
+  await friends.shareListening(lee.id, true);
+  assert.ok((await listening())?.top_plays);
+  await revoked(1);
 });

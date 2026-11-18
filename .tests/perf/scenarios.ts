@@ -177,7 +177,11 @@ export const scenarios: Scenario[] = [
   },
   { name: "listening history", requests: () => ["/api/users/me/listening-history"] },
   { name: "aurral.org account", requests: () => ["/api/hub-link"] },
+  { name: "friends", requests: () => ["/api/hub-link/friends"] },
+  { name: "people on this server", requests: () => ["/api/people"] },
+  { name: "person profile", requests: () => ["/api/people/mia"] },
   { name: "community playlists", requests: () => ["/api/discover/playlists/community"] },
+  { name: "aurral.org profile", requests: () => ["/api/hub-link/profiles/mia_k"] },
   { name: "subsonic getArtists", requests: () => ["/rest/getArtists"] },
   {
     name: "subsonic getAlbumList2",

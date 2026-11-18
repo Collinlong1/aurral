@@ -271,6 +271,44 @@ const ownOrphanedPlaylists: Migration = (db) => {
   }
 };
 
+const shareListeningWithFriends: Migration = (db) => {
+  if (
+    db.prepare("SELECT 1 FROM pragma_table_info('hub_links') WHERE name = 'share_listening'").get()
+  )
+    return;
+  db.exec("ALTER TABLE hub_links ADD COLUMN share_listening INTEGER NOT NULL DEFAULT 1");
+};
+
+const blendWithPeopleOnServer: Migration = (db) => {
+  if (db.prepare("SELECT 1 FROM pragma_table_info('users') WHERE name = 'blend'").get()) return;
+  db.exec("ALTER TABLE users ADD COLUMN blend INTEGER NOT NULL DEFAULT 0");
+};
+
+const blendByDefault: Migration = (db) =>
+  db.exec(`
+    ALTER TABLE users DROP COLUMN blend;
+    ALTER TABLE users ADD COLUMN blend INTEGER NOT NULL DEFAULT 1;
+  `);
+
+const storeFriendBlendTracks: Migration = (db) =>
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS hub_friend_tracks (
+      user_id INTEGER NOT NULL REFERENCES hub_links(user_id) ON DELETE CASCADE,
+      handle TEXT NOT NULL,
+      tracks TEXT NOT NULL,
+      fetched_at INTEGER NOT NULL,
+      PRIMARY KEY (user_id, handle)
+    );
+  `);
+
+const renewSessionsOnUse: Migration = (db) => {
+  if (
+    !db.prepare("SELECT 1 FROM pragma_table_info('sessions') WHERE name = 'last_used_at'").get()
+  ) {
+    db.exec("ALTER TABLE sessions ADD COLUMN last_used_at INTEGER");
+  }
+};
+
 export const migrations: Migration[] = [
   createAurral3Schema,
   indexFinishedDownloadNames,
@@ -288,6 +326,11 @@ export const migrations: Migration[] = [
   createHubLinks,
   createHubPublications,
   ownOrphanedPlaylists,
+  shareListeningWithFriends,
+  blendWithPeopleOnServer,
+  blendByDefault,
+  storeFriendBlendTracks,
+  renewSessionsOnUse,
 ];
 
 export function migrate(db: Database.Database, steps: readonly Migration[] = migrations) {
