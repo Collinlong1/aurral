@@ -153,6 +153,65 @@ test("upgrading lets albums that failed to load try again, and keeps rate-limit 
   );
 });
 
+test("upgrading keeps cached metadata for the maintainers' server and drops relay failures", () => {
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+  migrate(db, migrations.slice(0, -2));
+  const cache = db.prepare<[string, string]>(
+    "INSERT INTO metadata_response_cache (cache_key, response, fresh_until, stale_until) VALUES (?, ?, 1, 2)",
+  );
+  cache.run("https://lidarrapi.brainzmash.cc/album/a:{}", "relay album");
+  cache.run("https://lidarrapi.brainzmash.cc/artist/b:{}", "relay artist");
+  cache.run("https://brainzmash.kell.ly/artist/b:{}", "fallback artist");
+  cache.run("http://metadata.local/album/c:{}", "own server");
+  db.prepare(
+    "INSERT INTO metadata_request_state (cache_key, failure_count, retry_after) VALUES (?, 2, 1)",
+  ).run("https://lidarrapi.brainzmash.cc/album/d:{}");
+
+  migrate(db);
+
+  assert.deepEqual(
+    db
+      .prepare(
+        "SELECT cache_key, CAST(response AS TEXT) AS response FROM metadata_response_cache ORDER BY cache_key",
+      )
+      .all(),
+    [
+      { cache_key: "http://metadata.local/album/c:{}", response: "own server" },
+      { cache_key: "https://brainzmash.kell.ly/album/a:{}", response: "relay album" },
+      { cache_key: "https://brainzmash.kell.ly/artist/b:{}", response: "fallback artist" },
+    ],
+  );
+  assert.equal(db.prepare("SELECT count(*) FROM metadata_request_state").pluck().get(), 0);
+});
+
+test("upgrading clears a saved BrainzMash relay address and keeps a server you set", () => {
+  const upgrade = (baseUrl: string): unknown => {
+    const db = new Database(":memory:");
+    db.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+    migrate(db, migrations.slice(0, -1));
+    db.prepare("INSERT INTO settings (key, value) VALUES ('integrations', ?)").run(
+      JSON.stringify({ slskd: { apiKey: "AURRAL_ENC:secret" }, metadata: { baseUrl } }),
+    );
+    migrate(db);
+    return JSON.parse(
+      db
+        .prepare<[], string>("SELECT value FROM settings WHERE key = 'integrations'")
+        .pluck()
+        .get() ?? "null",
+    );
+  };
+
+  assert.deepEqual(upgrade("https://lidarrapi.brainzmash.cc/"), {
+    slskd: { apiKey: "AURRAL_ENC:secret" },
+    metadata: { baseUrl: "" },
+  });
+  assert.deepEqual(upgrade("http://metadata.local:5002"), {
+    slskd: { apiKey: "AURRAL_ENC:secret" },
+    metadata: { baseUrl: "http://metadata.local:5002" },
+  });
+});
+
 test("upgrading names a Usenet job's download by its client and its turned-down releases by album", () => {
   const db = new Database(":memory:");
   db.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
@@ -330,7 +389,7 @@ test("upgrading turns a Gotify setup into a webhook that still reads its token",
 test("upgrading gives ownerless playlists and flows to the first admin and turns Blends on", () => {
   const db = new Database(":memory:");
   db.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
-  migrate(db, migrations.slice(0, -11));
+  migrate(db, migrations.slice(0, -13));
   db.exec(`
     INSERT INTO users (id, username, password_hash, role) VALUES
       (1, 'listener', 'hash', 'user'), (2, 'lee', 'hash', 'admin'), (3, 'ada', 'hash', 'admin');
@@ -356,7 +415,7 @@ test("upgrading gives ownerless playlists and flows to the first admin and turns
 test("upgrading restores track credits from stored ARTISTS tags", () => {
   const db = new Database(":memory:");
   db.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
-  migrate(db, migrations.slice(0, -5));
+  migrate(db, migrations.slice(0, -7));
   db.prepare("INSERT INTO settings (key, value) VALUES ('librarySearchIndexVersion', '3')").run();
   const insert = db.prepare<[string, string, string, string]>(
     `INSERT INTO library_tracks
@@ -455,7 +514,7 @@ test("upgrading restores track credits from stored ARTISTS tags", () => {
 test("upgrading drops what only Last.fm read and keeps the rest", () => {
   const db = new Database(":memory:");
   db.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
-  migrate(db, migrations.slice(0, -3));
+  migrate(db, migrations.slice(0, -5));
   db.exec(`
     ALTER TABLE users ADD COLUMN lastfm_username TEXT;
     CREATE TABLE lastfm_link_states (token_hash TEXT PRIMARY KEY);
