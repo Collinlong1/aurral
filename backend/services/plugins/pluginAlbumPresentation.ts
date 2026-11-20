@@ -24,6 +24,8 @@ const answerSchema = v.nullish(
             v.minLength(1),
             v.maxLength(ALBUM_TRACKS),
           ),
+          // What each track is called under the heading, in trackIds order.
+          titles: v.optional(v.pipe(v.array(text(300)), v.maxLength(ALBUM_TRACKS))),
         }),
       ),
       v.maxLength(ALBUM_TRACKS),
@@ -38,6 +40,8 @@ export type AlbumPresentationGroup = {
   subtitle: string | null;
   detail: string | null;
   trackIds: string[];
+  // Matches trackIds; null leaves the track's own title.
+  titles: (string | null)[];
 };
 
 const presenters = () =>
@@ -53,6 +57,9 @@ export const hasAlbumPresentation = () => presenters().length > 0;
 export function readGroups(answer: Answer, albumTrackIds: string[]): AlbumPresentationGroup[] {
   const position = new Map(albumTrackIds.map((id, index) => [id, index]));
   const placed = answer.groups.flatMap((group) => {
+    const titleOf = new Map(
+      group.trackIds.map((id, index) => [String(id), group.titles?.[index] || null]),
+    );
     const positions = [...new Set(group.trackIds.map(String))]
       .flatMap((id) => position.get(id) ?? [])
       .sort((a, b) => a - b);
@@ -67,6 +74,7 @@ export function readGroups(answer: Answer, albumTrackIds: string[]): AlbumPresen
           subtitle: group.subtitle || null,
           detail: group.detail || null,
           trackIds: positions.map((at) => albumTrackIds[at] ?? ""),
+          titles: positions.map((at) => titleOf.get(albumTrackIds[at] ?? "") ?? null),
         },
       },
     ];

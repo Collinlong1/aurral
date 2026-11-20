@@ -250,12 +250,13 @@ Set `"albumPresentation": true` and export `albumPresentation`. When someone ope
       subtitle: "Ludwig van Beethoven",
       detail: "Berlin Philharmonic · Herbert von Karajan",
       trackIds: [101, 102, 103, 104],
+      titles: ["I. Allegro con brio", "II. Andante con moto", "III. Scherzo", "IV. Allegro"],
     },
   ],
 }
 ```
 
-Each group puts a heading over one run of the album's tracks, in album order. Groups only add headings: tracks keep their order, menus, and playback. Aurral drops track ids that aren't on the album, and a group whose tracks aren't one run or that overlaps an earlier group. The album page then offers `label` (or "Grouped") and **By track**, which is the plain list. Each person's browser remembers their choice.
+Each group puts a heading over one run of the album's tracks, in album order. `titles`, in `trackIds` order, names each track under the heading, such as its movement; without them the page drops the work name the tracks' own titles share. Groups only add headings: tracks keep their order, menus, and playback. Aurral drops track ids that aren't on the album, and a group whose tracks aren't one run or that overlaps an earlier group. The album page then offers `label` (or "Grouped") and **By track**, which is the plain list. Each person's browser remembers their choice.
 
 A call has 5 seconds and runs while the page waits, so answer from what the plugin already keeps in `dataFolder`, not from another service. A failure or timeout only leaves the album as it is and doesn't count toward turning the plugin off. When several plugins answer, the first one with groups wins.
 

@@ -350,17 +350,30 @@ function AlbumPage() {
         : [],
     ),
   );
-  // Under a heading a track shows its movement, not the work again.
+  // Under a heading a track shows its movement, not the work again: the
+  // plugin's title for it, or else its own without the shared work name.
   const titleUnderGroup = new Map(
     (albumPresentation.grouped ? albumPresentation.presentation?.groups : [])?.flatMap((group) => {
+      const given = new Map(group.trackIds.map((id, index) => [id, group.titles[index]]));
       const ids = group.trackIds.filter((id) => listedTitles.has(id));
       const titles = titlesUnderHeading(
         ids.map((id) => listedTitles.get(id) ?? ""),
         group.title,
       );
-      return ids.map((id, index) => [id, titles[index] ?? ""] as const);
+      return ids.map((id, index) => [id, given.get(id) || titles[index] || ""] as const);
     }),
   );
+  const trackDurations = new Map(
+    listed.flatMap((entry) =>
+      entry.libraryTrack
+        ? [[String(entry.libraryTrack.id), trackDurationMs(entry.libraryTrack) ?? 0] as const]
+        : [],
+    ),
+  );
+  const groupLength = (trackIds: string[]) =>
+    trackIds.length > 1
+      ? formatDuration(trackIds.reduce((sum, id) => sum + (trackDurations.get(id) ?? 0), 0))
+      : "";
   const groupStarts = new Map(
     (albumPresentation.grouped ? albumPresentation.presentation?.groups : [])?.map((group) => [
       group.trackIds[0],
@@ -375,7 +388,12 @@ function AlbumPage() {
           if (!group) return null;
           return (
             <span key={entry.key} className="album-group-heading">
-              <span className="album-group-heading__title">{group.title}</span>
+              <span className="album-group-heading__title-line">
+                <span className="album-group-heading__title">{group.title}</span>
+                {groupLength(group.trackIds) ? (
+                  <span className="album-group-heading__time">{groupLength(group.trackIds)}</span>
+                ) : null}
+              </span>
               {group.subtitle ? (
                 <span className="album-group-heading__line">{group.subtitle}</span>
               ) : null}
@@ -426,7 +444,8 @@ function AlbumPage() {
             ? null
             : row.subtitle,
       // The heading names the composer; the full artist line would repeat on every track.
-      ...(underHeading && { title: underHeading, subtitle: null }),
+      // Movements number themselves ("I. Allegro"), as Apple Music Classical shows them.
+      ...(underHeading && { title: underHeading, subtitle: null, number: "" }),
       ...(hasFile && hasMissingTracks && { trailing: <OwnedTrackMark /> }),
       time: hasFile
         ? row.time

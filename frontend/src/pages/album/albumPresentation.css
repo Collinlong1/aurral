@@ -9,6 +9,19 @@
   min-width: 0;
 }
 
+.album-group-heading__title-line {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.album-group-heading__time {
+  color: var(--aurral-text-muted);
+  font-size: var(--aurral-font-sm);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
 .album-group-heading__title {
   color: var(--aurral-text);
   font-size: var(--aurral-font-base);

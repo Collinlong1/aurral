@@ -213,6 +213,8 @@ export interface AlbumGroup {
   subtitle?: string;
   detail?: string;
   trackIds: (number | string)[];
+  /** What each track is called under the heading, in trackIds order. */
+  titles?: string[];
 }
 
 export type AlbumPresentation = { label?: string; groups: AlbumGroup[] } | null;

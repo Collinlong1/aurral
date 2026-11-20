@@ -453,7 +453,7 @@ test("album headings label runs of the album's tracks and fall back to the plain
     `export default { albumPresentation: ({ album }) => album.title === "Broken" ? null : ({
       label: "By work",
       groups: [
-        { title: "Symphony", subtitle: "Composer", trackIds: [${andante}, ${allegro}, 999999] },
+        { title: "Symphony", subtitle: "Composer", trackIds: [${andante}, ${allegro}, 999999], titles: ["II. Andante", "I. Allegro", "Lost"] },
         { title: "Overlaps", trackIds: [${andante}] },
         { title: "Gap", trackIds: [${scherzo}, ${allegro}] },
         { title: "Finale", detail: "Orchestra", trackIds: ["${scherzo}", ${finale}] },
@@ -472,12 +472,14 @@ test("album headings label runs of the album's tracks and fall back to the plain
         subtitle: "Composer",
         detail: null,
         trackIds: [String(allegro), String(andante)],
+        titles: ["I. Allegro", "II. Andante"],
       },
       {
         title: "Finale",
         subtitle: null,
         detail: "Orchestra",
         trackIds: [String(scherzo), String(finale)],
+        titles: [null, null],
       },
     ],
   });
