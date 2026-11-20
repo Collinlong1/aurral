@@ -62,7 +62,7 @@ import {
   useLibraryViewData,
 } from "../library/libraryShared.tsx";
 
-import { albumDiscHeadings, mergeAlbumTracks, titleUnderHeading } from "./mergeAlbumTracks.ts";
+import { albumDiscHeadings, mergeAlbumTracks, titlesUnderHeading } from "./mergeAlbumTracks.ts";
 import { useAlbumPresentation } from "./useAlbumPresentation.ts";
 import "./albumPresentation.css";
 import { OwnedTrackMark, useReleasePreviewQueue, useReleaseTracks } from "./releaseTracks.tsx";
@@ -343,10 +343,23 @@ function AlbumPage() {
     onLibraryAlbumRequested: albumState.markAlbumRequested,
   });
 
-  const groupOfTrack = new Map(
-    (albumPresentation.grouped ? albumPresentation.presentation?.groups : [])?.flatMap((group) =>
-      group.trackIds.map((id) => [id, group.title] as const),
+  const listedTitles = new Map(
+    listed.flatMap((entry) =>
+      entry.libraryTrack
+        ? [[String(entry.libraryTrack.id), entry.libraryTrack.title] as const]
+        : [],
     ),
+  );
+  // Under a heading a track shows its movement, not the work again.
+  const titleUnderGroup = new Map(
+    (albumPresentation.grouped ? albumPresentation.presentation?.groups : [])?.flatMap((group) => {
+      const ids = group.trackIds.filter((id) => listedTitles.has(id));
+      const titles = titlesUnderHeading(
+        ids.map((id) => listedTitles.get(id) ?? ""),
+        group.title,
+      );
+      return ids.map((id, index) => [id, titles[index] ?? ""] as const);
+    }),
   );
   const groupStarts = new Map(
     (albumPresentation.grouped ? albumPresentation.presentation?.groups : [])?.map((group) => [
@@ -400,10 +413,9 @@ function AlbumPage() {
             source: playbackSource,
           })
         : [];
-    const heading = groupOfTrack.get(String(track.id));
+    const underHeading = titleUnderGroup.get(String(track.id));
     return {
       ...row,
-      ...(heading && { title: titleUnderHeading(row.title, heading) }),
       section,
       key: entry.key,
       number: entry.releaseTrack || !splitEditions ? entry.number : null,
@@ -413,6 +425,8 @@ function AlbumPage() {
           : isAlbumArtistCredit(track, libraryArtist)
             ? null
             : row.subtitle,
+      // The heading names the composer; the full artist line would repeat on every track.
+      ...(underHeading && { title: underHeading, subtitle: null }),
       ...(hasFile && hasMissingTracks && { trailing: <OwnedTrackMark /> }),
       time: hasFile
         ? row.time

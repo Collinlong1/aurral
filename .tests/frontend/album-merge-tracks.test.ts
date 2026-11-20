@@ -4,6 +4,7 @@ import {
   albumDiscHeadings,
   mergeAlbumTracks,
   titleUnderHeading,
+  titlesUnderHeading,
 } from "../../frontend/src/pages/album/mergeAlbumTracks.ts";
 
 const release = (mbid: string, title: string, trackNumber: number, discNumber = 1) => ({
@@ -173,4 +174,32 @@ test("a track under its work heading drops the work it repeats", () => {
   ];
   for (const [title, heading, shown] of cases)
     assert.equal(titleUnderHeading(title, heading), shown);
+});
+
+test("tracks under one heading drop the work name they share, however it's spelled", () => {
+  assert.deepEqual(
+    titlesUnderHeading(
+      [
+        "Romeo & Juliet, op. 64: Act I. No. 1 Introduction",
+        "Romeo & Juliet, op. 64: Act I, Scene I. No. 2 Romeo",
+      ],
+      "Romeo and Juliet, op. 64",
+    ),
+    ["Act I. No. 1 Introduction", "Act I, Scene I. No. 2 Romeo"],
+  );
+  assert.deepEqual(
+    titlesUnderHeading(
+      ["24 Preludes Op.28 : No.1 In C Major", "24 Preludes Op.28 : No.2 In A Minor"],
+      "24 Préludes pour le piano, op. 28",
+    ),
+    ["No.1 In C Major", "No.2 In A Minor"],
+  );
+  // Different works before the colon, or a track alone: only the heading itself goes.
+  assert.deepEqual(titlesUnderHeading(["Suite: Prelude", "Other: Gigue"], "Suite"), [
+    "Prelude",
+    "Other: Gigue",
+  ]);
+  assert.deepEqual(titlesUnderHeading(["Ballade No.3 In A Flat Minor Op.47"], "Ballade No. 3"), [
+    "Ballade No.3 In A Flat Minor Op.47",
+  ]);
 });

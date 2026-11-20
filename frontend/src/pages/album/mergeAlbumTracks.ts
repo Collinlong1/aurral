@@ -175,3 +175,20 @@ export function titleUnderHeading(title: string, heading: string) {
   if (!/^\s*[:,.\-–—/]/.test(rest)) return title;
   return rest.replace(/^[\s:,.\-–—/]+/, "") || title;
 }
+
+const headOf = (title: string) => {
+  const at = title.indexOf(":");
+  return at > 0 ? foldTitle(title.slice(0, at).trim()) : null;
+};
+
+// Titles of one heading's tracks. When every track starts with the same
+// text before its first colon ("Romeo & Juliet, op. 64: Act I. …"), that
+// shared work name goes, however its spelling differs from the heading's.
+// A track alone under its heading drops only the heading itself.
+export function titlesUnderHeading(titles: string[], heading: string) {
+  const head = titles.length > 1 ? headOf(titles[0] ?? "") : null;
+  if (head && titles.every((title) => headOf(title) === head)) {
+    return titles.map((title) => title.slice(title.indexOf(":") + 1).trim() || title);
+  }
+  return titles.map((title) => titleUnderHeading(title, heading));
+}
