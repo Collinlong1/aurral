@@ -11,6 +11,7 @@ import { createOutagePause } from "./outagePause.ts";
 import createCache from "./simpleCache.ts";
 import { logger } from "../logger.ts";
 import { asAppError } from "../../../lib/errors.ts";
+import { MBID_PATTERN } from "../../../lib/mbid.ts";
 import { dbOps } from "../../db/helpers/index.ts";
 import { APP_NAME, APP_VERSION, LISTENBRAINZ_API } from "../../config/constants.ts";
 
@@ -126,6 +127,9 @@ export const listenbrainzValidateToken = async (
   });
 };
 
+const mbid = (value: string | null | undefined) =>
+  value && MBID_PATTERN.test(value) ? value : undefined;
+
 export const listenbrainzSubmit = async ({
   token,
   baseUrl = LISTENBRAINZ_API,
@@ -141,6 +145,7 @@ export const listenbrainzSubmit = async ({
   if (listenedAt !== undefined && !(Number.isFinite(listenedAt) && listenedAt > 0)) {
     throw new Error("listenbrainzSubmit requires a numeric playedAt timestamp");
   }
+  const artistMbid = mbid(event.artistMbid);
   const payload = {
     listen_type: event.listenType ?? "single",
     payload: [
@@ -153,9 +158,9 @@ export const listenbrainzSubmit = async ({
           additional_info: {
             submission_client: "Aurral",
             duration_ms: event.durationMs || undefined,
-            recording_mbid: event.trackMbid || undefined,
-            release_group_mbid: event.albumMbid || undefined,
-            artist_mbids: event.artistMbid ? [event.artistMbid] : undefined,
+            recording_mbid: mbid(event.trackMbid),
+            release_group_mbid: mbid(event.albumMbid),
+            artist_mbids: artistMbid && [artistMbid],
           },
         },
       },
@@ -176,19 +181,22 @@ export async function listenbrainzRequest(
     timeoutMs = LISTENBRAINZ_TIMEOUT_MS,
     data,
     priority = 0,
+    cache = true,
   }: {
     token?: string | null;
     baseUrl?: string;
     timeoutMs?: number;
     data?: unknown;
     priority?: number;
+    cache?: boolean;
   } = {},
 ): Promise<unknown> {
   const root = normalizeListenbrainzBaseUrl(baseUrl);
   const isAuthenticated = Boolean(String(token || "").trim());
-  const cacheKey = isAuthenticated
-    ? null
-    : `lb:${root}:${path}:${JSON.stringify(params)}${data ? `:${JSON.stringify(data)}` : ""}`;
+  const cacheKey =
+    isAuthenticated || !cache
+      ? null
+      : `lb:${root}:${path}:${JSON.stringify(params)}${data ? `:${JSON.stringify(data)}` : ""}`;
   if (cacheKey) {
     const cached = listenbrainzCache.get(cacheKey);
     if (cached !== undefined) return cached;
@@ -322,29 +330,6 @@ export const listenbrainzTopArtistsSchema = v.fallback(
                 artist_mbid: lenient(v.nullable(v.string())),
                 artist_mbids: listenbrainzMbids,
                 listen_count: lenientCount,
-              }),
-              {},
-            ),
-          ),
-        ),
-      }),
-    ),
-  }),
-  {},
-);
-
-export const listenbrainzTopRecordingsSchema = v.fallback(
-  v.looseObject({
-    payload: lenient(
-      v.looseObject({
-        recordings: lenient(
-          v.array(
-            v.fallback(
-              v.looseObject({
-                artist_name: lenientText,
-                artist_mbids: listenbrainzMbids,
-                track_name: lenientText,
-                release_name: lenient(v.nullable(v.string())),
               }),
               {},
             ),

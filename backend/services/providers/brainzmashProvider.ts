@@ -1,11 +1,18 @@
 import pMap from "p-map";
 import * as v from "valibot";
 import { isOwnKey } from "../../../lib/ownKey.ts";
+import { isRecord } from "../../../lib/isRecord.ts";
+import { UUID_REGEX } from "../../../lib/uuid.ts";
 import { http, isTransientNetworkError } from "../../../lib/http.ts";
 import { asAppError } from "../../../lib/errors.ts";
 import createCache from "../apiClients/simpleCache.ts";
 import { dbOps } from "../../db/helpers/index.ts";
-import { APP_NAME, APP_VERSION, DEFAULT_METADATA_BASE_URL } from "../../config/constants.ts";
+import {
+  APP_NAME,
+  APP_VERSION,
+  DEFAULT_METADATA_BASE_URL,
+  FALLBACK_METADATA_BASE_URL,
+} from "../../config/constants.ts";
 import {
   getNormalizedText,
   rankAlbumCandidates,
@@ -31,17 +38,23 @@ import {
   withoutFeaturedArtists,
 } from "../trackMatching/titleText.ts";
 import createRateLimiter from "../apiClients/rateLimiter.ts";
-import { musicbrainzGet, releaseGroupSchema } from "../apiClients/musicbrainzHttp.ts";
+import {
+  artistCreditSchema,
+  musicbrainzGet,
+  releaseGroupSchema,
+} from "../apiClients/musicbrainzHttp.ts";
 import { readMany, readOne } from "../integrationData.ts";
 import { albumSearchTexts, parseSearchQuery, rankByMatch } from "../searchText.ts";
 import { runSharedInflight, type InflightRequests } from "../sharedInflight.ts";
 import { logger, safeLogDiagnostic } from "../logger.ts";
+import { describeCurrentWork } from "../eventLoopWatch.ts";
 import { setTimeout as delay } from "node:timers/promises";
 import {
   acquireMetadataRequest,
   clearMetadataRequestStates,
   completeMetadataRequest,
   deferMetadataRequest,
+  recordMetadataCall,
   failMetadataRequest,
   getMetadataProviderBudget,
   getMetadataRequestState,
@@ -66,6 +79,45 @@ const releaseGroupHitSchema = v.looseObject({
   score: v.optional(v.number()),
 });
 
+const musicbrainzTrackSchema = v.looseObject({
+  id: v.optional(v.string()),
+  title: v.optional(v.string()),
+  position: v.optional(v.number()),
+  length: v.nullish(v.number()),
+  "artist-credit": artistCreditSchema,
+  recording: v.optional(
+    v.looseObject({
+      id: v.optional(v.string()),
+      title: v.optional(v.string()),
+      length: v.nullish(v.number()),
+      "artist-credit": artistCreditSchema,
+    }),
+  ),
+});
+
+const musicbrainzReleaseSchema = v.looseObject({
+  id: v.string(),
+  title: v.optional(v.string()),
+  status: v.nullish(v.string()),
+  date: v.optional(v.string()),
+  country: v.nullish(v.string()),
+  media: v.optional(
+    v.array(
+      v.looseObject({
+        position: v.optional(v.number()),
+        title: v.nullish(v.string()),
+        format: v.nullish(v.string()),
+        "track-count": v.optional(v.number()),
+        tracks: v.optional(v.array(musicbrainzTrackSchema)),
+      }),
+    ),
+  ),
+});
+
+const musicbrainzReleaseBrowseSchema = v.looseObject({
+  releases: v.array(v.unknown()),
+});
+
 interface AlbumSearchItem {
   id?: string;
   title: string;
@@ -84,6 +136,7 @@ interface AlbumSearchItem {
 interface MetadataRequestOptions {
   signal?: AbortSignal;
   forceRefresh?: boolean;
+  withFallbackReleases?: boolean;
 }
 
 type MetadataParams = Record<string, string | number>;
@@ -95,15 +148,19 @@ interface MetadataError extends Error {
 }
 
 const METADATA_ENTITY_CACHE_TTL_SECONDS = 7 * 24 * 60 * 60;
+const INCOMPLETE_ALBUM_CACHE_TTL_SECONDS = 60 * 60;
 const METADATA_ENTITY_STALE_TTL_SECONDS = 30 * 24 * 60 * 60;
 const METADATA_SEARCH_CACHE_TTL_SECONDS = 24 * 60 * 60;
 const METADATA_NOT_FOUND_CACHE_TTL_SECONDS = 24 * 60 * 60;
 const METADATA_RATE_LIMIT_FALLBACK_COOLDOWN_MS = 5_000;
 const METADATA_FORBIDDEN_COOLDOWN_MS = 5 * 60_000;
+const METADATA_FALLBACK_MIN_WAIT_MS = 60 * 60_000;
 const METADATA_CACHE_MAX_ENTRIES = 20_000;
 const METADATA_HOT_CACHE_TTL_SECONDS = 60;
 const METADATA_HOT_CACHE_MAX_ENTRIES = 50;
 const METADATA_STORE_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
+const MUSICBRAINZ_FALLBACK_CACHE_TTL_SECONDS = 24 * 60 * 60;
+const MUSICBRAINZ_FALLBACK_RETRY_SECONDS = 5 * 60;
 const MIN_ALBUM_SEARCH_WINDOW = 25;
 const METADATA_REQUEST_MIN_INTERVAL_MS = 100;
 const METADATA_REQUEST_TIMEOUT_MS = 8000;
@@ -121,6 +178,10 @@ const metadataNotFoundCache = createCache<true>(
   METADATA_NOT_FOUND_CACHE_TTL_SECONDS,
   METADATA_CACHE_MAX_ENTRIES,
 );
+const musicbrainzAlbumReleasesCache = createCache<NormalizedRelease[]>(
+  MUSICBRAINZ_FALLBACK_CACHE_TTL_SECONDS,
+  500,
+);
 const providerInflightRequests: InflightRequests = new Map();
 const providerRequestLimiter = createRateLimiter(METADATA_REQUEST_MIN_INTERVAL_MS, {
   maxQueue: METADATA_MAX_QUEUED_REQUESTS,
@@ -132,6 +193,7 @@ export function clearMetadataProviderCaches() {
   metadataHotCache.flushAll();
   dbOps.clearMetadataResponses();
   metadataNotFoundCache.flushAll();
+  musicbrainzAlbumReleasesCache.flushAll();
   providerInflightRequests.clear();
   clearMetadataRequestStates();
 }
@@ -274,6 +336,20 @@ function openMetadataCircuit(baseUrl: string, status: number, error: unknown) {
   setMetadataProviderCooldown(baseUrl, status, Date.now() + cooldownMs);
 }
 
+function countMetadataCall(baseUrl: string, path: string, status: unknown, sentAt: number) {
+  try {
+    recordMetadataCall(
+      {
+        server: new URL(baseUrl).host,
+        endpoint: path.slice(1, isEntityMetadataPath(path) ? path.lastIndexOf("/") : undefined),
+        work: describeCurrentWork() ?? "other",
+        status: String(status),
+      },
+      sentAt,
+    );
+  } catch {}
+}
+
 const RETRYABLE_STATUSES: (number | undefined)[] = [408, 425, 429, 500, 502, 503, 504];
 
 function isRetryable(error: unknown) {
@@ -285,10 +361,15 @@ function isRetryable(error: unknown) {
   );
 }
 
-function getMetadataCachePolicy(path: string) {
+function getMetadataCachePolicy(path: string, value?: unknown) {
   if (isEntityMetadataPath(path)) {
     return {
-      freshTtlSeconds: METADATA_ENTITY_CACHE_TTL_SECONDS,
+      freshTtlSeconds:
+        /^\/album\/[^/]+$/.test(path) &&
+        isRecord(value) &&
+        (!Array.isArray(value.releases) || value.releases.length === 0)
+          ? INCOMPLETE_ALBUM_CACHE_TTL_SECONDS
+          : METADATA_ENTITY_CACHE_TTL_SECONDS,
       staleTtlSeconds: METADATA_ENTITY_STALE_TTL_SECONDS,
     };
   }
@@ -386,17 +467,16 @@ async function storeMetadata(
 }
 
 async function waitForMetadataRequestOwner<Schema extends v.GenericSchema>(
+  requestKey: string,
   cacheKey: string,
   schema: Schema,
   signal: AbortSignal,
 ) {
   while (true) {
     signal.throwIfAborted();
-    const state = getMetadataRequestState(cacheKey);
+    const state = getMetadataRequestState(requestKey);
     const now = Date.now();
-    if (state?.retryAfter && state.retryAfter > now) {
-      throw createMetadataCooldownError(state.retryAfter - now);
-    }
+    if (state?.retryAfter && state.retryAfter > now) return { retryAt: state.retryAfter };
     if (!state?.leased || state.leaseUntil <= now) {
       const cached = await readCachedMetadata(cacheKey, schema, { persistent: true });
       return cached ? ({ found: true, value: cached.value } as const) : ({ found: false } as const);
@@ -420,10 +500,30 @@ function refreshMetadata<Schema extends v.GenericSchema>(
   {
     signal,
     fallbackValue,
-  }: MetadataRequestOptions & { fallbackValue?: v.InferOutput<Schema> } = {},
+    baseUrl = getMetadataBaseUrl(),
+  }: MetadataRequestOptions & { fallbackValue?: v.InferOutput<Schema>; baseUrl?: string } = {},
 ): Promise<v.InferOutput<Schema>> {
-  const baseUrl = getMetadataBaseUrl();
-  const cachePolicy = getMetadataCachePolicy(path);
+  const requestKey = `${baseUrl}${path}:${JSON.stringify(params)}`;
+  // BrainzMash can make one album or artist wait more than a day, so the
+  // maintainers' own server answers it until then.
+  const fallbackUrl =
+    baseUrl === DEFAULT_METADATA_BASE_URL && isEntityMetadataPath(path)
+      ? FALLBACK_METADATA_BASE_URL
+      : null;
+  const coolingDown = async (retryAt: number, sharedSignal: AbortSignal) => {
+    if (fallbackUrl && retryAt - Date.now() > METADATA_FALLBACK_MIN_WAIT_MS) {
+      const answer = await refreshMetadata(schema, cacheKey, path, params, {
+        signal: sharedSignal,
+        baseUrl: fallbackUrl,
+      }).then(
+        (value) => ({ value }),
+        () => null,
+      );
+      if (answer) return answer.value;
+    }
+    if (fallbackValue !== undefined) return fallbackValue;
+    throw createMetadataCooldownError(retryAt - Date.now());
+  };
   const circuitError = getMetadataCircuitError(baseUrl);
   if (circuitError) {
     return fallbackValue !== undefined
@@ -435,32 +535,25 @@ function refreshMetadata<Schema extends v.GenericSchema>(
 
   return runSharedInflight(
     providerInflightRequests,
-    cacheKey,
+    requestKey,
     async (sharedSignal: AbortSignal) => {
       const ownsPersistentRequest = isEntityMetadataPath(path);
       let leaseToken: string | null = null;
       if (ownsPersistentRequest) {
         while (!leaseToken) {
-          const claim = acquireMetadataRequest(cacheKey, METADATA_REQUEST_LEASE_MS);
+          const claim = acquireMetadataRequest(requestKey, METADATA_REQUEST_LEASE_MS);
           if (claim.acquired) {
             leaseToken = claim.token;
             break;
           }
-          if (claim.retryAfter > Date.now()) {
-            if (fallbackValue !== undefined) return fallbackValue;
-            throw createMetadataCooldownError(claim.retryAfter - Date.now());
-          }
-          const shared = await waitForMetadataRequestOwner(cacheKey, schema, sharedSignal).catch(
-            (error) => {
-              if (
-                fallbackValue !== undefined &&
-                asAppError(error)?.code === "ERR_METADATA_COOLDOWN"
-              ) {
-                return { found: true as const, value: fallbackValue };
-              }
-              throw error;
-            },
+          if (claim.retryAfter > Date.now()) return coolingDown(claim.retryAfter, sharedSignal);
+          const shared = await waitForMetadataRequestOwner(
+            requestKey,
+            cacheKey,
+            schema,
+            sharedSignal,
           );
+          if (shared.retryAt) return coolingDown(shared.retryAt, sharedSignal);
           if (shared.found) return shared.value;
         }
       }
@@ -468,7 +561,7 @@ function refreshMetadata<Schema extends v.GenericSchema>(
       for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
         let providerRequestStarted = false;
         if (sharedSignal.aborted) {
-          if (leaseToken) releaseMetadataRequest(cacheKey, leaseToken);
+          if (leaseToken) releaseMetadataRequest(requestKey, leaseToken);
           throw sharedSignal.reason || new Error("The operation was aborted");
         }
         // A request BrainzMash has received is finished and cached even when every caller has left.
@@ -510,15 +603,33 @@ function refreshMetadata<Schema extends v.GenericSchema>(
               const circuitAfterWait = getMetadataCircuitError(baseUrl);
               if (circuitAfterWait) throw circuitAfterWait;
               providerRequestStarted = true;
-              return http.get(`${baseUrl}${path}`, {
-                query: params,
-                timeoutMs: METADATA_REQUEST_TIMEOUT_MS,
-                bodyTimeoutMs: METADATA_RESPONSE_BODY_TIMEOUT_MS,
-                headers: {
-                  "User-Agent": getUserAgent(),
-                },
-                signal: requestSignal,
-              });
+              const sentAt = Date.now();
+              return http
+                .get(`${baseUrl}${path}`, {
+                  query: params,
+                  timeoutMs: METADATA_REQUEST_TIMEOUT_MS,
+                  bodyTimeoutMs: METADATA_RESPONSE_BODY_TIMEOUT_MS,
+                  headers: {
+                    "User-Agent": getUserAgent(),
+                  },
+                  signal: requestSignal,
+                })
+                .then(
+                  (response) => {
+                    countMetadataCall(baseUrl, path, response.status, sentAt);
+                    return response;
+                  },
+                  (error: unknown) => {
+                    const failure = asAppError(error);
+                    countMetadataCall(
+                      baseUrl,
+                      path,
+                      failure?.response?.status ?? failure?.code ?? "error",
+                      sentAt,
+                    );
+                    throw error;
+                  },
+                );
             },
             {
               signal: requestSignal,
@@ -527,15 +638,15 @@ function refreshMetadata<Schema extends v.GenericSchema>(
             },
           );
           const value = readOne(schema, response.data, { service: "BrainzMash", endpoint: path });
-          await storeMetadata(cacheKey, value, cachePolicy);
-          if (leaseToken) completeMetadataRequest(cacheKey, leaseToken);
+          await storeMetadata(cacheKey, value, getMetadataCachePolicy(path, value));
+          if (leaseToken) completeMetadataRequest(requestKey, leaseToken);
           metadataNotFoundCache.delete(cacheKey);
           healthState.lastSuccessAt = healthState.lastCheckedAt;
           healthState.lastFailureReason = "";
           return value;
         } catch (error) {
           if (requestSignal.aborted) {
-            if (leaseToken) releaseMetadataRequest(cacheKey, leaseToken);
+            if (leaseToken) releaseMetadataRequest(requestKey, leaseToken);
             throw requestSignal.reason || error;
           }
           const failure = asAppError(error);
@@ -550,33 +661,32 @@ function refreshMetadata<Schema extends v.GenericSchema>(
           if (status === 429 && leaseToken && !isMetadataCircuitError(error)) {
             const retryAfterMs = getRetryAfterMs(error);
             const retryAt = Date.now() + retryAfterMs;
-            deferMetadataRequest(cacheKey, leaseToken, retryAt);
+            deferMetadataRequest(requestKey, leaseToken, retryAt);
             logger.info("metadata", "BrainzMash rate limited a request", {
               path,
               retryAfterSeconds: Math.round(retryAfterMs / 1000),
             });
-            if (fallbackValue !== undefined) return fallbackValue;
-            throw createMetadataCooldownError(retryAt - Date.now());
+            return coolingDown(retryAt, sharedSignal);
           }
           if (status === 403 || status === 429) {
             if (!isMetadataCircuitError(error)) {
               openMetadataCircuit(baseUrl, status, error);
             }
-            if (leaseToken) completeMetadataRequest(cacheKey, leaseToken);
+            if (leaseToken) completeMetadataRequest(requestKey, leaseToken);
             if (fallbackValue !== undefined) return fallbackValue;
             throw error;
           }
-          if (status === 404 && isEntityMetadataPath(path)) {
+          if (status === 404 && isEntityMetadataPath(path) && requestKey === cacheKey) {
             forgetMetadata(cacheKey);
             metadataNotFoundCache.set(cacheKey, true);
-            if (leaseToken) completeMetadataRequest(cacheKey, leaseToken);
+            if (leaseToken) completeMetadataRequest(requestKey, leaseToken);
           }
           if (attempt === maxRetries || !isRetryable(error)) {
             if (leaseToken && isRetryable(error) && providerRequestStarted) {
-              failMetadataRequest(cacheKey, leaseToken);
+              failMetadataRequest(requestKey, leaseToken);
             } else if (leaseToken && providerRequestStarted) {
-              completeMetadataRequest(cacheKey, leaseToken);
-            } else if (leaseToken) releaseMetadataRequest(cacheKey, leaseToken);
+              completeMetadataRequest(requestKey, leaseToken);
+            } else if (leaseToken) releaseMetadataRequest(requestKey, leaseToken);
             if (fallbackValue !== undefined && isRetryable(error)) return fallbackValue;
             throw error;
           }
@@ -663,12 +773,95 @@ export async function getCachedArtistByMbid(mbid: string) {
   return cached ? toNormalizedArtist(cached.value) : null;
 }
 
+function toNormalizedMusicbrainzRelease(raw: v.InferOutput<typeof musicbrainzReleaseSchema>) {
+  const media = raw.media ?? [];
+  return {
+    id: raw.id,
+    title: String(raw.title || "").trim(),
+    status: String(raw.status || "").trim() || null,
+    country: raw.country ? [raw.country] : [],
+    label: [],
+    media: media.map((medium, index) => ({
+      format: String(medium.format || "").trim(),
+      name: String(medium.title || "").trim(),
+      position: medium.position ?? index + 1,
+    })),
+    trackCount: media.reduce(
+      (count, medium) => count + (medium.tracks?.length ?? medium["track-count"] ?? 0),
+      0,
+    ),
+    tracks: media.flatMap((medium, mediumIndex) =>
+      (medium.tracks ?? []).map((track, trackIndex) => {
+        const credit = track["artist-credit"] ?? track.recording?.["artist-credit"];
+        return {
+          id: String(track.id || "").trim(),
+          recordingId: String(track.recording?.id || "").trim(),
+          oldRecordingIds: [],
+          title: String(track.title || track.recording?.title || "").trim(),
+          trackNumber: track.position ?? trackIndex + 1,
+          trackPosition: track.position ?? trackIndex + 1,
+          mediumNumber: medium.position ?? mediumIndex + 1,
+          durationMs: track.length ?? track.recording?.length ?? null,
+          artistId: credit?.[0]?.artist?.id || null,
+        };
+      }),
+    ),
+    releaseDate: String(raw.date || "").trim() || null,
+    disambiguation: "",
+  } satisfies NormalizedRelease;
+}
+
+async function getMusicbrainzAlbumReleases(
+  albumMbid: string,
+  { signal }: { signal?: AbortSignal } = {},
+) {
+  const cached = musicbrainzAlbumReleasesCache.get(albumMbid);
+  if (cached !== undefined) return cached;
+  try {
+    const releases = await runSharedInflight(
+      providerInflightRequests,
+      `musicbrainz:album-releases:${albumMbid}`,
+      async (sharedSignal: AbortSignal) => {
+        const data = await musicbrainzGet(
+          musicbrainzReleaseBrowseSchema,
+          "/release",
+          {
+            "release-group": albumMbid,
+            inc: "recordings+artist-credits",
+            limit: 100,
+          },
+          { signal: sharedSignal },
+        );
+        return readMany(musicbrainzReleaseSchema, data.releases, {
+          service: "MusicBrainz",
+          endpoint: "/release",
+        }).map(toNormalizedMusicbrainzRelease);
+      },
+      { signal },
+    );
+    musicbrainzAlbumReleasesCache.set(albumMbid, releases);
+    return releases;
+  } catch (error) {
+    signal?.throwIfAborted();
+    logger.info("metadata", "MusicBrainz could not fill an incomplete album", {
+      albumMbid,
+      reason: safeLogDiagnostic(error),
+    });
+    musicbrainzAlbumReleasesCache.set(albumMbid, [], MUSICBRAINZ_FALLBACK_RETRY_SECONDS);
+    return [];
+  }
+}
+
 export async function getAlbumByMbid(
   albumMbid: string,
-  { signal, forceRefresh = false }: MetadataRequestOptions = {},
+  { signal, forceRefresh = false, withFallbackReleases = false }: MetadataRequestOptions = {},
 ) {
   const data = await request(albumSchema, `/album/${albumMbid}`, {}, { signal, forceRefresh });
-  return toNormalizedAlbum(data);
+  const album = toNormalizedAlbum(data);
+  if (!withFallbackReleases || album.releases.length > 0 || !UUID_REGEX.test(albumMbid))
+    return album;
+  const releases = await getMusicbrainzAlbumReleases(albumMbid, { signal });
+  return releases.length ? { ...album, releases } : album;
 }
 
 export async function getCachedAlbumByMbid(albumMbid: string) {
@@ -685,7 +878,7 @@ export async function getAlbumTracksByAlbumMbid(
     chooseRelease = selectAlbumRelease,
   }: { chooseRelease?: (album: NormalizedAlbum) => NormalizedRelease | null | undefined } = {},
 ) {
-  const album = await getAlbumByMbid(albumMbid);
+  const album = await getAlbumByMbid(albumMbid, { withFallbackReleases: true });
   const release = chooseRelease(album);
   if (!Array.isArray(release?.tracks)) return [];
   const discNames = new Map(release.media.map((medium) => [medium.position, medium.name]));

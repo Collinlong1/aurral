@@ -16,6 +16,7 @@ import type { TypedJob } from "./worker.ts";
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
+const UPDATE_CHECK_HOURS = 24;
 
 type ReleaseMetadataLease = Awaited<ReturnType<typeof acquireReleaseMetadataLease>>;
 type MonitoringApply = NonNullable<Parameters<typeof libraryManager.acquireReleases>[0]>;
@@ -124,7 +125,7 @@ const SYSTEM_TASKS = {
   "release-metadata-refresh": {
     queue: "releaseMetadata",
     label: "Release metadata refresh",
-    description: "Refreshes recent and upcoming releases from BrainzMash.",
+    description: "Refreshes recent and upcoming releases from ListenBrainz.",
     schedule: { everyMs: 24 * HOUR, priority: -5 },
     startup: { delayMs: 12_000, priority: -5 },
     interruptible: true,
@@ -285,10 +286,10 @@ const SYSTEM_TASKS = {
     queue: "maintenance",
     label: "Update check",
     description: "Checks aurral.org for a newer Aurral build in this channel.",
-    schedule: { everyMs: HOUR },
+    schedule: { everyMs: UPDATE_CHECK_HOURS * HOUR },
     async run() {
       const { checkForUpdates } = await import("../updates.ts");
-      await checkForUpdates();
+      await checkForUpdates(UPDATE_CHECK_HOURS);
     },
   },
   "plugin-update-check": {

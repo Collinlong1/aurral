@@ -1,6 +1,6 @@
 import { dbOps, userOps } from "../../db/helpers/index.ts";
 import * as v from "valibot";
-import { lastfmRequest, listenbrainzRequest } from "../apiClients/index.ts";
+import { listenbrainzRequest } from "../apiClients/index.ts";
 import { listenbrainzTopArtistsSchema } from "../apiClients/listenbrainz.ts";
 import { cachedArtistGuess, guessArtistMbid } from "../artistMatch.ts";
 import { asAppError } from "../../../lib/errors.ts";
@@ -24,7 +24,7 @@ import {
   type RecommendationFeedback,
 } from "./recommendationPipeline.ts";
 import type { DiscoveryCache, DiscoveryCacheUpdate } from "../../db/helpers/discovery.ts";
-import { getMusicDataSourceName, getTrendingArtists } from "../musicDataSource/index.ts";
+import { MUSIC_DATA_SOURCE } from "../musicDataSource/index.ts";
 import { withLock } from "../jobs/queue.ts";
 import { websocketService } from "../websocketService.ts";
 import {
@@ -101,33 +101,7 @@ const fetchListenHistoryArtists = async (
       .filter((artist) => artist.artistName);
   }
 
-  if (provider === "koito") {
-    return fetchKoitoTopArtists(account, 50);
-  }
-
-  const userTopArtists = await lastfmRequest(
-    "user.getTopArtists",
-    {
-      user: account,
-      limit: 50,
-      period: "1month",
-    },
-    { timeoutMs: 12000, maxRetries: 2 },
-  );
-
-  const artists = userTopArtists?.topartists?.artist;
-  if (!artists) return [];
-  return (Array.isArray(artists) ? artists : [artists])
-    .map((artist) => {
-      const artistName = String(artist?.name || "").trim();
-      if (!artistName) return null;
-      return {
-        mbid: String(artist.mbid || "").trim() || cachedArtistGuess(artistName) || null,
-        artistName,
-        playcount: parseInt(String(artist.playcount || 0), 10) || 0,
-      };
-    })
-    .filter((artist) => artist !== null);
+  return fetchKoitoTopArtists(account, 50);
 };
 
 export const rerankCachedRecommendations = ({
@@ -180,7 +154,15 @@ const resolveRecommendationCandidates = async (
 };
 
 const fetchTrendingArtists = async (existingArtistKeys: Set<string>) => {
-  const trendingArtists = await getTrendingArtists({ limit: 100 });
+  const { getChartArtists } = await import("./trendingCharts.ts");
+  const trendingArtists = getChartArtists(100).map((artist, index) => ({
+    id: artist.mbid,
+    name: artist.artistName,
+    image: artist.imageUrl,
+    type: "Artist",
+    popularityLabel: "Trending on Deezer",
+    popularityRank: index + 1,
+  }));
   const globalTop = mergeResolvedRecommendations(trendingArtists, existingArtistKeys).slice(0, 32);
   await resolveArtistMbids(globalTop);
   return mergeResolvedRecommendations(globalTop, existingArtistKeys)
@@ -221,22 +203,15 @@ export const updateDiscoveryCache = async (options: { skipLock?: boolean } = {})
   recordDiscoveryRefreshStarted();
 
   try {
-    const provider = getMusicDataSourceName();
-    logger.info("discovery", `Fetching global trending artists from ${provider}...`);
+    logger.info("discovery", "Reading global trending artists from the Deezer charts...");
     recordDiscoveryUpdateProgress("fetching_trending", "Fetching global trending artists", 40, {
-      provider,
+      provider: MUSIC_DATA_SOURCE,
     });
     const runStartedAt = new Date().toISOString();
-    let globalTop = discoveryCache.provider === provider ? discoveryCache.globalTop || [] : [];
-    try {
-      globalTop = await fetchTrendingArtists(
-        buildExistingArtistKeySet(getLibraryArtistKeyProjection()),
-      );
-      logger.info("discovery", `Found ${globalTop.length} trending artists.`);
-    } catch (error) {
-      const failure = asAppError(error);
-      logger.error("discovery", `Failed to fetch global trending artists: ${failure?.message}`);
-    }
+    const globalTop = await fetchTrendingArtists(
+      buildExistingArtistKeySet(getLibraryArtistKeyProjection()),
+    );
+    logger.info("discovery", `Found ${globalTop.length} trending artists.`);
 
     try {
       const queuedUserRefreshes = enqueueAllUserDiscoveryRefreshes("global_refresh_completed");
@@ -254,7 +229,7 @@ export const updateDiscoveryCache = async (options: { skipLock?: boolean } = {})
     }
 
     publishGlobalDiscovery({
-      provider,
+      provider: MUSIC_DATA_SOURCE,
       recommendations: [],
       globalTop,
       basedOn: [],

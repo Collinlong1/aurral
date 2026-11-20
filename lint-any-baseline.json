@@ -98,8 +98,6 @@
   ".tests/playlists/track-availability.test.ts": 4,
   ".tests/plugins/plugin-install.test.ts": 39,
   ".tests/plugins/plugins.test.ts": 25,
-  ".tests/scrobbling/callback.test.ts": 2,
-  ".tests/scrobbling/lastfm-link.int.test.ts": 7,
   ".tests/search/search-routes.test.ts": 11,
   ".tests/settings/general-settings.test.ts": 1,
   ".tests/settings/health-bootstrap.test.ts": 18,
@@ -118,6 +116,5 @@
   ".tests/web/share-instances.test.ts": 14,
   ".tests/web/updates.test.ts": 2,
   "backend/services/flows/flowPlanProcess.ts": 1,
-  "scripts/github.ts": 1,
   "scripts/label-pr.ts": 1
 }

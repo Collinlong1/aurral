@@ -46,7 +46,6 @@ export function createAurral3Schema(db: Database.Database) {
     role TEXT NOT NULL DEFAULT 'user',
     permissions TEXT,
     discover_layout TEXT,
-    lastfm_username TEXT,
     listen_history_provider TEXT,
     listen_history_username TEXT,
     listen_history_url TEXT,
@@ -78,19 +77,6 @@ export function createAurral3Schema(db: Database.Database) {
     linked_at INTEGER NOT NULL,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   );
-
-  CREATE TABLE IF NOT EXISTS lastfm_link_states (
-    token_hash TEXT PRIMARY KEY,
-    user_id INTEGER NOT NULL,
-    browser_nonce_hash TEXT NOT NULL,
-    expires_at INTEGER NOT NULL,
-    consumed_at INTEGER,
-    created_at INTEGER NOT NULL,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_lastfm_link_states_expiry
-    ON lastfm_link_states(expires_at);
 
   CREATE TABLE IF NOT EXISTS share_links (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -444,13 +430,6 @@ export function createAurral3Schema(db: Database.Database) {
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
     PRIMARY KEY (release_group_mbid, artist_id),
-    FOREIGN KEY (artist_id) REFERENCES library_artists(id) ON DELETE CASCADE
-  );
-
-  CREATE TABLE IF NOT EXISTS library_release_calendar_artists (
-    artist_id INTEGER PRIMARY KEY,
-    refreshed_at INTEGER,
-    failed_at INTEGER,
     FOREIGN KEY (artist_id) REFERENCES library_artists(id) ON DELETE CASCADE
   );
 

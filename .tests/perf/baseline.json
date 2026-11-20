@@ -203,7 +203,13 @@
     "bytes": 17,
     "scans": [
       "library_albums"
-    ]
+    ],
+    "calls": {
+      "musicbrainz.org": {
+        "cold": 1,
+        "warm": 0
+      }
+    }
   },
   "discover album editions": {
     "queries": {
@@ -272,7 +278,7 @@
       "cold": 4,
       "warm": 4
     },
-    "bytes": 48,
+    "bytes": 34,
     "scans": []
   },
   "aurral.org account": {
@@ -441,13 +447,17 @@
   },
   "track match": {
     "queries": {
-      "cold": 16,
-      "warm": 5
+      "cold": 18,
+      "warm": 4
     },
     "bytes": 40,
     "scans": [],
     "calls": {
       "brainzmash": {
+        "cold": 1,
+        "warm": 0
+      },
+      "musicbrainz.org": {
         "cold": 1,
         "warm": 0
       }
@@ -462,6 +472,20 @@
     "scans": [],
     "calls": {
       "brainzmash": {
+        "cold": 1,
+        "warm": 0
+      }
+    }
+  },
+  "subsonic getSimilarSongs": {
+    "queries": {
+      "cold": 26,
+      "warm": 24
+    },
+    "bytes": 44565,
+    "scans": [],
+    "calls": {
+      "labs.api.listenbrainz.org": {
         "cold": 1,
         "warm": 0
       }

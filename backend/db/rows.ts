@@ -247,15 +247,6 @@ export interface JobsRow {
   last_error: string | null;
 }
 
-export interface LastfmLinkStatesRow {
-  token_hash: string | null;
-  user_id: number;
-  browser_nonce_hash: string;
-  expires_at: number;
-  consumed_at: number | null;
-  created_at: number;
-}
-
 export interface LibraryAlbumCreditsRow {
   album_id: number;
   artist_mbid: string;
@@ -378,12 +369,6 @@ export interface LibraryReleaseCalendarRow {
   updated_at: number;
 }
 
-export interface LibraryReleaseCalendarArtistsRow {
-  artist_id: number;
-  refreshed_at: number | null;
-  failed_at: number | null;
-}
-
 export interface LibraryScanRunsRow {
   id: number;
   source: string;
@@ -443,6 +428,15 @@ export interface ListenbrainzReleaseGroupsRow {
   listen_count: number | null;
   listener_count: number | null;
   popularity_checked_at: number | null;
+}
+
+export interface MetadataCallsRow {
+  hour: number;
+  server: string;
+  endpoint: string;
+  work: string;
+  status: string;
+  count: number;
 }
 
 export interface MetadataProviderBudgetRow {
@@ -534,6 +528,16 @@ export interface PluginsRow {
   broken_in_a_row: number;
   update_manifest: string | null;
   updated_at: number;
+}
+
+export interface ReleaseFeedRow {
+  artist_mbid: string;
+  release_group_mbid: string;
+  title: string;
+  release_date: string;
+  release_type: string;
+  fetched_at: number;
+  cover_url: string | null;
 }
 
 export interface SessionsRow {
@@ -669,7 +673,6 @@ export interface UsersRow {
   role: string;
   permissions: string | null;
   discover_layout: string | null;
-  lastfm_username: string | null;
   listen_history_provider: string | null;
   listen_history_username: string | null;
   listen_history_url: string | null;

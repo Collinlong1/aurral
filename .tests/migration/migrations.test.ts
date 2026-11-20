@@ -239,7 +239,6 @@ test("upgrading drops settings that became fixed and keeps each user's discovery
         "null",
     );
   assert.deepEqual(read("integrations"), {
-    lastfm: { apiKey: "key" },
     nzbget: { url: "http://nzbget.test" },
     prowlarr: { url: "http://prowlarr.test" },
   });
@@ -277,7 +276,6 @@ test("upgrading drops settings nothing reads and keeps a turned-off Inbox off", 
     assert.equal(setting(key), undefined);
   }
   assert.deepEqual(JSON.parse(setting("integrations") ?? ""), {
-    lastfm: { apiKey: "key" },
     ticketmaster: { apiKey: "key" },
     metadata: { baseUrl: "https://meta.example" },
   });
@@ -332,7 +330,7 @@ test("upgrading turns a Gotify setup into a webhook that still reads its token",
 test("upgrading gives ownerless playlists and flows to the first admin and turns Blends on", () => {
   const db = new Database(":memory:");
   db.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
-  migrate(db, migrations.slice(0, -6));
+  migrate(db, migrations.slice(0, -11));
   db.exec(`
     INSERT INTO users (id, username, password_hash, role) VALUES
       (1, 'listener', 'hash', 'user'), (2, 'lee', 'hash', 'admin'), (3, 'ada', 'hash', 'admin');
@@ -353,4 +351,157 @@ test("upgrading gives ownerless playlists and flows to the first admin and turns
   assert.equal(owners("staticPlaylists"), "[2,1]");
   assert.equal(owners("flows"), "[2]");
   assert.deepEqual(db.prepare("SELECT DISTINCT blend FROM users").pluck().all(), [1]);
+});
+
+test("upgrading restores track credits from stored ARTISTS tags", () => {
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+  migrate(db, migrations.slice(0, -5));
+  db.prepare("INSERT INTO settings (key, value) VALUES ('librarySearchIndexVersion', '3')").run();
+  const insert = db.prepare<[string, string, string, string]>(
+    `INSERT INTO library_tracks
+       (identity_key, title, artist_name, metadata_json, created_at, updated_at)
+     VALUES (?, ?, ?, ?, 10, 20)`,
+  );
+  insert.run(
+    "missing-guest",
+    "Missing Guest",
+    "PinkPantheress",
+    JSON.stringify({
+      tags: {
+        artist: "PinkPantheress",
+        albumartist: "PinkPantheress",
+        artists: ["PinkPantheress", "Anitta"],
+      },
+    }),
+  );
+  insert.run(
+    "full-credit",
+    "Full Credit",
+    "PinkPantheress with Anitta",
+    JSON.stringify({
+      tags: {
+        artist: "PinkPantheress with Anitta",
+        albumartist: "PinkPantheress",
+        artists: ["PinkPantheress", "Anitta"],
+      },
+    }),
+  );
+  insert.run(
+    "corrected",
+    "Corrected",
+    "Manual credit",
+    JSON.stringify({
+      tags: {
+        artist: "PinkPantheress",
+        albumartist: "PinkPantheress",
+        artists: ["PinkPantheress", "Anitta"],
+      },
+    }),
+  );
+  insert.run(
+    "already-restored",
+    "Already Restored",
+    "PinkPantheress, Anitta",
+    JSON.stringify({
+      tags: {
+        artist: "PinkPantheress",
+        albumartist: "PinkPantheress",
+        artists: ["PinkPantheress", "Anitta"],
+      },
+    }),
+  );
+  const insertFile = db.prepare<[number, string, string]>(
+    `INSERT INTO library_media_files (track_id, source, path, artist_tag, created_at, updated_at)
+     VALUES (?, 'library', ?, ?, 10, 20)`,
+  );
+  insertFile.run(1, "/music/missing-guest.flac", "PinkPantheress");
+  insertFile.run(1, "/music/missing-guest.mp3", "PinkPantheress feat. Anitta");
+  insertFile.run(3, "/music/corrected.flac", "PinkPantheress");
+  insertFile.run(4, "/music/already-restored.flac", "PinkPantheress");
+
+  migrate(db);
+
+  assert.deepEqual(
+    db
+      .prepare("SELECT identity_key, artist_name, updated_at FROM library_tracks ORDER BY id")
+      .all(),
+    [
+      { identity_key: "missing-guest", artist_name: "PinkPantheress, Anitta", updated_at: 20 },
+      {
+        identity_key: "full-credit",
+        artist_name: "PinkPantheress with Anitta",
+        updated_at: 20,
+      },
+      { identity_key: "corrected", artist_name: "Manual credit", updated_at: 20 },
+      { identity_key: "already-restored", artist_name: "PinkPantheress, Anitta", updated_at: 20 },
+    ],
+  );
+  assert.deepEqual(
+    db.prepare("SELECT path, artist_tag FROM library_media_files ORDER BY id").all(),
+    [
+      { path: "/music/missing-guest.flac", artist_tag: "PinkPantheress, Anitta" },
+      { path: "/music/missing-guest.mp3", artist_tag: "PinkPantheress feat. Anitta" },
+      { path: "/music/corrected.flac", artist_tag: "PinkPantheress" },
+      { path: "/music/already-restored.flac", artist_tag: "PinkPantheress, Anitta" },
+    ],
+  );
+  assert.equal(
+    db.prepare("SELECT value FROM settings WHERE key = 'librarySearchIndexVersion'").get(),
+    undefined,
+  );
+});
+
+test("upgrading drops what only Last.fm read and keeps the rest", () => {
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+  migrate(db, migrations.slice(0, -3));
+  db.exec(`
+    ALTER TABLE users ADD COLUMN lastfm_username TEXT;
+    CREATE TABLE lastfm_link_states (token_hash TEXT PRIMARY KEY);
+    INSERT INTO users (id, username, password_hash) VALUES (1, 'lee', 'hash'), (2, 'ada', 'hash');
+    INSERT INTO listen_history_sources (user_id, provider, account) VALUES
+      (1, 'lastfm', 'lee'), (1, 'listenbrainz', 'lee');
+  `);
+  const store = db.prepare<[string, string]>("INSERT INTO settings (key, value) VALUES (?, ?)");
+  const slskd = { url: "http://slskd.test" };
+  const listenbrainz = { token: "sealed", displayName: "lee" };
+  store.run("integrations", JSON.stringify({ lastfm: { apiKey: "key" }, slskd }));
+  store.run(
+    "scrobbleConnections",
+    JSON.stringify({ 1: { lastfm: { token: "sealed" }, listenbrainz }, 2: { lastfm: {} } }),
+  );
+  store.run("lastfmRejectedKey", JSON.stringify("fingerprint"));
+  const job = db.prepare<[string, string, string, string]>(
+    "INSERT INTO jobs (queue, kind, payload, state, run_at, max_attempts, created_at) VALUES (?, ?, ?, ?, 0, 1, 0)",
+  );
+  job.run("play-events", "play-events", JSON.stringify({ provider: "lastfm" }), "pending");
+  job.run("play-events", "play-events", JSON.stringify({ provider: "lastfm" }), "running");
+  job.run("play-events", "play-events", JSON.stringify({ provider: "listenbrainz" }), "pending");
+  job.run("maintenance", "lastfm-key-check", "{}", "pending");
+  job.run("maintenance", "lastfm-key-check", "{}", "done");
+
+  migrate(db);
+
+  const read = (key: string): unknown =>
+    JSON.parse(
+      db.prepare<[string], string>("SELECT value FROM settings WHERE key = ?").pluck().get(key) ??
+        "null",
+    );
+  assert.deepEqual(read("integrations"), { slskd });
+  assert.deepEqual(read("scrobbleConnections"), { 1: { listenbrainz } });
+  assert.equal(read("lastfmRejectedKey"), null);
+  assert.deepEqual(db.prepare("SELECT provider FROM listen_history_sources").pluck().all(), [
+    "listenbrainz",
+  ]);
+  assert.deepEqual(db.prepare("SELECT kind, state, payload FROM jobs ORDER BY id").all(), [
+    { kind: "play-events", state: "pending", payload: '{"provider":"listenbrainz"}' },
+    { kind: "lastfm-key-check", state: "done", payload: "{}" },
+  ]);
+  const columns = db.prepare("SELECT name FROM pragma_table_info('users')").pluck().all();
+  assert.ok(!columns.includes("lastfm_username"));
+  assert.equal(
+    db.prepare("SELECT 1 FROM sqlite_master WHERE name LIKE 'lastfm%'").get(),
+    undefined,
+  );
 });
