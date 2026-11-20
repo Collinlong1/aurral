@@ -161,3 +161,17 @@ export function albumDiscHeadings(
     return title ? `Disc ${disc} · ${title}` : `Disc ${disc}`;
   });
 }
+
+const foldTitle = (text: string) => text.toLowerCase().replace(/[‘’]/g, "'");
+
+// A track title under its heading, without the heading it repeats:
+// "Symphony No. 5, op. 67: I. Allegro" under "Symphony No. 5, op. 67" is
+// "I. Allegro". Only a whole prefix ending at a separator is dropped, so
+// "Symphony No. 10" under "Symphony No. 1" keeps its title.
+export function titleUnderHeading(title: string, heading: string) {
+  const prefix = heading.trim();
+  if (!prefix || foldTitle(title.slice(0, prefix.length)) !== foldTitle(prefix)) return title;
+  const rest = title.slice(prefix.length);
+  if (!/^\s*[:,.\-–—/]/.test(rest)) return title;
+  return rest.replace(/^[\s:,.\-–—/]+/, "") || title;
+}

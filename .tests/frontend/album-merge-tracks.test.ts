@@ -3,6 +3,7 @@ import { test } from "vite-plus/test";
 import {
   albumDiscHeadings,
   mergeAlbumTracks,
+  titleUnderHeading,
 } from "../../frontend/src/pages/album/mergeAlbumTracks.ts";
 
 const release = (mbid: string, title: string, trackNumber: number, discNumber = 1) => ({
@@ -147,4 +148,29 @@ test("multi-disc albums head each disc, named by its files' disc subtitle or els
       "Disc 4",
     ],
   );
+});
+
+test("a track under its work heading drops the work it repeats", () => {
+  const cases: [string, string, string][] = [
+    [
+      "Symphony No. 5 in C minor, Op. 67: I. Allegro con brio",
+      "Symphony No. 5 in C minor, op. 67",
+      "I. Allegro con brio",
+    ],
+    [
+      "Romeo and Juliet, op. 64: Act I, Scene 1: Introduction",
+      "Romeo and Juliet, op. 64",
+      "Act I, Scene 1: Introduction",
+    ],
+    [
+      "Études d’exécution transcendante, S. 139: No. 4 Mazeppa",
+      "Études d'exécution transcendante, S. 139",
+      "No. 4 Mazeppa",
+    ],
+    ["Symphony No. 10 in E minor", "Symphony No. 1", "Symphony No. 10 in E minor"],
+    ["Lullaby", "Lullaby", "Lullaby"],
+    ["Clair de lune", "Suite bergamasque", "Clair de lune"],
+  ];
+  for (const [title, heading, shown] of cases)
+    assert.equal(titleUnderHeading(title, heading), shown);
 });

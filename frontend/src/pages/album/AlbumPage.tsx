@@ -62,7 +62,7 @@ import {
   useLibraryViewData,
 } from "../library/libraryShared.tsx";
 
-import { albumDiscHeadings, mergeAlbumTracks } from "./mergeAlbumTracks.ts";
+import { albumDiscHeadings, mergeAlbumTracks, titleUnderHeading } from "./mergeAlbumTracks.ts";
 import { useAlbumPresentation } from "./useAlbumPresentation.ts";
 import "./albumPresentation.css";
 import { OwnedTrackMark, useReleasePreviewQueue, useReleaseTracks } from "./releaseTracks.tsx";
@@ -343,6 +343,11 @@ function AlbumPage() {
     onLibraryAlbumRequested: albumState.markAlbumRequested,
   });
 
+  const groupOfTrack = new Map(
+    (albumPresentation.grouped ? albumPresentation.presentation?.groups : [])?.flatMap((group) =>
+      group.trackIds.map((id) => [id, group.title] as const),
+    ),
+  );
   const groupStarts = new Map(
     (albumPresentation.grouped ? albumPresentation.presentation?.groups : [])?.map((group) => [
       group.trackIds[0],
@@ -395,8 +400,10 @@ function AlbumPage() {
             source: playbackSource,
           })
         : [];
+    const heading = groupOfTrack.get(String(track.id));
     return {
       ...row,
+      ...(heading && { title: titleUnderHeading(row.title, heading) }),
       section,
       key: entry.key,
       number: entry.releaseTrack || !splitEditions ? entry.number : null,
