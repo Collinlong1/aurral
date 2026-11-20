@@ -1,4 +1,5 @@
 import path from "node:path";
+import { logger } from "./logger.ts";
 import { expandAlbumGrabHistory, queuedAlbumGrabs } from "./albumGrabActivity.ts";
 import { dbOps } from "../db/helpers/index.ts";
 import { resolveBlockedJobReleaseTitle, resolveBlockedJobSourceFilename } from "./downloadUtils.ts";
@@ -504,8 +505,19 @@ const buildActiveTrackHistory = (job: HistoryJob | null | undefined): AurralHist
   };
 };
 
+const SLOW_REQUESTS_MS = 2000;
+
 export const getAurralHistoryRequests = async (user: RequesterUser | null = null) => {
+  const started = performance.now();
+  const steps: Record<string, number> = {};
+  let mark = started;
+  const step = (name: string) => {
+    const now = performance.now();
+    steps[name] = Math.round(now - mark);
+    mark = now;
+  };
   await syncActivityFeedHistory();
+  step("sync");
   const entries: AurralHistoryEntry[] = [
     ...loadPendingPlaylistImportHistory(user),
     ...loadRecentHistory(),
@@ -539,7 +551,9 @@ export const getAurralHistoryRequests = async (user: RequesterUser | null = null
       entry.metadata?.playlistId || entry.metadata?.playlistType,
       entry.metadata?.ownerUserId,
     );
+  step("history");
   const expanded = expandAlbumGrabHistory(entries, now - MAX_AGE_MS, canViewEntry);
+  step("albumGrabs");
   const visible = expanded.entries.flatMap((entry) => {
     if (
       ACTIVITY_HIDDEN_KINDS.has(entry.kind) ||
@@ -565,8 +579,9 @@ export const getAurralHistoryRequests = async (user: RequesterUser | null = null
       entry.metadata?.canonicalAlbumId || !albumMbid ? [] : [albumMbid],
     ),
   );
+  step("queued");
   const describeCause = causeDescriber();
-  return visible.map(({ entry, job, manifest: grab, albumMbid }) => {
+  const items = visible.map(({ entry, job, manifest: grab, albumMbid }) => {
     const manifest = grab ?? (job ? queuedAlbums.get(job.id) : undefined);
     if (entry.kind === "track_download" && job) {
       entry.metadata = {
@@ -614,4 +629,17 @@ export const getAurralHistoryRequests = async (user: RequesterUser | null = null
       cause: entry.kind === "track_download" && job ? describeCause(downloadCause(job)) : null,
     });
   });
+  step("items");
+  const ms = Math.round(performance.now() - started);
+  // Diagnostic for a slow Activity list: which step held the server.
+  if (ms >= SLOW_REQUESTS_MS) {
+    logger.info("performance", "Built the requests list slowly", {
+      ms,
+      ...steps,
+      entries: entries.length,
+      manifests: expanded.manifests.size,
+      items: items.length,
+    });
+  }
+  return items;
 };

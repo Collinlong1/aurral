@@ -56,10 +56,12 @@ export function useLibraryAlbumState({
   const activityQuery = useQuery({
     queryKey: activityQueryKey,
     queryFn: ({ signal }): Promise<ActivityRequest[]> =>
-      parseResponse(requestsClient.$get({ query: { refresh: "1" } }, { init: { signal } })),
+      parseResponse(requestsClient.$get({ query: {} }, { init: { signal } })),
     enabled: Boolean(libraryAlbum && !isPreviewLibrary && hasMissingAlbumTracks),
     staleTime: 0,
-    refetchInterval: hasTrackDownloadPolling ? 4000 : false,
+    // The server rebuilds this list at most every 15 seconds; asking more
+    // often, or forcing a rebuild, held the server while it built.
+    refetchInterval: hasTrackDownloadPolling ? 15_000 : false,
     refetchIntervalInBackground: false,
   });
 
