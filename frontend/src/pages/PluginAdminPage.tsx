@@ -678,7 +678,9 @@ function FormSection({
             </div>
           );
         }
-        const stack = ["textarea", "lines", "lookup", "order"].includes(field.type);
+        // Text gets the row's full width too: plugin values such as classical
+        // work titles outgrow a fixed-width box beside the label.
+        const stack = ["text", "textarea", "lines", "lookup", "order"].includes(field.type);
         return (
           <div key={field.key} className={`settings-row${stack ? " settings-row--stack" : ""}`}>
             <div className="settings-row__copy">
