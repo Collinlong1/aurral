@@ -2,11 +2,6 @@
   margin-top: 20px;
 }
 
-.album-group-heading__disc {
-  display: block;
-  margin-bottom: 0.75rem;
-}
-
 .album-group-heading {
   display: flex;
   flex-direction: column;

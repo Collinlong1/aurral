@@ -349,25 +349,25 @@ function AlbumPage() {
       group,
     ]),
   );
+  // Grouped, works are the only headings: discs would split a work in two.
   const sections: ReactNode[] = [
-    ...albumDiscHeadings(listed).map((disc, index) => {
-      const group = groupStarts.get(String(listed[index]?.libraryTrack?.id));
-      if (!group) return disc;
-      return (
-        <>
-          {disc ? <span className="album-group-heading__disc">{disc}</span> : null}
-          <span className="album-group-heading">
-            <span className="album-group-heading__title">{group.title}</span>
-            {group.subtitle ? (
-              <span className="album-group-heading__line">{group.subtitle}</span>
-            ) : null}
-            {group.detail ? (
-              <span className="album-group-heading__line">{group.detail}</span>
-            ) : null}
-          </span>
-        </>
-      );
-    }),
+    ...(albumPresentation.grouped
+      ? listed.map((entry) => {
+          const group = groupStarts.get(String(entry.libraryTrack?.id));
+          if (!group) return null;
+          return (
+            <span key={entry.key} className="album-group-heading">
+              <span className="album-group-heading__title">{group.title}</span>
+              {group.subtitle ? (
+                <span className="album-group-heading__line">{group.subtitle}</span>
+              ) : null}
+              {group.detail ? (
+                <span className="album-group-heading__line">{group.detail}</span>
+              ) : null}
+            </span>
+          );
+        })
+      : albumDiscHeadings(listed)),
     ...extras.map((_, index) => (index ? null : "From other editions")),
   ];
   const rows: TrackListRow[] = entries.map((entry, index) => {
