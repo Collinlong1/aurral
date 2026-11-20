@@ -31,7 +31,9 @@ export function useAlbumPresentation(albumId: number | string | null | undefined
         ),
       ),
     enabled,
-    retry: false,
+    // A busy server can time out the plugin's answer; the album still shows
+    // meanwhile, so try again rather than leave it ungrouped.
+    retry: 3,
     staleTime: 60_000,
   });
   const [view, setViewState] = useState(readView);
