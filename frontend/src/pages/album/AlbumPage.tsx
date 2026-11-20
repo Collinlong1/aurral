@@ -1,7 +1,7 @@
-import { Fragment, useCallback, useEffect, useMemo, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router";
-import { AlertCircle, EyeOff, Share } from "../../components/icons";
+import { AlertCircle, EyeOff, Pause, Play, Share } from "../../components/icons";
 import AddActionButton from "../../components/AddActionButton";
 import { formatReleaseWait, isAwaitingRelease } from "../../utils/albumStatus.ts";
 import { AlbumDownloadStatus, AlbumEditionNote } from "../../components/AlbumDownloadStatus";
@@ -62,9 +62,7 @@ import {
   useLibraryViewData,
 } from "../library/libraryShared.tsx";
 
-import { albumDiscHeadings, mergeAlbumTracks, titlesUnderHeading } from "./mergeAlbumTracks.ts";
-import { useAlbumPresentation } from "./useAlbumPresentation.ts";
-import "./albumPresentation.css";
+import { albumDiscHeadings, mergeAlbumTracks } from "./mergeAlbumTracks.ts";
 import { OwnedTrackMark, useReleasePreviewQueue, useReleaseTracks } from "./releaseTracks.tsx";
 import { useAlbumDownload } from "./useAlbumDownload.ts";
 import { useLibraryAlbumState } from "./useLibraryAlbumState.ts";
@@ -72,6 +70,60 @@ import { useReleaseCover } from "./useReleaseCover.ts";
 import { useAlbumEditions } from "./useAlbumEditions.tsx";
 import StatePanel from "../../components/StatePanel";
 import { getApiErrorMessage } from "../../utils/api/errors.ts";
+import { pluginsClient } from "../../utils/api/clients/plugins.ts";
+import { parseResponse } from "hono/client";
+import {
+  pluginItemDurationMs as itemDurationMs,
+  pluginLinkMenuItems,
+  pluginQueueTrack,
+} from "../../utils/pluginQueue.ts";
+import type { pluginAlbumPresentation } from "../../../../backend/services/plugins/pluginPresentation.ts";
+import "./classicalPresentation.css";
+
+type AlbumPresentation = Awaited<ReturnType<typeof pluginAlbumPresentation>>;
+
+type AlbumPresentationGroup = NonNullable<AlbumPresentation>["groups"][number];
+
+const workSource = (group: AlbumPresentationGroup) => ({
+  type: "plugin-work",
+  id: group.id,
+  label: group.title,
+});
+const WORK_PLAYBACK_MENU_IDS = new Set(["play", "queue-next", "queue-add", "radio"]);
+
+// As Apple Music Classical heads a work: composer, then the work, then its
+// length when it spans several tracks. Unassigned pieces have no work page.
+function ClassicalWorkHeading({ group }: { group: AlbumPresentationGroup }) {
+  const total =
+    group.items.length > 1
+      ? formatDuration(group.items.reduce((sum, item) => sum + (itemDurationMs(item) ?? 0), 0))
+      : "";
+  return (
+    <span className="classical-presentation__work">
+      {group.composer ? (
+        <span className="classical-presentation__work-detail">{group.composer}</span>
+      ) : null}
+      <span className="classical-presentation__work-line">
+        {group.href ? (
+          <RouteLink to={group.href} className="classical-presentation__work-title">
+            {group.title}
+          </RouteLink>
+        ) : (
+          <span className="classical-presentation__work-title">{group.title}</span>
+        )}
+        {total ? <span className="classical-presentation__work-time">{total}</span> : null}
+      </span>
+      {group.detail ? (
+        <span className="classical-presentation__work-detail">{group.detail}</span>
+      ) : null}
+      {group.missing.length ? (
+        <span className="classical-presentation__work-detail">
+          Missing {group.missing.map((movement) => movement.title).join(", ")}
+        </span>
+      ) : null}
+    </span>
+  );
+}
 
 function AlbumPage() {
   const { ref: routeRef } = useParams();
@@ -79,10 +131,19 @@ function AlbumPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const locationState = useMemo(() => readAlbumRouteState(location.state), [location.state]);
-  const { hasPermission } = useAuth();
+  const { hasPermission, user } = useAuth();
   const { showError } = useToast();
   const share = useShareAction();
-  const { isShuffleEnabled } = useAudioQueue();
+  const {
+    isShuffleEnabled,
+    playQueue,
+    currentTrack,
+    isPlaying,
+    isStarting,
+    isLoading,
+    togglePlayPause,
+    matchesSource,
+  } = useAudioQueue();
   const getQueueItems = useQueueTrackActions();
   const { isDiscoverSectionActive } = useDiscoverRecent();
   const canAddAlbum = hasPermission("addAlbum");
@@ -111,8 +172,31 @@ function AlbumPage() {
         ? String(album.id) === albumRef.libraryAlbumId
         : album.releaseGroupMbid === routeReleaseGroupMbid || album.mbid === routeReleaseGroupMbid,
     ) || null;
-
-  const albumPresentation = useAlbumPresentation(isPreviewLibrary ? null : libraryAlbum?.id);
+  const presentationPreferenceKey = `aurral.album-presentation.${user?.id || "guest"}`;
+  const [presentationMode, setPresentationMode] = useState<"work" | "track">(() =>
+    localStorage.getItem(presentationPreferenceKey) === "track" ? "track" : "work",
+  );
+  const presentationQuery = useQuery({
+    queryKey: ["plugin-album-presentation", libraryAlbum?.id, user?.id],
+    enabled: Boolean(libraryAlbum?.id && user?.id),
+    retry: false,
+    queryFn: () =>
+      parseResponse(
+        pluginsClient["album-presentation"][":albumId"].$get({
+          param: { albumId: String(libraryAlbum!.id) },
+        }),
+      ) as Promise<AlbumPresentation>,
+  });
+  const presentation = presentationQuery.data;
+  const setMode = (mode: "work" | "track") => {
+    setPresentationMode(mode);
+    localStorage.setItem(presentationPreferenceKey, mode);
+  };
+  const playClassicalGroup = (group: AlbumPresentationGroup, startTrackId: string | null = null) =>
+    playQueue(
+      group.items.map((item) => pluginQueueTrack(item, group.title)),
+      { startTrackId, source: workSource(group) },
+    );
 
   const albumLookupQuery = useQuery({
     ...libraryAlbumLookupQueryOptions(routeReleaseGroupMbid),
@@ -343,40 +427,11 @@ function AlbumPage() {
     onLibraryAlbumRequested: albumState.markAlbumRequested,
   });
 
-  const listedTitles = new Map(
-    listed.flatMap((entry) =>
-      entry.libraryTrack
-        ? [[String(entry.libraryTrack.id), entry.libraryTrack.title] as const]
-        : [],
-    ),
+  const groupedTrackIds = new Set(
+    presentation?.groups.flatMap((group) => group.items.map((item) => item.trackId)) ?? [],
   );
-  // Under a heading a track shows its movement, not the work again: the
-  // plugin's title for it, or else its own without the shared work name.
-  const titleUnderGroup = new Map(
-    (albumPresentation.grouped ? albumPresentation.presentation?.groups : [])?.flatMap((group) => {
-      const given = new Map(group.trackIds.map((id, index) => [id, group.titles[index]]));
-      const ids = group.trackIds.filter((id) => listedTitles.has(id));
-      const titles = titlesUnderHeading(
-        ids.map((id) => listedTitles.get(id) ?? ""),
-        group.title,
-      );
-      return ids.map((id, index) => [id, given.get(id) || titles[index] || ""] as const);
-    }),
-  );
-  const trackDurations = new Map(
-    listed.flatMap((entry) =>
-      entry.libraryTrack
-        ? [[String(entry.libraryTrack.id), trackDurationMs(entry.libraryTrack) ?? 0] as const]
-        : [],
-    ),
-  );
-  const groupLength = (trackIds: string[]) =>
-    trackIds.length > 1
-      ? formatDuration(trackIds.reduce((sum, id) => sum + (trackDurations.get(id) ?? 0), 0))
-      : "";
-  // Grouped, works are the only headings: discs would split a work in two.
-  const sections: ReactNode[] = [
-    ...(albumPresentation.grouped ? listed.map(() => null) : albumDiscHeadings(listed)),
+  const sections = [
+    ...albumDiscHeadings(listed),
     ...extras.map((_, index) => (index ? null : "From other editions")),
   ];
   const rows: TrackListRow[] = entries.map((entry, index) => {
@@ -404,7 +459,6 @@ function AlbumPage() {
             source: playbackSource,
           })
         : [];
-    const underHeading = titleUnderGroup.get(String(track.id));
     return {
       ...row,
       section,
@@ -416,9 +470,6 @@ function AlbumPage() {
           : isAlbumArtistCredit(track, libraryArtist)
             ? null
             : row.subtitle,
-      // The heading names the composer; the full artist line would repeat on every track.
-      // Movements number themselves ("I. Allegro"), as Apple Music Classical shows them.
-      ...(underHeading && { title: underHeading, subtitle: null, number: "" }),
       ...(hasFile && hasMissingTracks && { trailing: <OwnedTrackMark /> }),
       time: hasFile
         ? row.time
@@ -440,59 +491,67 @@ function AlbumPage() {
         }),
     };
   });
-  // By work, as the aurral-classical branch shows an album: each work with all
-  // its tracks, wherever they sit, in order of its first; a work of one track
-  // is a single row naming it; anything else follows under "Other tracks".
-  const groups = albumPresentation.grouped ? (albumPresentation.presentation?.groups ?? []) : [];
+  const ungroupedRows = rows.filter((_, index) => {
+    const id = entries[index]?.libraryTrack?.id;
+    return id == null || !groupedTrackIds.has(String(id));
+  });
+  // Native library actions stay on the track; playback actions use the work item.
   const rowByTrackId = new Map(
-    entries.flatMap((entry, index) => {
-      const row = rows[index];
-      return entry.libraryTrack && row ? [[String(entry.libraryTrack.id), row] as const] : [];
+    entries.flatMap((entry, index) =>
+      entry.libraryTrack && rows[index] ? [[String(entry.libraryTrack.id), rows[index]]] : [],
+    ),
+  );
+  const workRows: TrackListRow[] = (presentation?.groups ?? []).flatMap((group) =>
+    group.items.map((item, index) => {
+      const base = rowByTrackId.get(item.trackId);
+      const active = String(currentTrack?.id) === item.id && matchesSource(workSource(group));
+      const playing = active && (isPlaying || isStarting);
+      const onPlay = () => (active ? togglePlayPause() : playClassicalGroup(group, item.id));
+      const queueItems = getQueueItems(pluginQueueTrack(item, group.title), {
+        source: workSource(group),
+      });
+      return {
+        ...base,
+        key: `${group.id}:${item.id}`,
+        section: index === 0 ? <ClassicalWorkHeading group={group} /> : null,
+        // Apple Music Classical numbers parts by their titles ("I. Allegro"), not a column.
+        number: "",
+        title: item.title,
+        subtitle: item.performer || base?.subtitle,
+        time: formatDuration(itemDurationMs(item)) || base?.time,
+        timeMissing: false,
+        missing: false,
+        active,
+        playing,
+        loading: active && isLoading,
+        onPlay,
+        menu: {
+          ...base?.menu,
+          items: [
+            {
+              id: "play",
+              label: playing ? "Pause" : "Play",
+              icon: playing ? Pause : Play,
+              onSelect: onPlay,
+            },
+            ...queueItems,
+            ...(base?.menu?.items || []).filter((entry) => !WORK_PLAYBACK_MENU_IDS.has(entry.id)),
+            // The plugin's places for this movement and its work.
+            ...pluginLinkMenuItems([...item.links, ...group.links]),
+          ],
+          additionalItemsAfter: queueItems.at(-1)?.id ?? "play",
+        },
+      };
     }),
   );
-  const groupedIds = new Set<string>();
-  const workRows: TrackListRow[] = groups.flatMap((group) => {
-    const ids = group.trackIds.filter((id) => rowByTrackId.has(id));
-    for (const id of ids) groupedIds.add(id);
-    const members = ids.flatMap((id) => rowByTrackId.get(id) ?? []);
-    const [only] = members;
-    if (members.length === 1 && only) {
-      return [
-        {
-          ...only,
-          title: group.title,
-          subtitle: group.subtitle,
-          section: <span className="album-group-gap" />,
-        },
-      ];
-    }
-    const length = groupLength(ids);
-    return members.map((row, index) => ({
+  // Tracks outside every work stay in By Work view, after the works.
+  const byWorkRows = [
+    ...workRows,
+    ...ungroupedRows.map((row, index) => ({
       ...row,
-      section: index ? null : (
-        <span className="album-group-heading">
-          <span className="album-group-heading__title-line">
-            <span className="album-group-heading__title">{group.title}</span>
-            {length ? <span className="album-group-heading__time">{length}</span> : null}
-          </span>
-          {group.subtitle ? (
-            <span className="album-group-heading__line">{group.subtitle}</span>
-          ) : null}
-          {group.detail ? <span className="album-group-heading__line">{group.detail}</span> : null}
-        </span>
-      ),
-    }));
-  });
-  const otherRows = rows.filter((_, index) => {
-    const id = entries[index]?.libraryTrack?.id;
-    return id == null || !groupedIds.has(String(id));
-  });
-  const shownRows = workRows.length
-    ? [
-        ...workRows,
-        ...otherRows.map((row, index) => ({ ...row, section: index ? null : "Other tracks" })),
-      ]
-    : rows;
+      section: index === 0 ? "Other tracks" : null,
+    })),
+  ];
   const trackParam = searchParams.get("track") || "";
   const highlightKey = trackParam
     ? (entries.find(
@@ -502,6 +561,12 @@ function AlbumPage() {
           entry.releaseTrack?.mbid === trackParam ||
           entry.releaseTrack?.id === trackParam,
       )?.key ?? null)
+    : null;
+  const highlightedWorkItem = presentation?.groups
+    .flatMap((group) => group.items.map((item) => ({ group, item })))
+    .find(({ item }) => rowByTrackId.get(item.trackId)?.key === highlightKey);
+  const workHighlightKey = highlightedWorkItem
+    ? `${highlightedWorkItem.group.id}:${highlightedWorkItem.item.id}`
     : null;
 
   const trackCount = Math.max(
@@ -812,37 +877,60 @@ function AlbumPage() {
           </>
         }
       />
-      {rows.length && albumPresentation.presentation ? (
-        <div className="artist-tabs album-presentation__tabs" role="group" aria-label="Album view">
-          {(["grouped", "tracks"] as const).map((view) => (
+      {presentation && (
+        <div
+          className="artist-tabs classical-presentation__tabs"
+          role="group"
+          aria-label="Album view"
+        >
+          {(["work", "track"] as const).map((mode) => (
             <button
-              key={view}
+              key={mode}
               type="button"
-              className={`artist-tab${albumPresentation.view === view ? " is-active" : ""}`}
-              aria-pressed={albumPresentation.view === view}
-              onClick={() => albumPresentation.setView(view)}
+              className={`artist-tab${presentationMode === mode ? " is-active" : ""}`}
+              aria-pressed={presentationMode === mode}
+              onClick={() => setMode(mode)}
             >
-              {view === "grouped" ? albumPresentation.presentation?.label : "By track"}
+              {mode === "work" ? "By work" : "By track"}
             </button>
           ))}
         </div>
-      ) : null}
-      {rows.length ? (
-        <TrackList
-          label={`${title || "Album"} tracks`}
-          rows={shownRows}
-          variant="release"
-          highlightKey={highlightKey}
-        />
-      ) : libraryLoading || tracksLoading ? (
-        <SkeletonStatus label="Loading tracks">
-          <SkeletonTrackList count={12} variant="release" />
-        </SkeletonStatus>
-      ) : (
-        <div className="native-library-state">
-          <span>No tracks available</span>
-        </div>
       )}
+      {presentationQuery.isError && (
+        <StatePanel
+          role="alert"
+          icon={<AlertCircle />}
+          title="Couldn’t load works"
+          message="The tracks are below in album order."
+          onRetry={() => presentationQuery.refetch()}
+          retrying={presentationQuery.isFetching}
+        />
+      )}
+      {presentation && presentationMode === "work" && (
+        <TrackList
+          label={`${title || "Album"} works`}
+          rows={byWorkRows}
+          variant="release"
+          highlightKey={workHighlightKey ?? highlightKey}
+        />
+      )}
+      {(!presentation || presentationMode === "track") &&
+        (rows.length ? (
+          <TrackList
+            label={`${title || "Album"} tracks`}
+            rows={rows}
+            variant="release"
+            highlightKey={highlightKey}
+          />
+        ) : libraryLoading || tracksLoading ? (
+          <SkeletonStatus label="Loading tracks">
+            <SkeletonTrackList count={12} variant="release" />
+          </SkeletonStatus>
+        ) : (
+          <div className="native-library-state">
+            <span>No tracks available</span>
+          </div>
+        ))}
     </CollectionPage>
   );
 }

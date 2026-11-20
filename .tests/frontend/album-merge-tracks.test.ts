@@ -3,8 +3,6 @@ import { test } from "vite-plus/test";
 import {
   albumDiscHeadings,
   mergeAlbumTracks,
-  titleUnderHeading,
-  titlesUnderHeading,
 } from "../../frontend/src/pages/album/mergeAlbumTracks.ts";
 
 const release = (mbid: string, title: string, trackNumber: number, discNumber = 1) => ({
@@ -149,57 +147,4 @@ test("multi-disc albums head each disc, named by its files' disc subtitle or els
       "Disc 4",
     ],
   );
-});
-
-test("a track under its work heading drops the work it repeats", () => {
-  const cases: [string, string, string][] = [
-    [
-      "Symphony No. 5 in C minor, Op. 67: I. Allegro con brio",
-      "Symphony No. 5 in C minor, op. 67",
-      "I. Allegro con brio",
-    ],
-    [
-      "Romeo and Juliet, op. 64: Act I, Scene 1: Introduction",
-      "Romeo and Juliet, op. 64",
-      "Act I, Scene 1: Introduction",
-    ],
-    [
-      "Études d’exécution transcendante, S. 139: No. 4 Mazeppa",
-      "Études d'exécution transcendante, S. 139",
-      "No. 4 Mazeppa",
-    ],
-    ["Symphony No. 10 in E minor", "Symphony No. 1", "Symphony No. 10 in E minor"],
-    ["Lullaby", "Lullaby", "Lullaby"],
-    ["Clair de lune", "Suite bergamasque", "Clair de lune"],
-  ];
-  for (const [title, heading, shown] of cases)
-    assert.equal(titleUnderHeading(title, heading), shown);
-});
-
-test("tracks under one heading drop the work name they share, however it's spelled", () => {
-  assert.deepEqual(
-    titlesUnderHeading(
-      [
-        "Romeo & Juliet, op. 64: Act I. No. 1 Introduction",
-        "Romeo & Juliet, op. 64: Act I, Scene I. No. 2 Romeo",
-      ],
-      "Romeo and Juliet, op. 64",
-    ),
-    ["Act I. No. 1 Introduction", "Act I, Scene I. No. 2 Romeo"],
-  );
-  assert.deepEqual(
-    titlesUnderHeading(
-      ["24 Preludes Op.28 : No.1 In C Major", "24 Preludes Op.28 : No.2 In A Minor"],
-      "24 Préludes pour le piano, op. 28",
-    ),
-    ["No.1 In C Major", "No.2 In A Minor"],
-  );
-  // Different works before the colon, or a track alone: only the heading itself goes.
-  assert.deepEqual(titlesUnderHeading(["Suite: Prelude", "Other: Gigue"], "Suite"), [
-    "Prelude",
-    "Other: Gigue",
-  ]);
-  assert.deepEqual(titlesUnderHeading(["Ballade No.3 In A Flat Minor Op.47"], "Ballade No. 3"), [
-    "Ballade No.3 In A Flat Minor Op.47",
-  ]);
 });

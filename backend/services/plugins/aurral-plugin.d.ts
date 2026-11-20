@@ -208,17 +208,6 @@ export interface ImportedPlaylist {
 
 type Answer<Value> = Value | Promise<Value>;
 
-export interface AlbumGroup {
-  title: string;
-  subtitle?: string;
-  detail?: string;
-  trackIds: (number | string)[];
-  /** What each track is called under the heading, in trackIds order. */
-  titles?: string[];
-}
-
-export type AlbumPresentation = { label?: string; groups: AlbumGroup[] } | null;
-
 export type ActionInput =
   | PlaylistActionInput
   | AlbumActionInput
@@ -236,5 +225,4 @@ export interface AurralPlugin {
   downloadSource?: DownloadSource;
   importList?: { fetch(input: Base & { url: string }): Answer<ImportedPlaylist> };
   scheduled?(input: Base): Answer<unknown>;
-  albumPresentation?(input: Base & { album: Album }): Answer<AlbumPresentation>;
 }

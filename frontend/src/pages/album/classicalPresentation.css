@@ -1,0 +1,36 @@
+.classical-presentation__tabs {
+  margin-top: 20px;
+}
+.classical-presentation__work {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.classical-presentation__work-line {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+.classical-presentation__work-time {
+  color: var(--aurral-text-muted);
+  font-size: var(--aurral-font-sm);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+.classical-presentation__work-title {
+  color: var(--aurral-text);
+  font-size: var(--aurral-font-base);
+  font-weight: 600;
+  text-decoration: none;
+}
+@media (hover: hover) and (pointer: fine) {
+  .classical-presentation__work-title:hover {
+    text-decoration: underline;
+  }
+}
+.classical-presentation__work-detail {
+  color: var(--aurral-text-muted);
+  font-size: var(--aurral-font-sm);
+  font-weight: 400;
+}

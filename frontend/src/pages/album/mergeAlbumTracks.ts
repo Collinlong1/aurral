@@ -161,34 +161,3 @@ export function albumDiscHeadings(
     return title ? `Disc ${disc} · ${title}` : `Disc ${disc}`;
   });
 }
-
-const foldTitle = (text: string) => text.toLowerCase().replace(/[‘’]/g, "'");
-
-// A track title under its heading, without the heading it repeats:
-// "Symphony No. 5, op. 67: I. Allegro" under "Symphony No. 5, op. 67" is
-// "I. Allegro". Only a whole prefix ending at a separator is dropped, so
-// "Symphony No. 10" under "Symphony No. 1" keeps its title.
-export function titleUnderHeading(title: string, heading: string) {
-  const prefix = heading.trim();
-  if (!prefix || foldTitle(title.slice(0, prefix.length)) !== foldTitle(prefix)) return title;
-  const rest = title.slice(prefix.length);
-  if (!/^\s*[:,.\-–—/]/.test(rest)) return title;
-  return rest.replace(/^[\s:,.\-–—/]+/, "") || title;
-}
-
-const headOf = (title: string) => {
-  const at = title.indexOf(":");
-  return at > 0 ? foldTitle(title.slice(0, at).trim()) : null;
-};
-
-// Titles of one heading's tracks. When every track starts with the same
-// text before its first colon ("Romeo & Juliet, op. 64: Act I. …"), that
-// shared work name goes, however its spelling differs from the heading's.
-// A track alone under its heading drops only the heading itself.
-export function titlesUnderHeading(titles: string[], heading: string) {
-  const head = titles.length > 1 ? headOf(titles[0] ?? "") : null;
-  if (head && titles.every((title) => headOf(title) === head)) {
-    return titles.map((title) => title.slice(title.indexOf(":") + 1).trim() || title);
-  }
-  return titles.map((title) => titleUnderHeading(title, heading));
-}

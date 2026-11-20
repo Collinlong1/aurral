@@ -1,6 +1,6 @@
 import { Hono, type Context, type Input } from "hono";
 import * as v from "valibot";
-import { requireAdmin, requireAuth } from "../middleware/guards.ts";
+import { requireAdmin, requireAuth, requireUserAccount } from "../middleware/guards.ts";
 import type { AppEnv } from "../middleware/requestUser.ts";
 import { validate } from "../middleware/validate.ts";
 import { stopAllPlugins } from "../services/plugins/pluginHost.ts";
@@ -27,11 +27,8 @@ import {
 } from "../services/plugins/pluginService.ts";
 import { setSafeMode } from "../services/plugins/pluginStore.ts";
 import { listPluginImportLists } from "../services/plugins/pluginImportList.ts";
-import {
-  hasAlbumPresentation,
-  pluginAlbumPresentation,
-} from "../services/plugins/pluginAlbumPresentation.ts";
-import { PluginTargetMissing } from "../services/plugins/pluginContext.ts";
+import { pluginAlbumPresentation } from "../services/plugins/pluginPresentation.ts";
+import { pluginLibrarySnapshot } from "../services/plugins/pluginUserOperations.ts";
 
 const pluginParam = v.object({ id: v.string() });
 const reference = v.union([v.pipe(v.string(), v.minLength(1)), v.number()]);
@@ -51,6 +48,18 @@ async function answer<Env extends AppEnv, Path extends string, In extends Input,
 
 export default new Hono<AppEnv>()
   .basePath("/plugins")
+  // From the aurral-classical branch: the album page's By work view, and the
+  // Library snapshot a plugin's own key reads (the classical catalogue scan).
+  .get("/album-presentation/:albumId", requireAuth, requireUserAccount, (c) =>
+    answer(c, () => pluginAlbumPresentation(c.var.user, c.req.param("albumId"))),
+  )
+  .get("/:id/user-operations/library", (c) => {
+    try {
+      return c.json(pluginLibrarySnapshot(c.req.header("X-Api-Key") || "", c.req.param("id")), 200);
+    } catch {
+      return c.json({ error: "Action denied" }, 403);
+    }
+  })
   .get("/", requireAuth, requireAdmin, async (c) => c.json(await listPlugins(), 200))
   .put(
     "/safe-mode",
@@ -64,20 +73,7 @@ export default new Hono<AppEnv>()
       return c.json({ safeMode: enabled }, 200);
     },
   )
-  .get("/actions", requireAuth, (c) =>
-    c.json(
-      { actions: listPluginActions(c.var.user), albumPresentation: hasAlbumPresentation() },
-      200,
-    ),
-  )
-  .get("/album-presentation/:albumId", requireAuth, async (c) => {
-    try {
-      return c.json({ presentation: await pluginAlbumPresentation(c.req.param("albumId")) }, 200);
-    } catch (error) {
-      if (error instanceof PluginTargetMissing) return c.json({ error: error.message }, 404);
-      throw error;
-    }
-  })
+  .get("/actions", requireAuth, (c) => c.json({ actions: listPluginActions(c.var.user) }, 200))
   .get("/import-lists", requireAuth, (c) => c.json({ importLists: listPluginImportLists() }, 200))
   .post(
     "/install/inspect",

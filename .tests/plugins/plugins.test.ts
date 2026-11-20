@@ -413,88 +413,96 @@ test("a slow call while another is still running fails alone and keeps the work 
   );
 });
 
-test("album headings gather a work's tracks wherever they sit and fall back to the plain album", async (t) => {
-  const root = await mkdtemp(path.join(tmpdir(), "aurral-plugin-headings-"));
+test("album presentation groups an album's tracks for By work, as on the aurral-classical branch", async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), "aurral-plugin-presentation-"));
   t.onTestFinished(() => rm(root, { recursive: true, force: true }));
-  for (const [index, title] of ["Allegro", "Andante", "Scherzo", "Finale"].entries())
+  for (const [index, title] of ["Night Drive", "Morning Run"].entries())
     await writeFlacFixture(path.join(root, `0${index + 1}.flac`), {
       title,
       artist: "Glass Coast",
       album_artist: "Glass Coast",
-      album: "Four Movements",
+      album: "Lowlands",
       track: index + 1,
     });
   await scanMusicRoot({ rootPath: root, source: "aurral" });
   const library = getLibrary({ availableOnly: true });
-  const album = library.albums.find((entry) => entry.title === "Four Movements");
+  const album = library.albums.find((entry) => entry.title === "Lowlands");
   assert.ok(album);
-  const ids = library.tracks
-    .filter((track) => album.trackIds.includes(track.id))
-    .sort((a, b) => a.title.localeCompare(b.title))
-    .map((track) => track.id);
-  const [allegro, andante, finale, scherzo] = ids;
-  const headings = async () =>
-    v.parse(
-      v.object({ presentation: v.unknown() }),
-      await (await routes(stranger).request(`/plugins/album-presentation/${album.id}`)).json(),
-    ).presentation;
-  const offered = async () =>
-    v.parse(
-      v.object({ albumPresentation: v.boolean() }),
-      await (await routes(stranger).request("/plugins/actions")).json(),
-    ).albumPresentation;
-
-  assert.equal(await offered(), false);
-  assert.equal(await headings(), null);
-
+  const albumId = String(album.id);
+  const trackAt = (number: number) =>
+    String(library.tracks.find((track) => track.albums[0]?.trackNumber === number)?.id);
+  const itemOn = (id: string, trackNumber: number) =>
+    `{id:'${id}',trackId:${JSON.stringify(trackAt(trackNumber))},fileId:'${id}-file',albumId:${JSON.stringify(albumId)},title:'${id}',artist:'Glass Coast',performer:'Glass Coast',album:'Lowlands',durationMs:1000,startMs:0,endMs:null}`;
+  // A track the plugin still names after it left the Library.
+  const staleOn = (id: string) =>
+    `{id:'${id}',trackId:'999999',fileId:'${id}-file',albumId:${JSON.stringify(albumId)},title:'${id}',artist:'Glass Coast',album:'Lowlands',durationMs:1000,startMs:0,endMs:null}`;
   await install(
-    "works",
+    "views",
     { albumPresentation: true },
-    `export default { albumPresentation: ({ album }) => album.title === "Broken" ? null : ({
-      label: "By work",
-      groups: [
-        { title: "Symphony", subtitle: "Composer", trackIds: [${finale}, ${allegro}, 999999], titles: ["IV. Finale", "I. Allegro", "Lost"] },
-        { title: "Overlaps", trackIds: [${allegro}] },
-        { title: "Middle", detail: "Orchestra", trackIds: ["${scherzo}", ${andante}, ${finale}] },
-      ],
-    }) };`,
+    `export default {
+      albumPresentation:(input)=>({version:1,albumId:${JSON.stringify(albumId)},supportsToggle:true,groups:[{id:'piece-2',workId:null,title:'Single Piece',composer:'Composer',detail:String(Boolean(input.capabilities?.itemLinks)),items:[${staleOn("later-gone")},${itemOn("later", 2)}],missing:[],movementCount:1},{id:'stale-piece',workId:null,title:'Gone Piece',composer:'Composer',items:[${staleOn("stale-piece")}],missing:[],movementCount:1},{id:'realization-1',workId:'work-1',title:'Fixture Work',composer:'Composer',items:[${itemOn("first", 1)}],missing:[{id:'m2',title:'II. Second',position:2}],movementCount:2}]})
+    }`,
   );
-  await turnOn("works");
-
-  assert.equal(await offered(), true);
-  assert.deepEqual(await headings(), {
-    pluginId: "works",
-    label: "By work",
-    groups: [
-      {
-        title: "Symphony",
-        subtitle: "Composer",
-        detail: null,
-        trackIds: [String(allegro), String(finale)],
-        titles: ["I. Allegro", "IV. Finale"],
-      },
-      {
-        title: "Middle",
-        subtitle: null,
-        detail: "Orchestra",
-        trackIds: [String(andante), String(scherzo)],
-        titles: [null, null],
-      },
+  await turnOn("views");
+  const presentation = await routes(owner).request(`/plugins/album-presentation/${album.id}`);
+  assert.equal(presentation.status, 200);
+  const body = v.parse(
+    v.object({
+      groups: v.array(
+        v.object({
+          id: v.string(),
+          href: v.nullable(v.string()),
+          detail: v.optional(v.string()),
+          items: v.array(v.object({ trackId: v.string(), streamPath: v.string() })),
+        }),
+      ),
+    }),
+    await presentation.json(),
+  );
+  // Groups follow the album; a stale track is left out, and so is a group it
+  // leaves empty, instead of failing the page.
+  assert.deepEqual(
+    body.groups.map((group) => [group.id, group.items.map((item) => item.trackId)]),
+    [
+      ["realization-1", [trackAt(1)]],
+      ["piece-2", [trackAt(2)]],
     ],
-  });
-  assert.equal((await routes(stranger).request("/plugins/album-presentation/missing")).status, 404);
-
-  await install(
-    "works",
-    { albumPresentation: true },
-    `export default { albumPresentation: () => { throw new Error("no"); } };`,
   );
-  for (let call = 0; call < 5; call += 1) assert.equal(await headings(), null);
-  assert.ok(activePlugin("works"));
+  // No work pages here: headings link nowhere, and the plugin isn't offered
+  // item links to them.
+  assert.ok(body.groups.every((group) => group.href === null));
+  assert.equal(body.groups[1]?.detail, "false");
 
-  await turnOn("works", { capabilities: { albumPresentation: false } });
-  assert.equal(await offered(), false);
-  assert.equal(await headings(), null);
+  await turnOn("views", { capabilities: { albumPresentation: false } });
+  assert.deepEqual(
+    await (await routes(owner).request(`/plugins/album-presentation/${album.id}`)).json(),
+    null,
+  );
+});
+
+test("a plugin's own API key reads its library snapshot for scheduled syncs", async () => {
+  setSafeMode(false);
+  await install("reader", { apiAccess: true }, "export default {};");
+  await install("other", { apiAccess: true }, "export default {};");
+  await turnOn("reader");
+  await turnOn("other");
+  const keyFor = (id: string) => pluginInput(activePlugin(id)!).api?.key ?? "";
+  const snapshot = (apiKey: string) =>
+    routes(stranger).request("/plugins/reader/user-operations/library", {
+      headers: { "X-Api-Key": apiKey },
+    });
+  const readerKey = keyFor("reader");
+  const allowed = await snapshot(readerKey);
+  assert.equal(allowed.status, 200);
+  const body: unknown = await allowed.json();
+  assert.equal(
+    v.parse(v.object({ version: v.number(), complete: v.boolean() }), body).complete,
+    true,
+  );
+  assert.equal((await snapshot(keyFor("other"))).status, 403);
+  assert.equal((await snapshot(`${keyFor("reader")}x`)).status, 403);
+  await turnOn("reader", { capabilities: { api: false } });
+  assert.equal((await snapshot(readerKey)).status, 403);
 });
 
 test("a background action answers right away and reports its result to the user who ran it", async () => {

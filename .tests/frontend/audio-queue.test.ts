@@ -11,11 +11,17 @@ import {
   normalizeQueueTrack,
   normalizePreviewTrack,
   queueReducer,
+  queueSegmentBounds,
   shouldRestartTrack,
   withOrigin,
   withTrackParam,
 } from "../../frontend/src/utils/audioQueue.ts";
 import { requireFixture } from "../playlists/fixtures.ts";
+import {
+  isPartOfTrack,
+  pluginLinkMenuItems,
+  pluginQueueTrack,
+} from "../../frontend/src/utils/pluginQueue.ts";
 
 const track = {
   id: "flow-track",
@@ -27,6 +33,65 @@ const track = {
 test("flow playback can opt out of listening history", () => {
   assert.equal(normalizePlaylistQueueTrack(track).recordHistory, true);
   assert.equal(normalizePlaylistQueueTrack(track, { recordHistory: false }).recordHistory, false);
+});
+
+test("bounded work items expose range-relative duration and clamp coordinates", () => {
+  const item = {
+    id: "work-item",
+    trackId: "owned-track",
+    fileId: "owned-file",
+    albumId: "owned-album",
+    title: "No. 26",
+    artist: "Pianist",
+    album: "Recital",
+    durationMs: 120000,
+    startMs: 42000,
+    endMs: 81000,
+    streamPath: "/library/stream/owned-album/owned-track?fileId=owned-file",
+  };
+  const queued = pluginQueueTrack(item, "Études, Op. 5");
+  assert.equal(queued.title, "Études, Op. 5: No. 26");
+  assert.equal(queued.libraryTrackId, item.trackId);
+  assert.equal(queued.libraryAlbumId, item.albumId);
+  assert.equal(queued.segmentStartMs, 42000);
+  assert.equal(queued.segmentEndMs, 81000);
+  assert.equal(queued.durationMs, 39000);
+  assert.ok(queued.src?.endsWith(item.streamPath));
+  // A plugin's item links ride along to the player's menu.
+  assert.equal(queued.links, null);
+  const work = { label: "Open the work", href: "/plugins/classical/work/w1" };
+  assert.deepEqual(pluginQueueTrack({ ...item, links: [work] }, "").links, [work]);
+  assert.deepEqual(
+    pluginLinkMenuItems([work, work]).map((entry) => [entry.label, entry.to]),
+    [["Open the work", work.href]],
+  );
+  assert.equal(
+    pluginQueueTrack({ ...item, title: queued.title, startMs: 0, endMs: null }, "Études, Op. 5")
+      .title,
+    queued.title,
+  );
+  assert.deepEqual(queueSegmentBounds({ segmentStartMs: 42000, segmentEndMs: 81000 }, 120), {
+    start: 42,
+    end: 81,
+    duration: 39,
+  });
+  assert.deepEqual(queueSegmentBounds({ segmentStartMs: 5000 }, 12), {
+    start: 5,
+    end: 12,
+    duration: 7,
+  });
+  assert.deepEqual(queueSegmentBounds({ segmentStartMs: 42000, segmentEndMs: 180000 }, 120), {
+    start: 42,
+    end: 120,
+    duration: 78,
+  });
+});
+
+test("a queued cut is part of its track; playlists say they add the whole file", () => {
+  assert.equal(isPartOfTrack({ segmentStartMs: 0, segmentEndMs: null }), false);
+  assert.equal(isPartOfTrack({}), false);
+  assert.equal(isPartOfTrack({ segmentStartMs: 120000, segmentEndMs: null }), true);
+  assert.equal(isPartOfTrack({ segmentStartMs: 0, segmentEndMs: 60000 }), true);
 });
 
 test("a Deezer preview in a playlist reaches the player as a preview", () => {

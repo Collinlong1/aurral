@@ -121,14 +121,14 @@ const ACTION_KINDS: Record<PluginActionTarget, string> = {
 
 export function pluginCapabilities(manifest: PluginManifest) {
   return [
+    ...(manifest.albumPresentation
+      ? [{ key: "albumPresentation", label: "Album presentation", kind: "Album page" }]
+      : []),
     ...manifest.actions.map((action) => ({
       key: `action:${action.id}`,
       label: action.label,
       kind: ACTION_KINDS[action.target],
     })),
-    ...(manifest.albumPresentation
-      ? [{ key: "albumPresentation", label: "Track headings", kind: "Album page" }]
-      : []),
     ...manifest.events.map((event) => ({ key: `event:${event}`, label: event, kind: "Event" })),
     ...(manifest.downloadSource
       ? [
