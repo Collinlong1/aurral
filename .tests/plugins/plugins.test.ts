@@ -385,6 +385,89 @@ test("album and track actions get the Library's album and tracks", async (t) => 
   assert.equal((await runOn("album", { albumId: "missing" })).status, 404);
 });
 
+test("album headings label runs of the album's tracks and fall back to the plain album", async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), "aurral-plugin-headings-"));
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
+  for (const [index, title] of ["Allegro", "Andante", "Scherzo", "Finale"].entries())
+    await writeFlacFixture(path.join(root, `0${index + 1}.flac`), {
+      title,
+      artist: "Glass Coast",
+      album_artist: "Glass Coast",
+      album: "Four Movements",
+      track: index + 1,
+    });
+  await scanMusicRoot({ rootPath: root, source: "aurral" });
+  const library = getLibrary({ availableOnly: true });
+  const album = library.albums.find((entry) => entry.title === "Four Movements");
+  assert.ok(album);
+  const ids = library.tracks
+    .filter((track) => album.trackIds.includes(track.id))
+    .sort((a, b) => a.title.localeCompare(b.title))
+    .map((track) => track.id);
+  const [allegro, andante, finale, scherzo] = ids;
+  const headings = async () =>
+    v.parse(
+      v.object({ presentation: v.unknown() }),
+      await (await routes(stranger).request(`/plugins/album-presentation/${album.id}`)).json(),
+    ).presentation;
+  const offered = async () =>
+    v.parse(
+      v.object({ albumPresentation: v.boolean() }),
+      await (await routes(stranger).request("/plugins/actions")).json(),
+    ).albumPresentation;
+
+  assert.equal(await offered(), false);
+  assert.equal(await headings(), null);
+
+  await install(
+    "works",
+    { albumPresentation: true },
+    `export default { albumPresentation: ({ album }) => album.title === "Broken" ? null : ({
+      label: "By work",
+      groups: [
+        { title: "Symphony", subtitle: "Composer", trackIds: [${andante}, ${allegro}, 999999] },
+        { title: "Overlaps", trackIds: [${andante}] },
+        { title: "Gap", trackIds: [${scherzo}, ${allegro}] },
+        { title: "Finale", detail: "Orchestra", trackIds: ["${scherzo}", ${finale}] },
+      ],
+    }) };`,
+  );
+  await turnOn("works");
+
+  assert.equal(await offered(), true);
+  assert.deepEqual(await headings(), {
+    pluginId: "works",
+    label: "By work",
+    groups: [
+      {
+        title: "Symphony",
+        subtitle: "Composer",
+        detail: null,
+        trackIds: [String(allegro), String(andante)],
+      },
+      {
+        title: "Finale",
+        subtitle: null,
+        detail: "Orchestra",
+        trackIds: [String(scherzo), String(finale)],
+      },
+    ],
+  });
+  assert.equal((await routes(stranger).request("/plugins/album-presentation/missing")).status, 404);
+
+  await install(
+    "works",
+    { albumPresentation: true },
+    `export default { albumPresentation: () => { throw new Error("no"); } };`,
+  );
+  for (let call = 0; call < 5; call += 1) assert.equal(await headings(), null);
+  assert.ok(activePlugin("works"));
+
+  await turnOn("works", { capabilities: { albumPresentation: false } });
+  assert.equal(await offered(), false);
+  assert.equal(await headings(), null);
+});
+
 test("a background action answers right away and reports its result to the user who ran it", async () => {
   await install(
     "slow",

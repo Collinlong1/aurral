@@ -280,6 +280,11 @@ export const queryKeys = {
   pluginDevKeys: ["settings", "plugins", "dev-keys"],
   pluginImportLists: ["plugins", "import-lists"],
   pluginActions: (userId: MaybeId): QueryKey => ["plugins", "actions", userId || null],
+  pluginAlbumPresentation: (albumId: MaybeId): QueryKey => [
+    "plugins",
+    "album-presentation",
+    albumId || null,
+  ],
   apiKey: ["auth", "api-key"],
   myApiKey: (userId: MaybeId): QueryKey => ["users", "me", "api-key", userId || null],
   myBlend: (userId: MaybeId): QueryKey => ["users", "me", "blend", userId || null],

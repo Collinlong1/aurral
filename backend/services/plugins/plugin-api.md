@@ -41,23 +41,24 @@ Aurral calls one function with one object and waits for its answer.
 }
 ```
 
-| Field            | Use                                                                                                                                                                                                                                                              |
-| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`             | Lowercase letters, numbers, and `-`. The folder has the same name.                                                                                                                                                                                               |
-| `name`           | Shown in Settings, menus, and errors.                                                                                                                                                                                                                            |
-| `version`        | Shown on the plugin's page.                                                                                                                                                                                                                                      |
-| `api`            | `1`.                                                                                                                                                                                                                                                             |
-| `description`    | One or two sentences for the plugin's page.                                                                                                                                                                                                                      |
-| `repository`     | An `https` link. Aurral links to it when the plugin fails, so people report plugin bugs to you.                                                                                                                                                                  |
-| `uses`           | Up to 10 short notes on what the plugin reads or connects to, like `plex.tv` or `Your plays`. Shown before install.                                                                                                                                              |
-| `settings`       | Fields for the plugin's page. `type` is `text`, `password`, `number`, or `boolean`. `required` fields must be filled before the plugin runs. A `boolean` starts as `false`. `help` adds a line under the field.                                                  |
-| `test`           | `true` when `index.js` exports `test`. The plugin's page then shows a **Test** button.                                                                                                                                                                           |
-| `actions`        | Menu items. See [Actions](#actions).                                                                                                                                                                                                                             |
-| `events`         | Events the plugin receives. See [Events](#events).                                                                                                                                                                                                               |
-| `downloadSource` | `{}` for a track source. Add `"albums": true` to download albums, `"tracks": false` for an album-only source, `"files": true` to download one track from an album, and `"upgrades": true` to supply quality upgrades. See [Download sources](#download-sources). |
-| `importList`     | `{ "label": "Bandcamp", "hosts": ["bandcamp.com"] }` to import playlists from links on those hosts. See [Import lists](#import-lists).                                                                                                                           |
-| `schedule`       | `"15m"`, `"1h"`, `"6h"`, or `"24h"` to run `scheduled` that often. See [Schedules](#schedules).                                                                                                                                                                  |
-| `apiAccess`      | `true` to get a key to Aurral's API. See [Aurral's API](#aurrals-api).                                                                                                                                                                                           |
+| Field               | Use                                                                                                                                                                                                                                                              |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                | Lowercase letters, numbers, and `-`. The folder has the same name.                                                                                                                                                                                               |
+| `name`              | Shown in Settings, menus, and errors.                                                                                                                                                                                                                            |
+| `version`           | Shown on the plugin's page.                                                                                                                                                                                                                                      |
+| `api`               | `1`.                                                                                                                                                                                                                                                             |
+| `description`       | One or two sentences for the plugin's page.                                                                                                                                                                                                                      |
+| `repository`        | An `https` link. Aurral links to it when the plugin fails, so people report plugin bugs to you.                                                                                                                                                                  |
+| `uses`              | Up to 10 short notes on what the plugin reads or connects to, like `plex.tv` or `Your plays`. Shown before install.                                                                                                                                              |
+| `settings`          | Fields for the plugin's page. `type` is `text`, `password`, `number`, or `boolean`. `required` fields must be filled before the plugin runs. A `boolean` starts as `false`. `help` adds a line under the field.                                                  |
+| `test`              | `true` when `index.js` exports `test`. The plugin's page then shows a **Test** button.                                                                                                                                                                           |
+| `actions`           | Menu items. See [Actions](#actions).                                                                                                                                                                                                                             |
+| `events`            | Events the plugin receives. See [Events](#events).                                                                                                                                                                                                               |
+| `downloadSource`    | `{}` for a track source. Add `"albums": true` to download albums, `"tracks": false` for an album-only source, `"files": true` to download one track from an album, and `"upgrades": true` to supply quality upgrades. See [Download sources](#download-sources). |
+| `importList`        | `{ "label": "Bandcamp", "hosts": ["bandcamp.com"] }` to import playlists from links on those hosts. See [Import lists](#import-lists).                                                                                                                           |
+| `schedule`          | `"15m"`, `"1h"`, `"6h"`, or `"24h"` to run `scheduled` that often. See [Schedules](#schedules).                                                                                                                                                                  |
+| `apiAccess`         | `true` to get a key to Aurral's API. See [Aurral's API](#aurrals-api).                                                                                                                                                                                           |
+| `albumPresentation` | `true` to add headings to album track lists. See [Album headings](#album-headings).                                                                                                                                                                              |
 
 Each capability can be turned off on its own in **Settings > Plugins**, so keep them independent.
 
@@ -92,7 +93,7 @@ export default {
 };
 ```
 
-Each manifest entry needs its function: `test`, `actions.<id>`, `events["<event>"]`, `downloadSource.search` and the rest, `importList.fetch`, or `scheduled`. A missing function counts as broken.
+Each manifest entry needs its function: `test`, `actions.<id>`, `events["<event>"]`, `downloadSource.search` and the rest, `importList.fetch`, `albumPresentation`, or `scheduled`. A missing function counts as broken.
 
 ## Test
 
@@ -235,6 +236,28 @@ Aurral waits until it has indexed that many files for the album, scans the read-
 The plugin shows as a source in **Import playlist**. A user pastes a link on one of the `hosts` (subdomains count) and Aurral calls `importList.fetch({ url })`. Return `{ name, artworkUrl, tracks }`. Each track needs `artist` and `title` and can have `album`, `durationMs`, and `mbid`. Return up to 5000 tracks. When the user keeps the playlist synced, Aurral calls `fetch` again on its schedule. A fetch has 2 minutes.
 
 Add `"sync": false` when a link's playlist never changes, such as a playlist the plugin builds once. Aurral then imports it once and doesn't offer sync.
+
+## Album headings
+
+Set `"albumPresentation": true` and export `albumPresentation`. When someone opens a Library album, Aurral calls `albumPresentation({ album })` with `album` as in actions. Return `null` to show the album as usual, or:
+
+```js
+{
+  label: "By work",
+  groups: [
+    {
+      title: "Symphony No. 5 in C minor, Op. 67",
+      subtitle: "Ludwig van Beethoven",
+      detail: "Berlin Philharmonic · Herbert von Karajan",
+      trackIds: [101, 102, 103, 104],
+    },
+  ],
+}
+```
+
+Each group puts a heading over one run of the album's tracks, in album order. Groups only add headings: tracks keep their order, menus, and playback. Aurral drops track ids that aren't on the album, and a group whose tracks aren't one run or that overlaps an earlier group. The album page then offers `label` (or "Grouped") and **By track**, which is the plain list. Each person's browser remembers their choice.
+
+A call has 5 seconds and runs while the page waits, so answer from what the plugin already keeps in `dataFolder`, not from another service. A failure or timeout only leaves the album as it is and doesn't count toward turning the plugin off. When several plugins answer, the first one with groups wins.
 
 ## Install and update
 

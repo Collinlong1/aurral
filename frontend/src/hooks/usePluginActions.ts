@@ -15,15 +15,23 @@ const runAction = pluginsClient[":id"].actions[":action"].$post;
 type ActionTargetInput = InferRequestType<typeof runAction>["json"];
 type ActionTarget = "playlist" | "album" | "artist" | "track";
 
-export function usePluginActions() {
+function usePluginActionsQuery() {
   const { user } = useAuth();
-  const { showSuccess, showError } = useToast();
-  const actions = useQuery({
+  return useQuery({
     queryKey: queryKeys.pluginActions(user?.id),
     queryFn: ({ signal }) => parseResponse(pluginsClient.actions.$get({}, { init: { signal } })),
     enabled: Boolean(user),
     staleTime: ACTIONS_STALE_MS,
   });
+}
+
+export function useHasPluginAlbumPresentation() {
+  return usePluginActionsQuery().data?.albumPresentation === true;
+}
+
+export function usePluginActions() {
+  const { showSuccess, showError } = useToast();
+  const actions = usePluginActionsQuery();
   return (target: ActionTarget, json: ActionTargetInput): LibraryMenuItem[] =>
     (actions.data?.actions ?? [])
       .filter((action) => action.target === target)

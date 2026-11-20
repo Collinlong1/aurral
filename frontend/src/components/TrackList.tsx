@@ -62,7 +62,7 @@ type TrackCoverField = TrackLinkField & { src?: string | null };
 
 export type TrackListRow = {
   key: string | number;
-  section?: string | null;
+  section?: ReactNode;
   title: string;
   number: ReactNode;
   year?: string | null;

@@ -1,0 +1,27 @@
+.album-presentation__tabs {
+  margin-top: 20px;
+}
+
+.album-group-heading__disc {
+  display: block;
+  margin-bottom: 0.75rem;
+}
+
+.album-group-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.album-group-heading__title {
+  color: var(--aurral-text);
+  font-size: var(--aurral-font-base);
+  font-weight: 600;
+}
+
+.album-group-heading__line {
+  color: var(--aurral-text-muted);
+  font-size: var(--aurral-font-sm);
+  font-weight: 400;
+}

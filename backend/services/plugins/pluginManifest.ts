@@ -62,6 +62,7 @@ export const pluginManifestSchema = v.object({
   settings: v.optional(v.pipe(v.array(settingSchema), v.maxLength(30), unique("key")), []),
   uses: v.optional(v.pipe(v.array(text(80)), v.maxLength(10)), []),
   actions: v.optional(v.pipe(v.array(actionSchema), v.maxLength(20), unique("id")), []),
+  albumPresentation: v.optional(v.boolean(), false),
   events: v.optional(
     v.pipe(
       v.array(v.picklist(PLUGIN_EVENTS)),
@@ -125,6 +126,9 @@ export function pluginCapabilities(manifest: PluginManifest) {
       label: action.label,
       kind: ACTION_KINDS[action.target],
     })),
+    ...(manifest.albumPresentation
+      ? [{ key: "albumPresentation", label: "Track headings", kind: "Album page" }]
+      : []),
     ...manifest.events.map((event) => ({ key: `event:${event}`, label: event, kind: "Event" })),
     ...(manifest.downloadSource
       ? [

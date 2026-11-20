@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo } from "react";
+import { Fragment, useCallback, useEffect, useMemo, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 import { AlertCircle, EyeOff, Share } from "../../components/icons";
@@ -63,6 +63,8 @@ import {
 } from "../library/libraryShared.tsx";
 
 import { albumDiscHeadings, mergeAlbumTracks } from "./mergeAlbumTracks.ts";
+import { useAlbumPresentation } from "./useAlbumPresentation.ts";
+import "./albumPresentation.css";
 import { OwnedTrackMark, useReleasePreviewQueue, useReleaseTracks } from "./releaseTracks.tsx";
 import { useAlbumDownload } from "./useAlbumDownload.ts";
 import { useLibraryAlbumState } from "./useLibraryAlbumState.ts";
@@ -109,6 +111,8 @@ function AlbumPage() {
         ? String(album.id) === albumRef.libraryAlbumId
         : album.releaseGroupMbid === routeReleaseGroupMbid || album.mbid === routeReleaseGroupMbid,
     ) || null;
+
+  const albumPresentation = useAlbumPresentation(isPreviewLibrary ? null : libraryAlbum?.id);
 
   const albumLookupQuery = useQuery({
     ...libraryAlbumLookupQueryOptions(routeReleaseGroupMbid),
@@ -339,8 +343,31 @@ function AlbumPage() {
     onLibraryAlbumRequested: albumState.markAlbumRequested,
   });
 
-  const sections = [
-    ...albumDiscHeadings(listed),
+  const groupStarts = new Map(
+    (albumPresentation.grouped ? albumPresentation.presentation?.groups : [])?.map((group) => [
+      group.trackIds[0],
+      group,
+    ]),
+  );
+  const sections: ReactNode[] = [
+    ...albumDiscHeadings(listed).map((disc, index) => {
+      const group = groupStarts.get(String(listed[index]?.libraryTrack?.id));
+      if (!group) return disc;
+      return (
+        <>
+          {disc ? <span className="album-group-heading__disc">{disc}</span> : null}
+          <span className="album-group-heading">
+            <span className="album-group-heading__title">{group.title}</span>
+            {group.subtitle ? (
+              <span className="album-group-heading__line">{group.subtitle}</span>
+            ) : null}
+            {group.detail ? (
+              <span className="album-group-heading__line">{group.detail}</span>
+            ) : null}
+          </span>
+        </>
+      );
+    }),
     ...extras.map((_, index) => (index ? null : "From other editions")),
   ];
   const rows: TrackListRow[] = entries.map((entry, index) => {
@@ -719,6 +746,21 @@ function AlbumPage() {
           </>
         }
       />
+      {rows.length && albumPresentation.presentation ? (
+        <div className="artist-tabs album-presentation__tabs" role="group" aria-label="Album view">
+          {(["grouped", "tracks"] as const).map((view) => (
+            <button
+              key={view}
+              type="button"
+              className={`artist-tab${albumPresentation.view === view ? " is-active" : ""}`}
+              aria-pressed={albumPresentation.view === view}
+              onClick={() => albumPresentation.setView(view)}
+            >
+              {view === "grouped" ? albumPresentation.presentation?.label : "By track"}
+            </button>
+          ))}
+        </div>
+      ) : null}
       {rows.length ? (
         <TrackList
           label={`${title || "Album"} tracks`}

@@ -27,6 +27,11 @@ import {
 } from "../services/plugins/pluginService.ts";
 import { setSafeMode } from "../services/plugins/pluginStore.ts";
 import { listPluginImportLists } from "../services/plugins/pluginImportList.ts";
+import {
+  hasAlbumPresentation,
+  pluginAlbumPresentation,
+} from "../services/plugins/pluginAlbumPresentation.ts";
+import { PluginTargetMissing } from "../services/plugins/pluginContext.ts";
 
 const pluginParam = v.object({ id: v.string() });
 const reference = v.union([v.pipe(v.string(), v.minLength(1)), v.number()]);
@@ -59,7 +64,20 @@ export default new Hono<AppEnv>()
       return c.json({ safeMode: enabled }, 200);
     },
   )
-  .get("/actions", requireAuth, (c) => c.json({ actions: listPluginActions(c.var.user) }, 200))
+  .get("/actions", requireAuth, (c) =>
+    c.json(
+      { actions: listPluginActions(c.var.user), albumPresentation: hasAlbumPresentation() },
+      200,
+    ),
+  )
+  .get("/album-presentation/:albumId", requireAuth, async (c) => {
+    try {
+      return c.json({ presentation: await pluginAlbumPresentation(c.req.param("albumId")) }, 200);
+    } catch (error) {
+      if (error instanceof PluginTargetMissing) return c.json({ error: error.message }, 404);
+      throw error;
+    }
+  })
   .get("/import-lists", requireAuth, (c) => c.json({ importLists: listPluginImportLists() }, 200))
   .post(
     "/install/inspect",
