@@ -385,6 +385,34 @@ test("album and track actions get the Library's album and tracks", async (t) => 
   assert.equal((await runOn("album", { albumId: "missing" })).status, 404);
 });
 
+test("a slow call while another is still running fails alone and keeps the work alive", async () => {
+  const { callPlugin } = await import("../../backend/services/plugins/pluginHost.ts");
+  await install(
+    "busy",
+    { actions: [{ id: "long", label: "Long", target: "album", background: true }] },
+    `const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+     export default { actions: { long: async () => { await wait(1500); return { message: "finished " + process.pid }; } },
+       test: async () => { await wait(800); return { message: "late" }; } };`,
+  );
+  await turnOn("busy");
+  const plugin = activePlugin("busy")!;
+  const result = v.object({ message: v.string() });
+  const long = callPlugin(plugin, { path: "actions.long", input: {} }, result, 10_000);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  await assert.rejects(
+    callPlugin(plugin, { path: "test", input: {} }, result, 200),
+    /busy and didn't answer within 0 seconds/,
+  );
+  // The long call was not killed, and the plugin stays on.
+  assert.match((await long).message, /^finished \d+$/);
+  assert.equal(activePlugin("busy")?.enabled, true);
+  // With nothing else running, a call that doesn't answer still restarts the process.
+  await assert.rejects(
+    callPlugin(plugin, { path: "test", input: {} }, result, 200),
+    /didn't answer within 0 seconds/,
+  );
+});
+
 test("album headings label runs of the album's tracks and fall back to the plain album", async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), "aurral-plugin-headings-"));
   t.onTestFinished(() => rm(root, { recursive: true, force: true }));
