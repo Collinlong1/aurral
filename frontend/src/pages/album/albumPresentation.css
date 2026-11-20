@@ -33,3 +33,20 @@
   font-size: var(--aurral-font-sm);
   font-weight: 400;
 }
+
+.album-group-gap {
+  display: block;
+}
+
+/* Phones: track rows lose their side padding and grow to the medium size;
+   the work heading lines up with them and stays as large. */
+@media (max-width: 560px) {
+  .album-group-heading,
+  .album-group-gap {
+    margin-inline-start: -0.5rem;
+  }
+
+  .album-group-heading__title {
+    font-size: var(--aurral-font-md);
+  }
+}

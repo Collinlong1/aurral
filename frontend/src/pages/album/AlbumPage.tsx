@@ -374,36 +374,9 @@ function AlbumPage() {
     trackIds.length > 1
       ? formatDuration(trackIds.reduce((sum, id) => sum + (trackDurations.get(id) ?? 0), 0))
       : "";
-  const groupStarts = new Map(
-    (albumPresentation.grouped ? albumPresentation.presentation?.groups : [])?.map((group) => [
-      group.trackIds[0],
-      group,
-    ]),
-  );
   // Grouped, works are the only headings: discs would split a work in two.
   const sections: ReactNode[] = [
-    ...(albumPresentation.grouped
-      ? listed.map((entry) => {
-          const group = groupStarts.get(String(entry.libraryTrack?.id));
-          if (!group) return null;
-          return (
-            <span key={entry.key} className="album-group-heading">
-              <span className="album-group-heading__title-line">
-                <span className="album-group-heading__title">{group.title}</span>
-                {groupLength(group.trackIds) ? (
-                  <span className="album-group-heading__time">{groupLength(group.trackIds)}</span>
-                ) : null}
-              </span>
-              {group.subtitle ? (
-                <span className="album-group-heading__line">{group.subtitle}</span>
-              ) : null}
-              {group.detail ? (
-                <span className="album-group-heading__line">{group.detail}</span>
-              ) : null}
-            </span>
-          );
-        })
-      : albumDiscHeadings(listed)),
+    ...(albumPresentation.grouped ? listed.map(() => null) : albumDiscHeadings(listed)),
     ...extras.map((_, index) => (index ? null : "From other editions")),
   ];
   const rows: TrackListRow[] = entries.map((entry, index) => {
@@ -467,6 +440,59 @@ function AlbumPage() {
         }),
     };
   });
+  // By work, as the aurral-classical branch shows an album: each work with all
+  // its tracks, wherever they sit, in order of its first; a work of one track
+  // is a single row naming it; anything else follows under "Other tracks".
+  const groups = albumPresentation.grouped ? (albumPresentation.presentation?.groups ?? []) : [];
+  const rowByTrackId = new Map(
+    entries.flatMap((entry, index) => {
+      const row = rows[index];
+      return entry.libraryTrack && row ? [[String(entry.libraryTrack.id), row] as const] : [];
+    }),
+  );
+  const groupedIds = new Set<string>();
+  const workRows: TrackListRow[] = groups.flatMap((group) => {
+    const ids = group.trackIds.filter((id) => rowByTrackId.has(id));
+    for (const id of ids) groupedIds.add(id);
+    const members = ids.flatMap((id) => rowByTrackId.get(id) ?? []);
+    const [only] = members;
+    if (members.length === 1 && only) {
+      return [
+        {
+          ...only,
+          title: group.title,
+          subtitle: group.subtitle,
+          section: <span className="album-group-gap" />,
+        },
+      ];
+    }
+    const length = groupLength(ids);
+    return members.map((row, index) => ({
+      ...row,
+      section: index ? null : (
+        <span className="album-group-heading">
+          <span className="album-group-heading__title-line">
+            <span className="album-group-heading__title">{group.title}</span>
+            {length ? <span className="album-group-heading__time">{length}</span> : null}
+          </span>
+          {group.subtitle ? (
+            <span className="album-group-heading__line">{group.subtitle}</span>
+          ) : null}
+          {group.detail ? <span className="album-group-heading__line">{group.detail}</span> : null}
+        </span>
+      ),
+    }));
+  });
+  const otherRows = rows.filter((_, index) => {
+    const id = entries[index]?.libraryTrack?.id;
+    return id == null || !groupedIds.has(String(id));
+  });
+  const shownRows = workRows.length
+    ? [
+        ...workRows,
+        ...otherRows.map((row, index) => ({ ...row, section: index ? null : "Other tracks" })),
+      ]
+    : rows;
   const trackParam = searchParams.get("track") || "";
   const highlightKey = trackParam
     ? (entries.find(
@@ -804,7 +830,7 @@ function AlbumPage() {
       {rows.length ? (
         <TrackList
           label={`${title || "Album"} tracks`}
-          rows={rows}
+          rows={shownRows}
           variant="release"
           highlightKey={highlightKey}
         />

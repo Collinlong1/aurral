@@ -51,9 +51,10 @@ const presenters = () =>
 
 export const hasAlbumPresentation = () => presenters().length > 0;
 
-// A group labels one run of the album's tracks, in album order. Ids that
-// aren't on the album are dropped; a group whose tracks aren't one run, or
-// that overlaps an earlier group, is dropped whole.
+// A group gathers album tracks under one heading, in album order, wherever
+// they sit (a work whose movements are numbered apart stays whole). Ids that
+// aren't on the album, or that an earlier group already holds, are dropped,
+// and so is a group left with none. Groups come in order of their first track.
 export function readGroups(answer: Answer, albumTrackIds: string[]): AlbumPresentationGroup[] {
   const position = new Map(albumTrackIds.map((id, index) => [id, index]));
   const placed = answer.groups.flatMap((group) => {
@@ -63,28 +64,24 @@ export function readGroups(answer: Answer, albumTrackIds: string[]): AlbumPresen
     const positions = [...new Set(group.trackIds.map(String))]
       .flatMap((id) => position.get(id) ?? [])
       .sort((a, b) => a - b);
-    const [first = -1] = positions;
-    if (first < 0 || positions.some((at, index) => at !== first + index)) return [];
+    return positions.length ? [{ group, positions, titleOf }] : [];
+  });
+  placed.sort((a, b) => (a.positions[0] ?? 0) - (b.positions[0] ?? 0));
+  const taken = new Set<number>();
+  return placed.flatMap(({ group, positions, titleOf }) => {
+    const own = positions.filter((at) => !taken.has(at));
+    if (!own.length) return [];
+    for (const at of own) taken.add(at);
+    const trackIds = own.map((at) => albumTrackIds[at] ?? "");
     return [
       {
-        first,
-        last: first + positions.length - 1,
-        group: {
-          title: group.title,
-          subtitle: group.subtitle || null,
-          detail: group.detail || null,
-          trackIds: positions.map((at) => albumTrackIds[at] ?? ""),
-          titles: positions.map((at) => titleOf.get(albumTrackIds[at] ?? "") ?? null),
-        },
+        title: group.title,
+        subtitle: group.subtitle || null,
+        detail: group.detail || null,
+        trackIds,
+        titles: trackIds.map((id) => titleOf.get(id) ?? null),
       },
     ];
-  });
-  placed.sort((a, b) => a.first - b.first);
-  let end = -1;
-  return placed.flatMap(({ first, last, group }) => {
-    if (first <= end) return [];
-    end = last;
-    return [group];
   });
 }
 

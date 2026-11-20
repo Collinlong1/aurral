@@ -413,7 +413,7 @@ test("a slow call while another is still running fails alone and keeps the work 
   );
 });
 
-test("album headings label runs of the album's tracks and fall back to the plain album", async (t) => {
+test("album headings gather a work's tracks wherever they sit and fall back to the plain album", async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), "aurral-plugin-headings-"));
   t.onTestFinished(() => rm(root, { recursive: true, force: true }));
   for (const [index, title] of ["Allegro", "Andante", "Scherzo", "Finale"].entries())
@@ -453,10 +453,9 @@ test("album headings label runs of the album's tracks and fall back to the plain
     `export default { albumPresentation: ({ album }) => album.title === "Broken" ? null : ({
       label: "By work",
       groups: [
-        { title: "Symphony", subtitle: "Composer", trackIds: [${andante}, ${allegro}, 999999], titles: ["II. Andante", "I. Allegro", "Lost"] },
-        { title: "Overlaps", trackIds: [${andante}] },
-        { title: "Gap", trackIds: [${scherzo}, ${allegro}] },
-        { title: "Finale", detail: "Orchestra", trackIds: ["${scherzo}", ${finale}] },
+        { title: "Symphony", subtitle: "Composer", trackIds: [${finale}, ${allegro}, 999999], titles: ["IV. Finale", "I. Allegro", "Lost"] },
+        { title: "Overlaps", trackIds: [${allegro}] },
+        { title: "Middle", detail: "Orchestra", trackIds: ["${scherzo}", ${andante}, ${finale}] },
       ],
     }) };`,
   );
@@ -471,14 +470,14 @@ test("album headings label runs of the album's tracks and fall back to the plain
         title: "Symphony",
         subtitle: "Composer",
         detail: null,
-        trackIds: [String(allegro), String(andante)],
-        titles: ["I. Allegro", "II. Andante"],
+        trackIds: [String(allegro), String(finale)],
+        titles: ["I. Allegro", "IV. Finale"],
       },
       {
-        title: "Finale",
+        title: "Middle",
         subtitle: null,
         detail: "Orchestra",
-        trackIds: [String(scherzo), String(finale)],
+        trackIds: [String(andante), String(scherzo)],
         titles: [null, null],
       },
     ],
