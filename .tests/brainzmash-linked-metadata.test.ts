@@ -1,4 +1,3 @@
-import { requireFixture } from "./playlists/fixtures.ts";
 import assert from "node:assert/strict";
 import { test, afterAll, vi } from "vite-plus/test";
 import {
@@ -72,7 +71,7 @@ const [
   { default: preview },
   { getArtistImage },
   { fetchReleaseGroupCoverUrl },
-  { listenbrainzSource },
+  { getArtistTopTracks },
 ] = await setupIsolatedBackend(
   "brainzmash-linked-metadata",
   () => import("../lib/http.ts"),
@@ -82,7 +81,7 @@ const [
   () => import("../backend/routes/artists/handlers/preview.ts"),
   () => import("../backend/services/imageService.ts"),
   () => import("../backend/services/releaseGroupCoverService.ts"),
-  () => import("../backend/services/musicDataSource/listenbrainz.ts"),
+  () => import("../backend/services/musicDataSource/index.ts"),
 );
 
 afterAll(async () => {
@@ -91,7 +90,7 @@ afterAll(async () => {
   delete process.env.BRAINZMASH_BASE_URL;
 });
 
-const externalResponse = (url: string, options: Parameters<typeof http.get>[1]) => {
+const externalResponse = (url: string) => {
   if (url === "https://api.deezer.com/artist/412") {
     return { id: 412, name: "Queen", picture_big: "https://cdn.deezer.test/queen.jpg" };
   }
@@ -129,16 +128,19 @@ const externalResponse = (url: string, options: Parameters<typeof http.get>[1]) 
       ],
     };
   }
-  if (options?.query?.method === "artist.getTopTags") {
-    return {
-      toptags: {
-        tag: [
-          { name: "seen live", count: 100 },
-          { name: "classic rock", count: 90 },
-          { name: "female vocalists", count: 80 },
-        ],
+  if (url === "https://api.listenbrainz.org/1/metadata/artist/") {
+    return [
+      {
+        artist_mbid: unlinkedArtistMbid,
+        tag: {
+          artist: [
+            { tag: "seen live", count: 100 },
+            { tag: "classic rock", count: 90 },
+            { tag: "female vocalists", count: 80 },
+          ],
+        },
       },
-    };
+    ];
   }
   return {};
 };
@@ -148,8 +150,8 @@ function recordExternalRequests() {
   const providerGet = http.get.bind(http);
   vi.spyOn(http, "get").mockImplementation(async (url, options) => {
     if (String(url).startsWith(providerServer.url)) return providerGet(url, options);
-    requests.push(options?.query?.method ? `${url}?method=${options.query.method}` : url);
-    return { status: 200, statusText: "OK", headers: {}, data: externalResponse(url, options) };
+    requests.push(url);
+    return { status: 200, statusText: "OK", headers: {}, data: externalResponse(url) };
   });
   return requests;
 }
@@ -170,11 +172,7 @@ test("artist identity comes from BrainzMash names, aliases, and linked provider 
   assert.deepEqual([...requests], []);
 });
 
-test("artist genres come from BrainzMash and Last.fm only fills artists without genres with real genres", async (t: import("vite-plus/test").TestContext) => {
-  process.env.LASTFM_API_KEY = "test-key";
-  t.onTestFinished(() => {
-    delete process.env.LASTFM_API_KEY;
-  });
+test("artist genres come from BrainzMash and ListenBrainz only fills artists without genres with real genres", async () => {
   const requests = recordExternalRequests();
 
   const linked = await getArtistTagPayload(
@@ -192,7 +190,7 @@ test("artist genres come from BrainzMash and Last.fm only fills artists without 
   );
   assert.deepEqual(unlinked.genres, ["classic rock"]);
   assert.equal(requests.length, 1);
-  assert.match(requireFixture(requests[0]), /method=artist\.getTopTags$/);
+  assert.equal(requests[0], "https://api.listenbrainz.org/1/metadata/artist/");
 });
 
 test("artist previews use the BrainzMash Deezer link instead of a name search", async () => {
@@ -212,11 +210,11 @@ test("top tracks use the Deezer artist linked on a saved BrainzMash artist, and 
   const requests = recordExternalRequests();
   providerPaths.length = 0;
 
-  const saved = await listenbrainzSource.getArtistTopTracks({
+  const saved = await getArtistTopTracks({
     name: "Queen",
     mbid: linkedArtistMbid,
   });
-  const unsaved = await listenbrainzSource.getArtistTopTracks({
+  const unsaved = await getArtistTopTracks({
     name: "Queens",
     mbid: "78787878-7878-4787-8787-787878787878",
   });

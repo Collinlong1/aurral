@@ -2,7 +2,8 @@ import type Database from "better-sqlite3";
 import { createAurral3Schema } from "./aurral-3-schema.ts";
 import { NOTIFICATION_EVENTS } from "../../lib/notificationEvents.ts";
 import { isRecord } from "../../lib/isRecord.ts";
-import type { SettingsRow, UsersRow } from "../db/rows.ts";
+import { trackArtistCreditFromTags } from "../../lib/artistCredit.ts";
+import type { LibraryTracksRow, SettingsRow, UsersRow } from "../db/rows.ts";
 
 type Migration = (db: Database.Database) => void;
 
@@ -309,6 +310,108 @@ const renewSessionsOnUse: Migration = (db) => {
   }
 };
 
+const restoreStoredTrackArtistCredits: Migration = (db) => {
+  const rows = db
+    .prepare<
+      [],
+      Pick<LibraryTracksRow, "id" | "artist_name" | "metadata_json">
+    >(`SELECT id, artist_name, metadata_json FROM library_tracks
+       WHERE json_valid(metadata_json)
+         AND json_type(metadata_json, '$.tags.artists') IN ('array', 'text')`)
+    .all();
+  const update = db.prepare<[string, number]>(
+    "UPDATE library_tracks SET artist_name = ? WHERE id = ?",
+  );
+  let changed = false;
+  for (const row of rows) {
+    const metadata: unknown = JSON.parse(row.metadata_json ?? "null");
+    if (!isRecord(metadata) || !isRecord(metadata.tags)) continue;
+    const current = String(row.artist_name ?? "").trim();
+    const tagged = String(metadata.tags.artist ?? metadata.tags.albumartist ?? "").trim();
+    if (current && current.toLocaleLowerCase() !== tagged.toLocaleLowerCase()) continue;
+    const credit = trackArtistCreditFromTags(metadata.tags.artist, metadata.tags.artists);
+    if (!credit || credit === current) continue;
+    update.run(credit, row.id);
+    changed = true;
+  }
+  if (changed) db.prepare("DELETE FROM settings WHERE key = 'librarySearchIndexVersion'").run();
+};
+
+const syncRestoredFileArtistTags: Migration = (db) => {
+  const rows = db
+    .prepare<
+      [],
+      Pick<LibraryTracksRow, "id" | "artist_name" | "metadata_json">
+    >(`SELECT id, artist_name, metadata_json FROM library_tracks AS track
+       WHERE json_valid(metadata_json)
+         AND json_type(metadata_json, '$.tags.artists') IN ('array', 'text')
+         AND EXISTS (SELECT 1 FROM library_media_files
+           WHERE track_id = track.id AND artist_tag <> track.artist_name)`)
+    .all();
+  const update = db.prepare<[string, number, string]>(
+    "UPDATE library_media_files SET artist_tag = ? WHERE track_id = ? AND artist_tag = ?",
+  );
+  for (const row of rows) {
+    const metadata: unknown = JSON.parse(row.metadata_json ?? "null");
+    if (!isRecord(metadata) || !isRecord(metadata.tags)) continue;
+    const credit = trackArtistCreditFromTags(metadata.tags.artist, metadata.tags.artists);
+    const tagged = String(metadata.tags.artist ?? "").trim();
+    if (!tagged || credit === tagged || credit !== row.artist_name) continue;
+    update.run(credit, row.id, tagged);
+  }
+};
+
+// Aurral no longer talks to Last.fm, so its keys, scrobble sessions, link
+// state, history usernames, and queued Last.fm work have no reader.
+const dropLastfm: Migration = (db) => {
+  if (db.prepare("SELECT 1 FROM pragma_table_info('users') WHERE name = 'lastfm_username'").get()) {
+    db.exec("ALTER TABLE users DROP COLUMN lastfm_username");
+  }
+  db.exec(`
+    DROP TABLE IF EXISTS lastfm_link_states;
+    DELETE FROM listen_history_sources WHERE provider = 'lastfm';
+    DELETE FROM settings WHERE key = 'lastfmRejectedKey';
+    UPDATE settings SET value = json_remove(value, '$.lastfm')
+      WHERE key = 'integrations' AND json_valid(value);
+    UPDATE settings SET value = (
+        SELECT json_group_object(entry.key, json_remove(entry.value, '$.lastfm'))
+        FROM json_each(settings.value) AS entry
+        WHERE entry.type = 'object' AND json_remove(entry.value, '$.lastfm') <> '{}'
+      )
+      WHERE key = 'scrobbleConnections' AND json_valid(value);
+    DELETE FROM jobs WHERE state IN ('pending', 'running') AND (
+      kind = 'lastfm-key-check'
+      OR (queue = 'play-events' AND json_valid(payload) AND payload ->> '$.provider' = 'lastfm')
+    );
+  `);
+};
+
+const storeReleaseFeed: Migration = (db) =>
+  db.exec(`
+    DROP TABLE IF EXISTS library_release_calendar_artists;
+    CREATE TABLE IF NOT EXISTS release_feed (
+      artist_mbid TEXT NOT NULL,
+      release_group_mbid TEXT NOT NULL,
+      title TEXT NOT NULL,
+      release_date TEXT NOT NULL,
+      release_type TEXT NOT NULL,
+      fetched_at INTEGER NOT NULL,
+      PRIMARY KEY (artist_mbid, release_group_mbid)
+    ) WITHOUT ROWID;
+  `);
+
+const storeReleaseFeedCovers: Migration = (db) => {
+  if (
+    db.prepare("SELECT 1 FROM pragma_table_info('release_feed') WHERE name = 'cover_url'").get()
+  ) {
+    return;
+  }
+  db.exec(`
+    DELETE FROM release_feed;
+    ALTER TABLE release_feed ADD COLUMN cover_url TEXT;
+  `);
+};
+
 export const migrations: Migration[] = [
   createAurral3Schema,
   indexFinishedDownloadNames,
@@ -331,6 +434,11 @@ export const migrations: Migration[] = [
   blendByDefault,
   storeFriendBlendTracks,
   renewSessionsOnUse,
+  restoreStoredTrackArtistCredits,
+  syncRestoredFileArtistTags,
+  dropLastfm,
+  storeReleaseFeed,
+  storeReleaseFeedCovers,
 ];
 
 export function migrate(db: Database.Database, steps: readonly Migration[] = migrations) {
