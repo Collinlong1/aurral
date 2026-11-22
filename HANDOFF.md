@@ -1,3 +1,15 @@
+# Synced with upstream through #2074 (November 22, 2026)
+
+At the user's request, all three fork branches now include upstream lklynet/aurral through #2074 (17 commits since the November 20 sync: AurralBrainz metadata served from data.aurral.org with far fewer calls and popular-track flags; Deezer previews from search and profile top tracks; the web queue kept, with another device's queue offered instead of replacing it; Wikimedia artist photos loaded directly; download fixes for repeated imports, upgrade sources, replaced files, Usenet group tags and WEBFLAC; a library watcher that restarts after failing; docs and FAQ copy). Order upstream → fork `main` → derived branches:
+
+- Fork `main` merged upstream as `17f0dce` on a short-lived branch (upstream as a merge parent), then fast-forwarded; `.tests/perf/baseline.json` conflicted only in measured numbers, so it took upstream's and was re-measured on the merged tree (`04590de`; the moves are upstream's metadata change: discover artist 94→52 cold queries, brainzmash calls counted as metadata).
+- `aurral-classical` (backup `aurral-classical-backup-2026-11-22` = `c90f29e`) merged `main` as `505454c`. Conflicts: `AudioQueueProvider.tsx` keeps the segment-bounds `useMemo` and adds upstream's `queueElsewhere` / `pickUpQueueElsewhere`; `.tests/frontend/queue-storage.test.ts` keeps the bounded-segment test and upstream's two device-queue tests.
+- `claude/minimal-plugin-features-dmd2rb` (the reduced plugin-features branch) merged `main` the same way, with the same two conflicts resolved identically.
+
+Note: the November 20 syncs (`c90f29e`, `fd90f19`) merged upstream straight into the derived branches; this one goes through fork `main` again.
+
+Verification, Node 26.12 / pnpm 12.15: `pnpm check` clean at the 1056 unsafe-any baseline and `pnpm build` passes on all three; unit tests with perf budgets `main` 2701/2701 (396 files), `aurral-classical` 2722/2722 (397), minimal 2707/2707 (396). The companion plugin at `aurral-classical` `1feab4e`: 486/486 tests, the ten real-renderer browser checks, and the Compose stage (seed, fixtures, smoke, editor browser, v03, restart persistence and smoke again) pass against `aurral-classical` `505454c`; with no Docker daemon here the Compose services ran as local processes on the same paths and ports. Not run: `pnpm eden test`, integration tests. The plugin workflows still pin core `9fec213`. No PR, release or deployment.
+
 # Review U3: plugin form text fields use the row's full width (November 18, 2026)
 
 Branch `claude/fervent-cray-ajjtft`, for review into `aurral-classical` (never `main`). Fixes core #50 (review U3): in admin-pages-v2 forms a text field sat beside its label in a fixed 18rem box, which cut classical work titles ("Symphony No. 5 in C minor, Op. 67 …") at 1280 px. `PluginAdminPage.tsx` now stacks text fields like textareas, lines, lookups and order fields: label above, input across the row. Generic renderer change only; no API, plugin contract or schema change.
