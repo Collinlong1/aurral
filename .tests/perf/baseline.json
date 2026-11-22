@@ -4,7 +4,7 @@
       "cold": 12,
       "warm": 12
     },
-    "bytes": 1686,
+    "bytes": 1662,
     "scans": []
   },
   "library home": {
@@ -12,7 +12,7 @@
       "cold": 127,
       "warm": 121
     },
-    "bytes": 181156,
+    "bytes": 180039,
     "scans": []
   },
   "library albums": {
@@ -160,7 +160,7 @@
       "cold": 52,
       "warm": 45
     },
-    "bytes": 2180,
+    "bytes": 2197,
     "scans": [],
     "calls": {
       "metadata": {
@@ -344,7 +344,7 @@
       "cold": 9,
       "warm": 9
     },
-    "bytes": 43903,
+    "bytes": 43901,
     "scans": []
   },
   "subsonic getAlbumList2": {
@@ -352,7 +352,7 @@
       "cold": 43,
       "warm": 43
     },
-    "bytes": 147682,
+    "bytes": 147676,
     "scans": []
   },
   "subsonic getArtist": {
@@ -360,7 +360,7 @@
       "cold": 15,
       "warm": 15
     },
-    "bytes": 4288,
+    "bytes": 4286,
     "scans": []
   },
   "subsonic getAlbum": {
@@ -368,7 +368,7 @@
       "cold": 14,
       "warm": 14
     },
-    "bytes": 10268,
+    "bytes": 10266,
     "scans": []
   },
   "subsonic search3": {
@@ -376,7 +376,7 @@
       "cold": 22,
       "warm": 22
     },
-    "bytes": 44400,
+    "bytes": 44398,
     "scans": []
   },
   "subsonic getStarred2": {
@@ -384,7 +384,7 @@
       "cold": 15,
       "warm": 15
     },
-    "bytes": 302687,
+    "bytes": 302685,
     "scans": []
   },
   "subsonic getRandomSongs": {
@@ -392,7 +392,7 @@
       "cold": 15,
       "warm": 15
     },
-    "bytes": 44045,
+    "bytes": 44387,
     "scans": []
   },
   "subsonic getGenres": {
@@ -400,7 +400,7 @@
       "cold": 5,
       "warm": 3
     },
-    "bytes": 773,
+    "bytes": 771,
     "scans": []
   },
   "subsonic getSongsByGenre": {
@@ -408,23 +408,23 @@
       "cold": 14,
       "warm": 14
     },
-    "bytes": 88442,
+    "bytes": 88440,
     "scans": []
   },
   "subsonic playlists": {
     "queries": {
-      "cold": 49,
-      "warm": 49
+      "cold": 59,
+      "warm": 59
     },
-    "bytes": 417280,
+    "bytes": 417276,
     "scans": []
   },
   "subsonic edit playlist": {
     "queries": {
-      "cold": 938,
-      "warm": 964
+      "cold": 946,
+      "warm": 972
     },
-    "bytes": 22607,
+    "bytes": 22605,
     "scans": [
       "download_jobs"
     ]
@@ -480,7 +480,7 @@
       "cold": 24,
       "warm": 24
     },
-    "bytes": 43998,
+    "bytes": 44180,
     "scans": []
   }
 }
