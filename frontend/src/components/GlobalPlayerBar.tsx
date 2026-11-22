@@ -50,6 +50,7 @@ import PlayerLyrics from "./PlayerLyrics";
 import PlayerFriends, { FriendsDialog } from "./PlayerFriends";
 import FullscreenPlayer from "./FullscreenPlayer";
 import PlayerOriginLink from "./PlayerOriginLink";
+import PlayerDevicesButton from "./PlayerDevicesButton";
 import { PlayerMiniProgress, PlayerSeek } from "./PlayerProgress";
 import { useModalDialog } from "../hooks/useModalDialog.ts";
 import { PLAYER_SHORTCUTS, usePlayerShortcuts } from "../hooks/usePlayerShortcuts.ts";
@@ -543,6 +544,7 @@ function GlobalPlayerBar({ minimized, onMinimizedChange, rail }: GlobalPlayerBar
             </span>
           </span>
         </button>
+        <PlayerDevicesButton className="global-player__mini-control" />
         <button
           type="button"
           className="global-player__mini-control"
@@ -779,6 +781,7 @@ function GlobalPlayerBar({ minimized, onMinimizedChange, rail }: GlobalPlayerBar
                         <Radio aria-hidden="true" />
                       </button>
                     ) : null}
+                    <PlayerDevicesButton className="now-playing__icon-button" />
                     <button
                       type="button"
                       className="now-playing__icon-button"
@@ -935,9 +938,11 @@ function GlobalPlayerBar({ minimized, onMinimizedChange, rail }: GlobalPlayerBar
         </div>
 
         <div className="global-player__side">
+          <PlayerDevicesButton className="btn btn-ghost btn-icon btn-xs" />
           <LibraryItemMenu
             label={currentTrack.title || "Track"}
             contextMenu={false}
+            tooltipPlacement="top"
             triggerIcon={<Ellipsis aria-hidden="true" />}
             triggerLabel="More"
             triggerClassName="btn btn-ghost btn-icon btn-xs"

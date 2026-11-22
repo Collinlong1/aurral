@@ -4,7 +4,7 @@
       "cold": 12,
       "warm": 12
     },
-    "bytes": 1693,
+    "bytes": 1662,
     "scans": []
   },
   "library home": {
@@ -12,7 +12,7 @@
       "cold": 127,
       "warm": 121
     },
-    "bytes": 181304,
+    "bytes": 180039,
     "scans": []
   },
   "library albums": {
@@ -157,25 +157,13 @@
   },
   "discover artist": {
     "queries": {
-      "cold": 94,
-      "warm": 59
+      "cold": 52,
+      "warm": 45
     },
-    "bytes": 2041,
+    "bytes": 2197,
     "scans": [],
     "calls": {
-      "api.deezer.com": {
-        "cold": 2,
-        "warm": 1
-      },
-      "api.listenbrainz.org": {
-        "cold": 1,
-        "warm": 0
-      },
-      "brainzmash": {
-        "cold": 2,
-        "warm": 0
-      },
-      "labs.api.listenbrainz.org": {
+      "metadata": {
         "cold": 1,
         "warm": 0
       }
@@ -183,13 +171,13 @@
   },
   "discover album": {
     "queries": {
-      "cold": 15,
+      "cold": 7,
       "warm": 4
     },
     "bytes": 244,
     "scans": [],
     "calls": {
-      "brainzmash": {
+      "metadata": {
         "cold": 1,
         "warm": 0
       }
@@ -197,10 +185,10 @@
   },
   "discover album tracks": {
     "queries": {
-      "cold": 8,
-      "warm": 8
+      "cold": 5,
+      "warm": 4
     },
-    "bytes": 17,
+    "bytes": 2,
     "scans": [
       "library_albums"
     ],
@@ -223,13 +211,27 @@
   },
   "discover search": {
     "queries": {
-      "cold": 9,
+      "cold": 6,
       "warm": 3
     },
     "bytes": 65,
     "scans": [],
     "calls": {
-      "brainzmash": {
+      "metadata": {
+        "cold": 1,
+        "warm": 0
+      }
+    }
+  },
+  "unified search": {
+    "queries": {
+      "cold": 6,
+      "warm": 3
+    },
+    "bytes": 78,
+    "scans": [],
+    "calls": {
+      "metadata": {
         "cold": 1,
         "warm": 0
       }
@@ -237,17 +239,13 @@
   },
   "similar artists": {
     "queries": {
-      "cold": 19,
-      "warm": 6
+      "cold": 7,
+      "warm": 4
     },
-    "bytes": 14,
+    "bytes": 112,
     "scans": [],
     "calls": {
-      "brainzmash": {
-        "cold": 1,
-        "warm": 0
-      },
-      "labs.api.listenbrainz.org": {
+      "metadata": {
         "cold": 1,
         "warm": 0
       }
@@ -394,7 +392,7 @@
       "cold": 15,
       "warm": 15
     },
-    "bytes": 44434,
+    "bytes": 44387,
     "scans": []
   },
   "subsonic getGenres": {
@@ -433,13 +431,13 @@
   },
   "album match": {
     "queries": {
-      "cold": 25,
+      "cold": 17,
       "warm": 4
     },
     "bytes": 35,
     "scans": [],
     "calls": {
-      "brainzmash": {
+      "metadata": {
         "cold": 1,
         "warm": 0
       }
@@ -447,13 +445,13 @@
   },
   "track match": {
     "queries": {
-      "cold": 18,
-      "warm": 4
+      "cold": 9,
+      "warm": 5
     },
     "bytes": 40,
     "scans": [],
     "calls": {
-      "brainzmash": {
+      "metadata": {
         "cold": 1,
         "warm": 0
       },
@@ -465,13 +463,13 @@
   },
   "artist match": {
     "queries": {
-      "cold": 10,
+      "cold": 7,
       "warm": 4
     },
     "bytes": 12,
     "scans": [],
     "calls": {
-      "brainzmash": {
+      "metadata": {
         "cold": 1,
         "warm": 0
       }
@@ -479,16 +477,10 @@
   },
   "subsonic getSimilarSongs": {
     "queries": {
-      "cold": 26,
+      "cold": 24,
       "warm": 24
     },
-    "bytes": 44565,
-    "scans": [],
-    "calls": {
-      "labs.api.listenbrainz.org": {
-        "cold": 1,
-        "warm": 0
-      }
-    }
+    "bytes": 44180,
+    "scans": []
   }
 }

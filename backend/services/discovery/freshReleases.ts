@@ -51,7 +51,7 @@ const slim = (release: ListenbrainzFreshRelease) => {
           releaseDate: release.release_date,
           coverUrl:
             release.caa_id && release.caa_release_mbid
-              ? `https://imagecache.lidarr.audio/v1/caa/${release.caa_release_mbid}/${release.caa_id}-500.jpg`
+              ? `https://coverartarchive.org/release/${release.caa_release_mbid}/${release.caa_id}-500.jpg`
               : null,
         },
       ]
@@ -87,10 +87,15 @@ export function refreshFreshReleases() {
   return refreshing;
 }
 
+const isStale = () => !snapshot || Date.now() - snapshot.fetchedAt >= FRESH_RELEASES_TTL_MS;
+
+export async function loadFreshReleasesByArtists(artistMbids: Iterable<string | null | undefined>) {
+  if (isStale()) await refreshFreshReleases();
+  return getFreshReleasesByArtists(artistMbids);
+}
+
 export function getFreshReleasesByArtists(artistMbids: Iterable<string | null | undefined>) {
-  if (!snapshot || Date.now() - snapshot.fetchedAt >= FRESH_RELEASES_TTL_MS) {
-    void refreshFreshReleases();
-  }
+  if (isStale()) void refreshFreshReleases();
   const wanted = new Set([...artistMbids].filter(Boolean));
   return (snapshot?.releases || []).flatMap((release) => {
     const artistMbid = release.artistMbids.find((mbid) => wanted.has(mbid));
