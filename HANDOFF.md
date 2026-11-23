@@ -1,3 +1,7 @@
+# Synced with upstream through #2080 (November 23, 2026)
+
+Two more upstream commits (#2079 imported-playlist tracks matched by ISRC and fresh releases read from AurralBrainz; #2080 a track keeps its IDs when a playlist names its album differently), synced the same way and this time through PRs at the user's request: fork `main` merges upstream (`1ce9465`), then `aurral-classical` and `claude/minimal-plugin-features-dmd2rb` merge that. No conflicts. `pnpm check` clean at 1056 and build passes on all three; unit tests `main` 2704/2704, `aurral-classical` 2725/2725, minimal 2710/2710. The plugin's ten browser checks pass against the classical merge; its Compose stage was not rerun for this two-commit step. No release or deployment.
+
 # Synced with upstream through #2074 (November 22, 2026)
 
 At the user's request, all three fork branches now include upstream lklynet/aurral through #2074 (17 commits since the November 20 sync: AurralBrainz metadata served from data.aurral.org with far fewer calls and popular-track flags; Deezer previews from search and profile top tracks; the web queue kept, with another device's queue offered instead of replacing it; Wikimedia artist photos loaded directly; download fixes for repeated imports, upgrade sources, replaced files, Usenet group tags and WEBFLAC; a library watcher that restarts after failing; docs and FAQ copy). Order upstream → fork `main` → derived branches:
