@@ -1,9 +1,19 @@
 import assert from "node:assert/strict";
 import Database from "better-sqlite3";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { test } from "vite-plus/test";
 import { migrate, migrations } from "../../backend/config/migrations.ts";
 import { decryptIntegrations, encryptWithKey } from "../../backend/config/encryption.ts";
+import { db as libraryDb } from "../../backend/config/db-sqlite.ts";
+import {
+  getLibraryAlbumsToList,
+  linkLibraryAlbumTrack,
+  storeLibraryAlbumTrackList,
+  upsertLibraryAlbum,
+  upsertLibraryArtist,
+  upsertLibraryMediaFile,
+  upsertLibraryTrack,
+} from "../../backend/services/libraryMediaStore.ts";
 
 const version = (db: Database.Database) => db.pragma("user_version", { simple: true });
 
@@ -259,6 +269,39 @@ test("upgrading clears BrainzMash cache rows and saved defaults when moving to d
       .pluck()
       .all(),
     [],
+  );
+});
+
+test("upgrading renames stored discovery sources that still say Last.fm", () => {
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+  migrate(db, migrations.slice(0, 31));
+  const cache = db.prepare<[string, string]>(
+    "INSERT INTO discovery_cache (key, value, last_updated) VALUES (?, ?, 1)",
+  );
+  cache.run(
+    "user:1:recommendations",
+    JSON.stringify([
+      { name: "Bridge", sourceTypes: ["lastfm_related"], tagSource: "lastfm_artist" },
+      { name: "Kept", sourceTypes: ["library"], tagSource: "inherited" },
+    ]),
+  );
+
+  migrate(db);
+
+  assert.deepEqual(
+    JSON.parse(
+      db
+        .prepare<[], string>(
+          "SELECT value FROM discovery_cache WHERE key = 'user:1:recommendations'",
+        )
+        .pluck()
+        .get() ?? "null",
+    ),
+    [
+      { name: "Bridge", sourceTypes: ["similar"], tagSource: "artist" },
+      { name: "Kept", sourceTypes: ["library"], tagSource: "inherited" },
+    ],
   );
 });
 
@@ -612,5 +655,69 @@ test("upgrading drops what only Last.fm read and keeps the rest", () => {
   assert.equal(
     db.prepare("SELECT 1 FROM sqlite_master WHERE name LIKE 'lastfm%'").get(),
     undefined,
+  );
+});
+
+test("upgrading stops treating an album's release group as its release", () => {
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+  migrate(db, migrations.slice(0, 32));
+  db.exec(`
+    INSERT INTO library_artists (id, identity_key, name, created_at, updated_at)
+      VALUES (1, 'artist', 'Artist', 0, 0);
+    INSERT INTO library_albums (id, identity_key, mbid, release_group_mbid, artist_id, title, created_at, updated_at)
+      VALUES (1, 'added', 'group-a', 'group-a', 1, 'Added', 0, 0),
+        (2, 'scanned', 'release-b', 'group-b', 1, 'Scanned', 0, 0),
+        (3, 'release-only', 'release-c', NULL, 1, 'Release Only', 0, 0);
+  `);
+
+  migrate(db);
+
+  assert.deepEqual(
+    db.prepare("SELECT id, mbid, release_group_mbid FROM library_albums ORDER BY id").raw().all(),
+    [
+      [1, null, "group-a"],
+      [2, "release-b", "group-b"],
+      [3, "release-c", null],
+    ],
+  );
+});
+
+test("upgrading keeps the track lists stored for an album's release and files", () => {
+  const artist = upsertLibraryArtist({ identityKey: "artist:kept-list", name: "Kept List" });
+  const albums = ["kept-group", "kept-release"].map((name, index) => {
+    const album = upsertLibraryAlbum({
+      identityKey: `release-group:${name}`,
+      mbid: index === 0 ? name : `${name}-edition`,
+      releaseGroupMbid: name,
+      artistId: artist.id,
+      title: name,
+    });
+    const track = upsertLibraryTrack({ identityKey: `track:${name}`, title: "Song" });
+    linkLibraryAlbumTrack({ albumId: album.id, trackId: track.id, trackNumber: 1 });
+    const path = `/music/Kept List/${name}/01 Song.flac`;
+    upsertLibraryMediaFile({
+      trackId: track.id,
+      albumId: album.id,
+      source: "aurral",
+      path,
+      mtimeMs: 1,
+    });
+    const basis = createHash("sha1")
+      .update(JSON.stringify([album.mbid, [[path, 1]]]))
+      .digest("hex");
+    storeLibraryAlbumTrackList(album.id, { release: null, basis });
+    return album.id;
+  });
+
+  for (const step of migrations.slice(32)) step(libraryDb);
+
+  assert.equal(
+    libraryDb.prepare("SELECT mbid FROM library_albums WHERE id = ?").pluck().get(albums[0]),
+    null,
+  );
+  assert.deepEqual(
+    getLibraryAlbumsToList().filter((album) => albums.includes(album.id)),
+    [],
   );
 });

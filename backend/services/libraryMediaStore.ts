@@ -12,7 +12,8 @@ import {
 } from "./trackMatching/titleText.ts";
 import { isSameSongAtPlace } from "./trackMatching/nativeMatcher.ts";
 import { clearLibraryManagement } from "./libraryManagementStore.ts";
-import { readRawLibraryMetadata } from "./libraryMetadata.ts";
+import { hasReleaseTags, readRawLibraryMetadata } from "./libraryMetadata.ts";
+import { albumIsOwned } from "./albumOwnership.ts";
 import { logger, safeLogDiagnostic } from "./logger.ts";
 import { asAppError } from "../../lib/errors.ts";
 import {
@@ -413,11 +414,12 @@ export function setLibraryArtistMbid(artistId: number, mbid: string | null) {
       };
     }
     moveLibraryArtistMarks(artist.identity_key, key);
+    const { id: _addedId, foreignArtistId: _addedMbid, ...kept } = metadata;
     db.prepare<[string | null, string | null, string | null, number, number]>(
       `UPDATE library_artists
        SET identity_key = ?, mbid = ?, metadata_json = ?, updated_at = ?
        WHERE id = ?`,
-    ).run(key, mbid || null, stringify({ ...metadata, mbidSource: "manual" }), now(), artist.id);
+    ).run(key, mbid || null, stringify({ ...kept, mbidSource: "manual" }), now(), artist.id);
     return {
       artist: db
         .prepare<[number], LibraryArtistsRow>("SELECT * FROM library_artists WHERE id = ?")
@@ -453,7 +455,7 @@ export function upsertLibraryArtist({
   const artistName = normalizeText(name);
   const artistMbid = mbid || null;
   const artistSortName = sortName || null;
-  const metadataText = stringify(metadata);
+  const metadataText = metadata && stringify(metadata);
   if (!key || !artistName) throw new Error("Library artist identityKey and name are required");
   let libraryChanged = false;
   const artist = db.transaction(() => {
@@ -617,7 +619,7 @@ export function upsertLibraryAlbum({
   const albumReleaseGroupMbid = releaseGroupMbid || null;
   const albumArtistName = albumArtist || null;
   const albumReleaseDate = releaseDate || null;
-  const metadataText = stringify(metadata);
+  const metadataText = metadata && stringify(metadata);
   if (!key || !Number.isSafeInteger(Number(artistId)) || !albumTitle) {
     throw new Error("Library album identityKey, artistId, and title are required");
   }
@@ -1231,20 +1233,6 @@ const TRACK_IS_LISTED = `(json_valid(album.metadata_json) AND EXISTS (
   SELECT 1 FROM json_each(album.metadata_json, '$.trackList.recordings') WHERE value = track.mbid
 ))`;
 
-// Aurral keeps the albums it was asked for, with or without files: a requested album still downloading, or one unmonitored so artist
-// monitoring leaves it out.
-export const ALBUM_IS_OWNED = `(
-  CASE WHEN json_valid(album.metadata_json)
-    THEN json_extract(album.metadata_json, '$.librarySource') IS NOT NULL
-      OR COALESCE(json_extract(album.metadata_json, '$.trackListComplete'), 0) = 1
-    ELSE 0 END
-  OR EXISTS (
-    SELECT 1 FROM library_management AS owner
-    WHERE owner.entity_kind = 'album' AND owner.entity_id = album.id
-      AND owner.monitor_mode IS NOT NULL
-  )
-)`;
-
 // A file without a recording ID is the album's song at its place, even
 // spelled another way, or with its title when either has no place; the
 // tagged one when an untagged copy sits beside it.
@@ -1383,6 +1371,16 @@ function foldLibraryAlbum(
   for (const trackId of dropped) unlinkFilelessAlbumTrack(target.id, trackId);
 }
 
+const filelessAlbumTracksStmt = db
+  .prepare<[number], number>(
+    `SELECT link.track_id FROM library_album_tracks AS link
+     WHERE link.album_id = ? AND NOT EXISTS (
+       SELECT 1 FROM library_media_files AS media
+       WHERE media.track_id = link.track_id AND (media.album_id = link.album_id OR media.album_id IS NULL)
+     )`,
+  )
+  .pluck();
+
 function unlinkFilelessAlbumTrack(albumId: number, trackId: number) {
   unlinkAlbumTrackStmt.run(albumId, trackId);
   if (!trackLinkedStmt.get(trackId) && !trackHasFileStmt.get(trackId)) {
@@ -1409,7 +1407,7 @@ function dropUnfiledAlbumTracks() {
      FROM library_album_tracks AS link
      JOIN library_albums AS album ON album.id = link.album_id
      JOIN library_tracks AS track ON track.id = link.track_id
-     WHERE (NOT ${ALBUM_IS_OWNED} OR (json_valid(album.metadata_json)
+     WHERE (NOT ${albumIsOwned("album")} OR (json_valid(album.metadata_json)
          AND json_extract(album.metadata_json, '$.trackList.release') IS NOT NULL
          AND json_valid(track.metadata_json)
          AND json_type(track.metadata_json, '$.tags') IS NOT NULL))
@@ -1473,7 +1471,7 @@ export function getLibraryAlbumsToList() {
   for (const { listedFor, listedRule, ...album } of albums) {
     const songs = albumFiles.all(album.id);
     const basis = createHash("sha1")
-      .update(JSON.stringify([album.mbid, songs.map((file) => [file.path, file.mtimeMs])]))
+      .update(JSON.stringify(songs.map((file) => [file.path, file.mtimeMs])))
       .digest("hex");
     const filesChanged = listedFor !== basis;
     if (filesChanged || listedRule !== LIBRARY_TRACK_LIST_RULE) {
@@ -1562,13 +1560,6 @@ export function assignLibraryAlbumReleaseGroup(albumId: number, releaseGroupMbid
   return id;
 }
 
-const hasReleaseTags = (tags: unknown) =>
-  typeof tags === "object" &&
-  tags !== null &&
-  ["musicbrainz_releasegroupid", "musicbrainz_albumid"].some((key) =>
-    Boolean(Reflect.get(tags, key)),
-  );
-
 // A release group picked by hand stays the album's: the matcher leaves it,
 // and scans keep the album's untagged files on it. Files tagged with a
 // release keep theirs, so only retagging changes them.
@@ -1582,7 +1573,7 @@ export function setLibraryAlbumReleaseGroup(albumId: number, releaseGroupMbid: s
       .get(albumId);
     if (!album) return { error: "not_found" } as const;
     const metadata = readRawLibraryMetadata(album.metadata_json);
-    if (hasReleaseTags(metadata.tags)) return { error: "tagged" } as const;
+    if (hasReleaseTags(metadata)) return { error: "tagged" } as const;
     const fallbackKey = buildFallbackIdentityKey("album", album.artist_key, album.title);
     const fallbackTaken =
       !releaseGroupMbid &&
@@ -1596,19 +1587,30 @@ export function setLibraryAlbumReleaseGroup(albumId: number, releaseGroupMbid: s
       : fallbackTaken
         ? `${fallbackKey}:${album.id}`
         : fallbackKey;
+    if (album.release_group_mbid !== releaseGroupMbid) {
+      for (const trackId of filelessAlbumTracksStmt.all(album.id)) {
+        unlinkFilelessAlbumTrack(album.id, trackId);
+      }
+      db.prepare<[number]>(
+        `UPDATE library_albums
+         SET metadata_json = json_remove(metadata_json, '$.trackListComplete', '$.requestedRelease', '$.edition')
+         WHERE id = ? AND json_valid(metadata_json) AND json_type(metadata_json) = 'object'`,
+      ).run(album.id);
+    }
     const kept = rekeyLibraryAlbum(album.id, key);
     if (kept == null) return { error: "not_found" } as const;
-    db.prepare<[string | null, number, number]>(
+    db.prepare<[string | null, string | null, number, number]>(
       `UPDATE library_albums
-       SET release_group_mbid = ?,
+       SET mbid = CASE WHEN release_group_mbid IS ? THEN mbid END,
+         release_group_mbid = ?,
          metadata_json = json_remove(
            json_set(
              CASE WHEN NOT json_valid(metadata_json) THEN '{}' WHEN json_type(metadata_json) = 'object' THEN metadata_json ELSE '{}' END,
              '$.releaseGroupSource', 'manual'),
-           '$.trackList', '$.releaseGroupLookup'),
+           '$.trackList', '$.releaseGroupLookup', '$.id', '$.foreignAlbumId'),
          updated_at = ?
        WHERE id = ?`,
-    ).run(releaseGroupMbid, now(), kept);
+    ).run(releaseGroupMbid, releaseGroupMbid, now(), kept);
     const keptAlbum = db
       .prepare<[number], LibraryAlbumsRow>("SELECT * FROM library_albums WHERE id = ?")
       .get(kept);
@@ -1996,9 +1998,9 @@ function reconcileAlbums() {
   let changed = repairLibraryFileAlbums();
   const albums = db
     .prepare<[], LibraryAlbumsRow & { owned: number; has_files: number }>(
-      `SELECT album.*, ${ALBUM_IS_OWNED} AS owned, ${ALBUM_HAS_FILES} AS has_files
+      `SELECT album.*, ${albumIsOwned("album")} AS owned, ${ALBUM_HAS_FILES} AS has_files
      FROM library_albums AS album
-     WHERE album.identity_key LIKE 'name:%' OR (NOT ${ALBUM_HAS_FILES} AND NOT ${ALBUM_IS_OWNED})
+     WHERE album.identity_key LIKE 'name:%' OR (NOT ${ALBUM_HAS_FILES} AND NOT ${albumIsOwned("album")})
      ORDER BY album.id`,
     )
     .all();

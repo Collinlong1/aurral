@@ -11,6 +11,7 @@ import {
   prepareRecordingRequest,
   readRecordingMbid,
   titleKey,
+  titleMatchText,
 } from "./nativeMatcher.ts";
 import {
   labelContradictions,
@@ -255,7 +256,7 @@ function preparedRequest(manifest: ReleaseManifest) {
 }
 
 function titleFacts(title: string | null | undefined) {
-  const text = normalizeMatchText(title);
+  const text = titleMatchText(title);
   return {
     text,
     key: titleKey(title),
@@ -420,10 +421,11 @@ function labelRejection(
   return null;
 }
 
-// Judges whether a listing is exactly the requested release: every track of
-// the complete tracklist at its own place, and no file left over that is
-// not another copy of a track already there. A file the quality profile
-// would refuse still counts, so a listing must include every audio file.
+// Judges whether a listing holds the requested release: every track of the
+// complete tracklist at its own place. A file left over that is not another
+// copy of a track, such as a deluxe edition's bonus song, is never taken. A
+// file the quality profile would refuse still counts, so a listing must
+// include every audio file.
 export function judgeRelease(
   manifest: ReleaseManifest,
   listing: ReleaseListing,
@@ -493,11 +495,9 @@ export function judgeRelease(
         trackEdges.filter((edge) => edge.implausible).map((edge) => edge.fileIndex),
       ),
     ).size > 1;
-  const unplaced = judged.flatMap((trackEdges, trackIndex) =>
-    trackEdges.filter((edge) => missing.includes(trackIndex) || extras.includes(edge.fileIndex)),
-  );
+  const unplaced = judged.filter((_, trackIndex) => missing.includes(trackIndex)).flat();
   const markers = [...new Set([...(label?.markers || []), ...variantMarkers(unplaced)])];
-  if (!label && !implausible && missing.length === 0 && extras.length === 0) {
+  if (!label && !implausible && missing.length === 0) {
     return {
       kind: "exact" as const,
       fileForTrack,
@@ -510,7 +510,7 @@ export function judgeRelease(
   const reason =
     label?.reason ||
     (implausible ? "implausible-file" : null) ||
-    (markers.length ? "unrequested-variant" : extras.length ? "extra-tracks" : "missing-tracks");
+    (markers.length ? "unrequested-variant" : "missing-tracks");
   return {
     kind: "rejected" as const,
     reason,

@@ -3,8 +3,6 @@ import { test, vi } from "vite-plus/test";
 
 import {
   AUTOPLAY_SOURCE,
-  getFormatLoadAttempts,
-  getHowlerFormat,
   getUpcomingTracks,
   initialQueueState,
   normalizePlaylistQueueTrack,
@@ -12,6 +10,7 @@ import {
   normalizePreviewTrack,
   queueReducer,
   queueSegmentBounds,
+  resolveTrackStreamFormat,
   shouldRestartTrack,
   withOrigin,
   withTrackParam,
@@ -602,12 +601,9 @@ test("undoing a stop brings back the whole queue on the same track", () => {
   assert.equal(undone.autoplay, true);
 });
 
-test("file names and stream formats that match built-in object keys are not treated as known formats", () => {
+test("file names that match built-in object keys are not treated as known formats", () => {
   assert.equal(
-    getFormatLoadAttempts({ finalPath: "/music/Artist/Album/01.constructor", quality: "FLAC" })[0],
+    resolveTrackStreamFormat({ finalPath: "/music/Artist/Album/01.constructor", quality: "FLAC" }),
     "flac",
   );
-  assert.deepEqual(getHowlerFormat("toString"), ["toString"]);
-  assert.deepEqual(getHowlerFormat("constructor"), ["constructor"]);
-  assert.deepEqual(getHowlerFormat("mp4"), ["m4a"]);
 });
