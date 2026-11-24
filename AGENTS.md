@@ -4,12 +4,12 @@ Status, November 14, 2026 (America/Chicago): v0.2 (authorized by the user on Nov
 
 Branches and sync:
 
-- `aurral-classical` is fork `main` plus the generic classical hooks. It last synced on November 23 with fork `main` at upstream lklynet/aurral #2080 (the November 22 classical merge `505454c` covers #2074; the previous classical head `c90f29e` is the merge's first parent and is kept as `aurral-classical-backup-2026-11-22`). Earlier heads are kept as `aurral-classical-backup-2026-11-14`, `-11-18` and `-11-20`. `claude/minimal-plugin-features-dmd2rb` (reduced plugin features) follows fork `main` the same way.
+- `aurral-classical` is fork `main` plus the generic classical hooks. It last synced on November 24 with fork `main` at upstream lklynet/aurral #2168 (classical merge `766fda3`; the previous classical head `2c107d4` is its first parent and is kept as `aurral-classical-backup-2026-11-24`). Earlier heads are kept as `aurral-classical-backup-2026-11-14`, `-11-18`, `-11-20` and `-11-22`. `claude/minimal-plugin-features-dmd2rb` (reduced plugin features) follows fork `main` the same way.
 - Sync order is upstream → fork `main` → `aurral-classical`. Never merge upstream straight into the classical branch, and never merge classical work into `main`.
 - Fork `main` changes only to follow upstream, and only when the user asks. Upstream's pre-commit hook blocks commits on `main`: commit the sync on a short-lived branch, keep upstream as a merge parent (do not switch branches mid-merge; that drops it), then fast-forward `main`.
 - After a sync, rerun the companion plugin's Compose and Chromium workflow: its fixtures (`dev/seed.mjs`, `dev/smoke.mjs`) import core internals that upstream may move.
 
-Tooling: Node 26.12, pnpm 12.15. `pnpm check` must show zero type errors and stay at or below the unsafe-any baseline (1056 since the November 22 sync, inherited from upstream). Don't pipe it into `tail` without `set -o pipefail`: a pipe hides its failure.
+Tooling: Node 26.12, pnpm 12.15. `pnpm check` must show zero type errors and stay at or below the unsafe-any baseline (728 since the November 24 sync, inherited from upstream). Don't pipe it into `tail` without `set -o pipefail`: a pipe hides its failure.
 
 Rules:
 
