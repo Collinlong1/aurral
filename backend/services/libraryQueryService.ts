@@ -2,6 +2,7 @@ import * as v from "valibot";
 import { db, dbHelpers } from "../config/db-sqlite.ts";
 import { lenient } from "../db/helpers/storedSchemas.ts";
 import { readLibraryMetadata, type LibraryMetadata } from "./libraryMetadata.ts";
+import { albumIsBeingFetched, albumIsMonitored, isAlbumMonitored } from "./albumOwnership.ts";
 import type {
   LibraryAlbumCreditsRow,
   LibraryAlbumsRow,
@@ -173,7 +174,6 @@ const creditsByAlbumIds = (ids: Iterable<number>) => {
 
 const metadataFields = (metadata: LibraryMetadata | null) => ({
   metadata,
-  providerId: metadata?.id ?? null,
   monitored: metadata?.monitored === true,
 });
 
@@ -257,7 +257,6 @@ export interface LibraryAlbum {
   releaseDate: string | null;
   createdAt: number;
   metadata: LibraryMetadata | null;
-  providerId?: string | number | null;
   monitored?: boolean;
   trackIds: number[];
   sources: string[];
@@ -278,7 +277,6 @@ export interface LibraryTrack {
   artistName: string | null;
   createdAt: number;
   metadata: Record<string, unknown> | null;
-  providerId?: string | number | null;
   monitored: boolean;
   albums: LibraryTrackAlbumRef[];
   files: LibraryTrackFile[];
@@ -296,7 +294,6 @@ interface LibraryRowArtist {
   name: string;
   sortName: string | null;
   metadata: Record<string, unknown> | null;
-  providerId: string | number | null;
   monitored: boolean;
   albumIds: number[];
   sources: string[];
@@ -383,7 +380,6 @@ function buildLibraryFromRows(rows: Iterable<LibraryCanonicalRow>) {
         artistName: row.track_artist_name,
         createdAt: row.track_created_at,
         metadata: trackMetadata,
-        providerId: trackMetadata?.id ?? null,
         monitored: row.track_monitored !== 0,
         albums: [],
         files: [],
@@ -449,7 +445,11 @@ function buildLibraryFromRows(rows: Iterable<LibraryCanonicalRow>) {
   const albumMetadata = metadataByIds(albumMetadataStmt, albums.keys());
   const albumCredits = creditsByAlbumIds(albums.keys());
   for (const album of albums.values()) {
-    Object.assign(album, metadataFields(albumMetadata.get(album.id) ?? null));
+    const metadata = albumMetadata.get(album.id) ?? null;
+    Object.assign(album, {
+      metadata,
+      monitored: isAlbumMonitored(metadata, albumManagement.get(album.id)),
+    });
     const credits = albumCredits.get(album.id);
     if (credits) album.creditedArtistMbids = credits;
   }
@@ -542,7 +542,6 @@ export function getLibraryArtistMbids({
 
 const libraryArtistProjection = (row: LibraryArtistProjectionRow) => {
   const metadata = readLibraryMetadata(row.metadata_json) || {};
-  const providerId = metadata.id == null ? null : String(metadata.id);
   const sources = new Set(
     String(row.sources || "")
       .split(",")
@@ -552,21 +551,15 @@ const libraryArtistProjection = (row: LibraryArtistProjectionRow) => {
   const management = getManagementMap("artist").get(Number(row.id)) || null;
   return {
     id: String(row.id),
-    providerId,
     managed: Boolean(management),
     monitorMode: management?.monitorMode ?? null,
     mbid: row.mbid || null,
-    foreignArtistId: metadata.foreignArtistId || row.mbid || row.identity_key,
     artistName: row.name,
     name: row.name,
     sortName: row.sort_name || row.name,
     images: Array.isArray(metadata.images) ? metadata.images : [],
-    path: metadata.path || null,
     addedAt: metadata.added || (row.created_at ? new Date(row.created_at).toISOString() : null),
     monitored: metadata.monitored === true,
-    monitorNewItems: metadata.monitorNewItems || "none",
-    quality: metadata.qualityProfile?.name || "standard",
-    albumFolders: true,
     statistics: {
       albumCount: Number(row.album_count || 0),
       trackCount: Number(row.track_count || 0),
@@ -863,10 +856,8 @@ type LibraryDateAlbumRow = Pick<
   | "release_date"
   | "metadata_json"
 > & {
-  artist_identity_key: LibraryArtistsRow["identity_key"];
   artist_mbid: LibraryArtistsRow["mbid"];
   artist_name: LibraryArtistsRow["name"];
-  artist_metadata_json: LibraryArtistsRow["metadata_json"];
   track_count: number;
   available_track_count: number;
   size_on_disk: number;
@@ -876,27 +867,21 @@ type LibraryDateAlbumRow = Pick<
 
 const libraryDateAlbumProjection = (row: LibraryDateAlbumRow) => {
   const metadata = readLibraryMetadata(row.metadata_json) || {};
-  const artistMetadata = readLibraryMetadata(row.artist_metadata_json) || {};
   const sources = parseSources(row.sources);
   const management = getManagementMap("album").get(Number(row.id)) || null;
   const trackCount = Number(row.track_count || 0);
   const availableTrackCount = Number(row.available_track_count || 0);
   return {
     id: String(row.id),
-    providerId: metadata.id == null ? null : String(metadata.id),
     artistId: String(row.artist_id),
-    providerArtistId: artistMetadata.id == null ? null : String(artistMetadata.id),
     artistName: row.artist_name,
     artistMbid: row.artist_mbid || null,
-    foreignArtistId: artistMetadata.foreignArtistId || row.artist_mbid || row.artist_identity_key,
-    mbid: row.mbid || row.release_group_mbid || null,
+    mbid: row.mbid || null,
     releaseGroupMbid: row.release_group_mbid || null,
-    foreignAlbumId:
-      metadata.foreignAlbumId || row.mbid || row.release_group_mbid || row.identity_key,
     albumName: row.title,
     title: row.title,
     releaseDate: row.release_date,
-    monitored: metadata.monitored === true,
+    monitored: isAlbumMonitored(metadata, management),
     managed: Boolean(management),
     monitorMode: management?.monitorMode ?? null,
     source: sources.length === 1 ? sources[0] : null,
@@ -972,10 +957,8 @@ export function getLibraryAlbumsByReleaseDate({
         album.title,
         album.release_date,
         album.metadata_json,
-        artist.identity_key AS artist_identity_key,
         artist.mbid AS artist_mbid,
-        artist.name AS artist_name,
-        artist.metadata_json AS artist_metadata_json
+        artist.name AS artist_name
       FROM library_albums AS album
       JOIN library_artists AS artist ON artist.id = album.artist_id
       WHERE ${conditions.join(" AND ")}
@@ -1859,16 +1842,11 @@ const AURRAL_MONITORED_ARTIST = `EXISTS (
     AND artist_management.monitor_rules IS NOT NULL
 )`;
 
-const beingFetched = (alias: string) => `CASE WHEN json_valid(${alias}.metadata_json)
-  THEN json_extract(${alias}.metadata_json, '$.librarySource') = 'aurral'
-    AND json_extract(${alias}.metadata_json, '$.monitored') = 1
-  ELSE 0 END`;
-
 const visibleAlbum = (sourceFilter: string | null): PageSql => {
   const playable = pageMediaExists("albums", sourceFilter, true);
   if (sourceFilter) return playable;
   return {
-    sql: `(${playable.sql} OR ${beingFetched("album")})`,
+    sql: `(${playable.sql} OR ${albumIsBeingFetched("album")})`,
     parameters: playable.parameters,
   };
 };
@@ -1960,15 +1938,6 @@ const managedAlbum = (alias: string) => `EXISTS (
   WHERE status_management.entity_kind = 'album' AND status_management.entity_id = ${alias}.id
 )`;
 
-const monitoredAlbum = (alias: string) => `(EXISTS (
-  SELECT 1 FROM library_management AS status_management
-  WHERE status_management.entity_kind = 'album'
-    AND status_management.entity_id = ${alias}.id
-    AND coalesce(status_management.monitor_mode, '') <> 'unmonitored'
-) AND CASE WHEN json_valid(${alias}.metadata_json)
-  THEN coalesce(json_extract(${alias}.metadata_json, '$.monitored') = 1, 0)
-  ELSE 0 END)`;
-
 const missingTracksAlbum = (alias: string, sourceFilter: string | null): PageSql => {
   const { conditions, parameters } = mediaSourceClause(sourceFilter, "status_media");
   const releaseDay = `substr(trim(coalesce(${alias}.release_date, '')), 1, 10)`;
@@ -1996,7 +1965,7 @@ const statusPredicate = (
 ): PageSql | null => {
   if (kind === "albums" || kind === "tracks") {
     if (status === "missing") return missingTracksAlbum("album", sourceFilter);
-    const monitored = monitoredAlbum("album");
+    const monitored = albumIsMonitored("album");
     return { sql: status === "monitored" ? monitored : `NOT ${monitored}`, parameters: [] };
   }
   if (kind !== "artists") return null;
@@ -2131,7 +2100,6 @@ export function getLibraryArtistPage({
             name: row.artist_name,
             sortName: row.artist_sort_name,
             metadata,
-            providerId: metadata?.id ?? null,
             albumIds: [],
             albumCount: Number(row.album_count || 0),
             managed: artistManagement.has(row.artist_id),
@@ -2206,7 +2174,6 @@ export function getLibraryArtistPage({
           name: row.artist_name,
           sortName: row.artist_sort_name,
           metadata,
-          providerId: metadata?.id ?? null,
           albumIds: [],
           albumCount: Number(row.album_count || 0),
           trackCount: Number(row.track_count || 0),
@@ -3224,7 +3191,6 @@ function getAlbumTrackSummary(albumId: string | number, sourceFilter: string | n
       name: row.artist_name,
       sortName: row.artist_sort_name,
       metadata: artistMetadata,
-      providerId: artistMetadata?.id ?? null,
       monitored: artistMetadata?.monitored === true,
       albumIds: [row.album_id],
       managed: Boolean(artistManagement),
@@ -3243,8 +3209,7 @@ function getAlbumTrackSummary(albumId: string | number, sourceFilter: string | n
       releaseDate: row.album_release_date,
       createdAt: row.album_created_at,
       metadata: albumMetadata,
-      providerId: albumMetadata?.id ?? null,
-      monitored: albumMetadata?.monitored === true,
+      monitored: isAlbumMonitored(albumMetadata, albumManagement),
       ...(albumCredits.length && { creditedArtistMbids: albumCredits }),
       trackIds: [],
       managed: Boolean(albumManagement),
