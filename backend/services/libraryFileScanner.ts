@@ -40,6 +40,7 @@ import {
 import { logger, safeLogDiagnostic } from "./logger.ts";
 import { isPathWithin } from "./libraryFolders.ts";
 import { trackArtistCreditFromTags } from "../../lib/artistCredit.ts";
+import { VARIOUS_ARTISTS_MBID, isVariousArtistsCredit } from "./trackMatching/titleText.ts";
 
 type ScannedMetadata = {
   common?: Partial<ICommonTagsResult>;
@@ -131,6 +132,8 @@ const applyMetadataEnrichment = (
     return metadata;
   }
   const trusted: DownloadTrackFields = { ...embedded, ...(enrichment || {}) };
+  const taggedGroup = normalizeMbid(common.musicbrainz_releasegroupid);
+  const otherGroup = taggedGroup !== null && taggedGroup !== normalizeMbid(trusted.albumMbid);
   const fallbackFields = {
     albumartist: trusted.artistName,
     artist: trusted.artistName,
@@ -141,10 +144,9 @@ const applyMetadataEnrichment = (
     disk: trusted.discNumber,
     musicbrainz_artistid: trusted.artistMbid,
     musicbrainz_albumartistid: trusted.artistMbid,
-    musicbrainz_albumid: trusted.albumMbid,
+    musicbrainz_albumid: otherGroup ? null : trusted.releaseMbid,
     musicbrainz_releasegroupid: trusted.albumMbid,
     musicbrainz_recordingid: trusted.trackMbid,
-    musicbrainz_trackid: trusted.trackMbid,
   };
   for (const [key, value] of Object.entries(fallbackFields)) {
     if (value == null || String(value).trim() === "") continue;
@@ -184,11 +186,13 @@ function buildMetadataRecord(metadata: ScannedMetadata, filePath: string, rootPa
             .filter((mbid) => mbid !== null),
         ),
       ]
-    : [normalizeMbid(common.musicbrainz_artistid)].filter((mbid) => mbid !== null);
+    : isVariousArtistsCredit(text(common.albumartist))
+      ? [VARIOUS_ARTISTS_MBID]
+      : [normalizeMbid(common.musicbrainz_artistid)].filter((mbid) => mbid !== null);
   const artistMbid = artistMbids.length === 1 ? artistMbids[0] : null;
   const albumMbid = normalizeMbid(common.musicbrainz_albumid);
   const releaseGroupMbid = normalizeMbid(common.musicbrainz_releasegroupid);
-  const trackMbid = normalizeMbid(common.musicbrainz_recordingid || common.musicbrainz_trackid);
+  const trackMbid = normalizeMbid(common.musicbrainz_recordingid);
   const artistKey =
     (artistMbid && buildIdentityKey("mbid", artistMbid)) ||
     buildFallbackIdentityKey("artist", artistName);
