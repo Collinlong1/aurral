@@ -1,5 +1,6 @@
 import fs from "fs/promises";
 import path from "path";
+import { artistNames } from "../../../lib/artistCredit.ts";
 import { asAppError } from "../../../lib/errors.ts";
 import { downloadTracker, type DownloadJob, type DownloadTrackInput } from "./downloadTracker.ts";
 import { flowPlaylistConfig } from "../playlists/flowPlaylistConfig.ts";
@@ -10,7 +11,8 @@ import {
   findLibraryTracksForAlbum,
 } from "../libraryReadModel.ts";
 import { getLibraryForArtistReferences, getLibraryTrackTitle } from "../libraryQueryService.ts";
-import { getLibraryFileIds, getLibraryMediaFile } from "../libraryMediaStore.ts";
+import { getIndexedLibraryFile, getLibraryMediaFile } from "../libraryMediaStore.ts";
+import type { LibraryMediaFilesRow } from "../../db/rows.ts";
 import { classifyLibraryFileQuality } from "../qualityProfile.ts";
 import { scheduleLibraryScan as scheduleLibraryScanJob } from "../libraryScanWorker.ts";
 import {
@@ -421,18 +423,27 @@ export async function removePlaylistFileIfUnshared(
   return { action: "deleted" };
 }
 
+// A multi-artist credit like "Artist A, Artist B" belongs to the Library
+// artist of any name in it, but a name with a comma in it comes first.
+const creditedNames = (credit: unknown) => {
+  const whole = String(credit || "").trim();
+  return whole ? [...new Set([whole, ...artistNames(whole.split(","))])] : [];
+};
+
 function findMatchingArtist(artists: ReadArtist[], track: DownloadTrackInput) {
   const artistMbid = String(track?.artistMbid || "").trim();
   if (artistMbid) {
     const match = artists.find((artist) => String(artist?.mbid || "").trim() === artistMbid);
     if (match) return match;
   }
-  const artistKey = normalizeText(track?.artistName);
-  if (!artistKey) return null;
-  return (
-    artists.find((artist) => normalizeText(artist?.artistName || artist?.name) === artistKey) ||
-    null
-  );
+  for (const name of creditedNames(track?.artistName)) {
+    const artistKey = normalizeText(name);
+    const match = artists.find(
+      (artist) => normalizeText(artist?.artistName || artist?.name) === artistKey,
+    );
+    if (match) return match;
+  }
+  return null;
 }
 
 const albumHasMbid = (album: ReadAlbum, albumMbid: string) =>
@@ -482,13 +493,12 @@ async function findLibraryFolderSource(
 ): Promise<ReuseSource | null> {
   const { label, external } = FOLDER_SOURCES[source];
   const strictAlbum = options.targetPlaylistType === "library";
-  const { artists, albums, tracks } = buildLibraryReadModel(
-    getLibraryForArtistReferences({
-      source,
-      availableOnly: false,
-      references: [track?.artistMbid, track?.artistName],
-    }),
-  );
+  const library = getLibraryForArtistReferences({
+    source,
+    availableOnly: false,
+    references: [track?.artistMbid, ...creditedNames(track?.artistName)],
+  });
+  const { artists, albums, tracks } = buildLibraryReadModel(library);
   const artist =
     findLibraryArtist(artists, track?.artistMbid) || findMatchingArtist(artists, track);
   if (!artist) {
@@ -508,6 +518,15 @@ async function findLibraryFolderSource(
     return null;
   }
 
+  const credit = normalizeText(track?.artistName);
+  const splitCredit =
+    normalizeText(artist.artistName || artist.name) !== credit &&
+    !(track?.artistMbid && artist.mbid === track.artistMbid);
+  const creditFits = (matched: ReadTrack) =>
+    !splitCredit ||
+    Boolean(track?.trackMbid && matched.mbid === track.trackMbid) ||
+    normalizeText(library.tracks.find((entry) => entry.id === matched.id)?.artistName) === credit;
+
   let foundTitleOnAnyAlbum = false;
   const rankedAlbums = rankAlbums(artistAlbums, track);
   const albumsToCheck = strictAlbum
@@ -520,7 +539,7 @@ async function findLibraryFolderSource(
     : rankedAlbums;
   for (const album of albumsToCheck) {
     const albumTracks = findLibraryTracksForAlbum(tracks, album.id);
-    const matchedTrack = findMatchingTrack(albumTracks, track, strictAlbum);
+    const matchedTrack = findMatchingTrack(albumTracks.filter(creditFits), track, strictAlbum);
     if (!matchedTrack) continue;
     foundTitleOnAnyAlbum = true;
     if (matchedTrack.hasFile !== true || !matchedTrack.path) {
@@ -618,7 +637,10 @@ export async function restoreCompletedTrack(job: DownloadJob, options: RestoreOp
         sourcePath,
         source.albumName || job.albumName || null,
         source.externalPath || null,
-        { reusedLibraryFile: noPlaylistDownloadedFile(sourcePath, job.id) },
+        {
+          reusedLibraryFile: noPlaylistDownloadedFile(sourcePath, job.id),
+          quality: availableQuality(indexedFile(sourcePath)),
+        },
       );
       console.log(
         `[FileReuse] Repaired ${job.playlistType} path from ${source.sourceType}: ${job.artistName} - ${job.trackName}`,
@@ -656,6 +678,10 @@ const indexedFile = (filePath: string) =>
   ["aurral", "readonly", "flow"]
     .map((source) => getLibraryMediaFile({ source, path: filePath }))
     .find(Boolean);
+
+const availableQuality = (
+  media: Pick<LibraryMediaFilesRow, "path" | "quality_json" | "available"> | null | undefined,
+) => (media?.available === 1 ? classifyLibraryFileQuality(media) : undefined);
 
 const sameQuality = (job: DownloadJob, quality: ReturnType<typeof classifyLibraryFileQuality>) =>
   (job.qualityTier ?? null) === quality.tier &&
@@ -935,8 +961,11 @@ const ID_KEYS = ["artistMbid", "albumMbid", "trackMbid"] as const;
 
 // A reused file's IDs are already known, to the Library or to the download it
 // came from, so they are not looked up again.
-function knownIds(track: DownloadTrackInput, source: ReuseSource) {
-  const library = getLibraryFileIds(source.sourcePath);
+function knownIds(
+  track: DownloadTrackInput,
+  source: ReuseSource,
+  library: ReturnType<typeof getIndexedLibraryFile>,
+) {
   return Object.fromEntries(
     ID_KEYS.flatMap((key) => {
       const known = library?.[key] || source.sourceJob?.[key];
@@ -983,6 +1012,7 @@ export async function reuseTrackForPlaylist(
   });
   if (!source) return { reused: false, reason };
 
+  const library = getIndexedLibraryFile(source.sourcePath);
   const finalPath =
     source.sourceType === "aurral" && targetPlaylistType === "library"
       ? (await adoptFileIntoPlaylist(source.sourcePath, targetPlaylistType, downloadRoot, {
@@ -1002,9 +1032,12 @@ export async function reuseTrackForPlaylist(
     finalPath,
     source.albumName || track.albumName || null,
     source.externalPath || null,
-    { reusedLibraryFile: noPlaylistDownloadedFile(finalPath, jobId) },
+    {
+      reusedLibraryFile: noPlaylistDownloadedFile(finalPath, jobId),
+      quality: availableQuality(library),
+    },
   );
-  downloadTracker.updateMetadata(jobId, knownIds(track, source));
+  downloadTracker.updateMetadata(jobId, knownIds(track, source, library));
   console.log(
     `[FileReuse] Reused ${source.sourceType} track for ${playlistType}: ${track.artistName} - ${track.trackName}`,
   );

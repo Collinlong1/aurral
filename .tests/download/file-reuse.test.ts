@@ -426,6 +426,15 @@ test("repairReusableTrackLinks scans after repairing a library track", async () 
   };
   const sourcePath = path.join(isolatedState.baseDir, "library-source.flac");
   await fs.writeFile(sourcePath, "audio");
+  libraryStore.upsertLibraryMediaFile({
+    trackId: libraryStore.upsertLibraryTrack({
+      identityKey: "recording:glory-box",
+      title: "Glory Box",
+    }).id,
+    source: "aurral",
+    path: sourcePath,
+    quality: { format: "FLAC", bitrate: 900_000, sampleRate: 44100, bitsPerSample: 16 },
+  });
   const missingPath = path.join(downloadRoot, "Portishead", "Dummy", "Glory Box.flac");
   const jobId = createTrackedJob(downloadTracker, track, "library");
   assert.ok(jobId != null);
@@ -444,6 +453,7 @@ test("repairReusableTrackLinks scans after repairing a library track", async () 
 
   assert.equal(result.repaired, 1);
   assert.equal(downloadTracker.getJob(jobId)?.finalPath, sourcePath);
+  assert.equal(downloadTracker.getJob(jobId)?.qualityTier, "flac-standard");
   assert.equal(scheduleScanLibrary.mock.calls.length, 1);
 });
 
@@ -632,6 +642,7 @@ test("playlists use an indexed Library file whose folder and name Aurral did not
     albumId: album.id,
     source: "aurral",
     path: filePath,
+    quality: { format: "MPEG 1 Layer 3", bitrate: 320_000, sampleRate: 44100 },
   });
 
   const result = await reuseTrackForPlaylist(
@@ -650,7 +661,74 @@ test("playlists use an indexed Library file whose folder and name Aurral did not
   const job = trackedJob(downloadTracker, result.jobId);
   assert.equal(job.externalPath ?? null, null);
   assert.equal(job.reusedLibraryFile, true);
+  assert.equal(job.qualityTier, "mp3-320");
   assert.deepEqual([job.artistMbid, job.albumMbid], ["hellyeah", "undeniable"]);
+});
+
+test("playlists use a Library file credited to several artists when the request names them all", async () => {
+  const filePath = path.join(downloadRoot, "Artist A", "Album", "01 - Song.mp3");
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(filePath, "audio");
+  const artist = libraryStore.upsertLibraryArtist({
+    identityKey: "name:artist a",
+    name: "Artist A",
+  });
+  const album = libraryStore.upsertLibraryAlbum({
+    identityKey: "name:artist a:album",
+    artistId: artist.id,
+    title: "Album",
+  });
+  const libraryTrack = libraryStore.upsertLibraryTrack({
+    identityKey: "name:artist a:album:1:1:song",
+    title: "Song",
+    artistName: "Artist A, Artist B",
+  });
+  libraryStore.linkLibraryAlbumTrack({
+    albumId: album.id,
+    trackId: libraryTrack.id,
+    trackNumber: 1,
+  });
+  libraryStore.upsertLibraryMediaFile({
+    trackId: libraryTrack.id,
+    albumId: album.id,
+    source: "aurral",
+    path: filePath,
+  });
+
+  const reuse = () =>
+    reuseTrackForPlaylist(
+      { artistName: "Artist A, Artist B", trackName: "Song", albumName: "Album" },
+      "static-playlist",
+      { downloadRoot, skipHistory: true },
+    );
+
+  const result = await reuse();
+  assert.equal(result.reused, true);
+  assert.equal(result.finalPath, filePath);
+
+  downloadTracker.clearAll();
+  libraryStore.upsertLibraryTrack({
+    identityKey: "name:artist a:album:1:1:song",
+    title: "Song",
+    artistName: "Artist A",
+  });
+  assert.equal((await reuse()).reused, false);
+
+  const duetPath = path.join(downloadRoot, "Artist A", "Album", "02 - Song.mp3");
+  await fs.writeFile(duetPath, "audio");
+  const duet = libraryStore.upsertLibraryTrack({
+    identityKey: "name:artist a:album:1:2:song",
+    title: "Song",
+    artistName: "Artist A, Artist B",
+  });
+  libraryStore.linkLibraryAlbumTrack({ albumId: album.id, trackId: duet.id, trackNumber: 2 });
+  libraryStore.upsertLibraryMediaFile({
+    trackId: duet.id,
+    albumId: album.id,
+    source: "aurral",
+    path: duetPath,
+  });
+  assert.equal((await reuse()).finalPath, duetPath);
 });
 
 test("jobs follow the Library files a scan changed", async () => {

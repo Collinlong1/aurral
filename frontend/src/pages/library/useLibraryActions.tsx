@@ -89,6 +89,7 @@ import { usePluginTrackLinks } from "../../hooks/usePluginTrackLinks.ts";
 import { pluginLinkMenuItems } from "../../utils/pluginQueue.ts";
 import { showFavoriteRemoved } from "../../utils/favoriteUndo.ts";
 import { libraryAlbumPath as albumLink } from "../../../../lib/albumPath.ts";
+import { albumTrackArtist } from "../../../../lib/artistCredit.ts";
 import {
   type LibraryPageTrack,
   type LibraryRemoval,
@@ -423,7 +424,7 @@ export function useLibraryActions({
           const album = getAlbumForTrack(track, lookup?.albumsById);
           const artist = getArtistForAlbum(album, lookup?.artistsById);
           return buildStaticPlaylistTrackPayload({
-            artistName: artist?.name || track?.artistName || "",
+            artistName: albumTrackArtist(artist?.name, artist?.mbid, track?.artistName),
             trackName: track?.title || "",
             albumName: album?.title || "",
             artistMbid: artist?.mbid || "",
