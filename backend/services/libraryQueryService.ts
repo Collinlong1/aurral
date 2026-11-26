@@ -1,5 +1,6 @@
 import * as v from "valibot";
 import { db, dbHelpers } from "../config/db-sqlite.ts";
+import { genreKeySql, genreNameSql } from "../config/library-genre-index.ts";
 import { lenient } from "../db/helpers/storedSchemas.ts";
 import { readLibraryMetadata, type LibraryMetadata } from "./libraryMetadata.ts";
 import { albumIsBeingFetched, albumIsMonitored, isAlbumMonitored } from "./albumOwnership.ts";
@@ -53,6 +54,7 @@ type LibraryCanonicalMedia =
       media_duration_ms: LibraryMediaFilesRow["duration_ms"];
       media_quality_json: LibraryMediaFilesRow["quality_json"];
       media_available: LibraryMediaFilesRow["available"];
+      media_release_tagged: LibraryMediaFilesRow["release_tagged"];
       media_created_at: LibraryMediaFilesRow["created_at"];
     }
   | {
@@ -66,6 +68,7 @@ type LibraryCanonicalMedia =
       media_duration_ms: null;
       media_quality_json: null;
       media_available: null;
+      media_release_tagged: null;
       media_created_at: null;
     };
 
@@ -227,6 +230,7 @@ const CANONICAL_SELECT = `SELECT
   media.duration_ms AS media_duration_ms,
   media.quality_json AS media_quality_json,
   media.available AS media_available,
+  media.release_tagged AS media_release_tagged,
   media.created_at AS media_created_at`;
 
 export const albumMediaCondition = (mediaAlias: string, albumTrackAlias: string) =>
@@ -267,6 +271,7 @@ export interface LibraryAlbum {
   trackCount?: number;
   availableTrackCount?: number;
   creditedArtistMbids?: string[];
+  releaseTagged?: true;
 }
 
 export interface LibraryTrack {
@@ -434,6 +439,7 @@ function buildLibraryFromRows(rows: Iterable<LibraryCanonicalRow>) {
         artist.available = true;
         album.available = true;
         track.available = true;
+        if (row.media_release_tagged) album.releaseTagged = true;
       }
     }
   }
@@ -1988,7 +1994,7 @@ const genrePredicate = (aliases: string[], genre: string): PageSql => {
   aliases.forEach((alias) => {
     clauses.push(`${alias}.id IN (
       SELECT entity_id FROM library_entity_genres
-      WHERE entity_kind = '${alias}s' AND lower(name) = lower(?)
+      WHERE entity_kind = '${alias}s' AND genre_key = ${genreKeySql("?")}
     )`);
     parameters.push(genre);
   });
@@ -2699,24 +2705,24 @@ function computeLibraryGenres(sourceFilter: string | null, availableOnly: Librar
        SELECT DISTINCT album_id, artist_id FROM eligible_tracks
      ),
      direct_genres AS (
-       SELECT eligible.album_id, genres.name AS genre
+       SELECT eligible.album_id, genres.genre_key AS genre
        FROM eligible_albums AS eligible
        JOIN library_entity_genres AS genres
          ON genres.entity_kind = 'artists' AND genres.entity_id = eligible.artist_id
        UNION
-       SELECT eligible.album_id, genres.name AS genre
+       SELECT eligible.album_id, genres.genre_key AS genre
        FROM eligible_albums AS eligible
        JOIN library_entity_genres AS genres
          ON genres.entity_kind = 'albums' AND genres.entity_id = eligible.album_id
      ),
      track_genres AS (
-       SELECT DISTINCT eligible.album_id, eligible.track_id, genres.name AS genre
+       SELECT DISTINCT eligible.album_id, eligible.track_id, genres.genre_key AS genre
        FROM eligible_tracks AS eligible
        CROSS JOIN library_entity_genres AS genres
        WHERE genres.entity_kind = 'tracks' AND genres.entity_id = eligible.track_id
          AND NOT EXISTS (
            SELECT 1 FROM direct_genres AS direct
-           WHERE direct.album_id = eligible.album_id AND direct.genre = genres.name
+           WHERE direct.album_id = eligible.album_id AND direct.genre = genres.genre_key
          )
      ),
      track_counts AS (
@@ -2733,10 +2739,11 @@ function computeLibraryGenres(sourceFilter: string | null, availableOnly: Librar
        FROM track_genres AS track
        GROUP BY track.album_id, track.genre
      )
-     SELECT genre AS value, COUNT(*) AS albumCount, SUM(song_count) AS songCount
+     SELECT ${genreNameSql("album_genres.genre")} AS value, COUNT(*) AS albumCount,
+       SUM(song_count) AS songCount
      FROM album_genres
      GROUP BY genre
-     ORDER BY genre COLLATE NOCASE`,
+     ORDER BY value COLLATE NOCASE`,
     )
     .all(...parameters)
     .map((row) => ({
@@ -2932,13 +2939,15 @@ function buildPageQuery({
     orderBy = `(SELECT MAX(play.played_at) ${TRACK_PLAYS}) ${latestFirst}, track.id`;
     orderParameters.push(userId ?? -1);
   } else if (sort === "released" && kind !== "genres") {
+    const dated = (alias: string) =>
+      `CASE WHEN ${alias}.release_date GLOB '[0-9][0-9][0-9][0-9]*' THEN ${alias}.release_date END`;
     const released =
       kind === "artists"
-        ? "(SELECT MAX(release_album.release_date) FROM library_albums AS release_album WHERE release_album.artist_id = artist.id)"
+        ? `(SELECT MAX(${dated("release_album")}) FROM library_albums AS release_album WHERE release_album.artist_id = artist.id)`
         : kind === "tracks"
-          ? "MAX(album.release_date)"
-          : "album.release_date";
-    orderBy = `coalesce(${released}, '') = '', ${released} ${latestFirst}, ${idExpression}`;
+          ? `MAX(${dated("album")})`
+          : dated("album");
+    orderBy = `${released} IS NULL, ${released} ${latestFirst}, ${idExpression}`;
   } else if (favorites && sort === "favorited") {
     orderBy = `favorite.value ${latestFirst}, ${idExpression}`;
   } else if (kind === "albums" && sort === "random") {
@@ -3058,6 +3067,7 @@ type AlbumTrackSummaryRow = {
   album_metadata_json: LibraryAlbumsRow["metadata_json"];
   sources: string | null;
   available: number | null;
+  release_tagged: number | null;
 };
 
 type AlbumTrackPageOptions = {
@@ -3167,7 +3177,8 @@ function getAlbumTrackSummary(albumId: string | number, sourceFilter: string | n
        album.created_at AS album_created_at,
        album.metadata_json AS album_metadata_json,
        GROUP_CONCAT(DISTINCT media.source) AS sources,
-       MAX(media.available) AS available
+       MAX(media.available) AS available,
+       MAX(media.available AND media.release_tagged) AS release_tagged
      FROM library_albums AS album
      JOIN library_artists AS artist ON artist.id = album.artist_id
      JOIN library_album_tracks AS album_track ON album_track.album_id = album.id
@@ -3211,6 +3222,7 @@ function getAlbumTrackSummary(albumId: string | number, sourceFilter: string | n
       metadata: albumMetadata,
       monitored: isAlbumMonitored(albumMetadata, albumManagement),
       ...(albumCredits.length && { creditedArtistMbids: albumCredits }),
+      ...(row.release_tagged && { releaseTagged: true as const }),
       trackIds: [],
       managed: Boolean(albumManagement),
       monitorMode: albumManagement?.monitorMode ?? null,

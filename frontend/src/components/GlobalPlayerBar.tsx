@@ -10,12 +10,14 @@ import {
 import { createPortal } from "react-dom";
 import { Link, useLocation } from "react-router";
 import { albumPath } from "../../../lib/albumPath.ts";
+import { albumTrackArtist } from "../../../lib/artistCredit.ts";
 import {
   ChevronDown,
   ChevronLeft,
   Download,
   Ellipsis,
   Heart,
+  Info,
   Library,
   ListMusic,
   Maximize,
@@ -46,6 +48,7 @@ import { LibraryItemMenu, type LibraryMenuItem } from "./LibraryItemMenu";
 import { UpNextQueue, type PlayerRailState } from "./PlayerQueue";
 import PlayerLyrics from "./PlayerLyrics";
 import PlayerFriends, { FriendsDialog } from "./PlayerFriends";
+import PlayerInfoDialog, { type PlayerInfoState } from "./PlayerInfoDialog";
 import FullscreenPlayer from "./FullscreenPlayer";
 import PlayerOriginLink from "./PlayerOriginLink";
 import PlayerDevicesButton from "./PlayerDevicesButton";
@@ -180,6 +183,7 @@ function GlobalPlayerBar({ minimized, onMinimizedChange, rail }: GlobalPlayerBar
   const [sheetOpen, setSheetOpen] = useState(false);
   const [sheetView, setSheetView] = useState<"art" | "lyrics" | "friends">("art");
   const [sheetFriendsDialog, setSheetFriendsDialog] = useState(false);
+  const [trackInfo, setTrackInfo] = useState<PlayerInfoState>(null);
   const [stageOpen, setStageOpen] = useState(false);
   const [sheetPresence, setSheetPresence] = useState("closed");
   const [dragOffset, setDragOffset] = useState(0);
@@ -413,9 +417,22 @@ function GlobalPlayerBar({ minimized, onMinimizedChange, rail }: GlobalPlayerBar
       : []),
   ];
   const playlistItemAfter = trackMenuItems.at(-1)?.id;
+  const playlistPayload = {
+    ...savePayload,
+    artistName: albumTrackArtist(savePayload.artistName, savePayload.artistMbid, artistLabel),
+  };
+  const viewInfoItem: LibraryMenuItem = {
+    id: "info",
+    label: "View info",
+    icon: Info,
+    separatorBefore: trackMenuItems.length > 0,
+    onSelect: () => setTrackInfo({ entry: currentTrack }),
+  };
+  const playerMenuItems =
+    currentTrack && !currentTrack.isPreview ? [...trackMenuItems, viewInfoItem] : trackMenuItems;
   const renderPlaylistItem = ({ closeMenu }: { closeMenu: () => void }) => (
     <PlayerPlaylistSubmenu
-      track={savePayload}
+      track={playlistPayload}
       separator={!canAddToLibrary && trackMenuItems.length > 0}
       onClose={closeMenu}
     />
@@ -599,7 +616,7 @@ function GlobalPlayerBar({ minimized, onMinimizedChange, rail }: GlobalPlayerBar
                       triggerLabel="More"
                       triggerClassName="now-playing__icon-button"
                       items={[
-                        ...trackMenuItems,
+                        ...playerMenuItems,
                         {
                           id: "stop",
                           label: "Stop and clear queue",
@@ -793,6 +810,8 @@ function GlobalPlayerBar({ minimized, onMinimizedChange, rail }: GlobalPlayerBar
 
       <FriendsDialog open={sheetFriendsDialog} onClose={() => setSheetFriendsDialog(false)} />
 
+      <PlayerInfoDialog info={trackInfo} onClose={() => setTrackInfo(null)} />
+
       {stageOpen ? <FullscreenPlayer track={currentTrack} onClose={closeStage} /> : null}
 
       <div className="global-player__inner">
@@ -930,7 +949,7 @@ function GlobalPlayerBar({ minimized, onMinimizedChange, rail }: GlobalPlayerBar
             triggerIcon={<Ellipsis aria-hidden="true" />}
             triggerLabel="More"
             triggerClassName="btn btn-ghost btn-icon btn-xs"
-            items={trackMenuItems}
+            items={playerMenuItems}
             additionalItemsAfter={playlistItemAfter}
             renderAdditionalItems={renderPlaylistItem}
           />
