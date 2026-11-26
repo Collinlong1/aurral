@@ -1,6 +1,8 @@
 import { useEffect, useRef, useMemo, useState, useCallback, type MouseEvent } from "react";
 import type { IconComponent } from "../../../components/icons";
 import {
+  ArrowDownToLine,
+  ArrowUpToLine,
   Clock,
   Download,
   Link as LinkIcon,
@@ -165,6 +167,8 @@ interface PlaylistTrackKebabMenuProps<T extends PlaylistPanelTrack> {
   onManualReSearch: ((track: T) => void) | undefined;
   onLinkFile?: ((track: T) => void) | undefined;
   onDelete: ((track: T) => void) | undefined;
+  onMoveToTop?: (() => void) | null;
+  onMoveToBottom?: (() => void) | null;
   playlistMenuProps?: PlaylistTrackMenuProps<T> | null;
   queueItems?: LibraryMenuItem[];
   onShare?: (track: T) => void;
@@ -189,6 +193,8 @@ function PlaylistTrackKebabMenu<T extends PlaylistPanelTrack>({
   onManualReSearch,
   onLinkFile,
   onDelete,
+  onMoveToTop = null,
+  onMoveToBottom = null,
   playlistMenuProps = null,
   queueItems = [],
   onShare,
@@ -283,6 +289,24 @@ function PlaylistTrackKebabMenu<T extends PlaylistPanelTrack>({
           icon: LinkIcon,
           separatorBefore: !canReSearch && !canManualReSearch,
           onSelect: () => onLinkFile(track),
+        }
+      : null,
+    onMoveToTop
+      ? {
+          id: "move-top",
+          label: "Move to top",
+          icon: ArrowUpToLine,
+          separatorBefore: true,
+          onSelect: onMoveToTop,
+        }
+      : null,
+    onMoveToBottom
+      ? {
+          id: "move-bottom",
+          label: "Move to bottom",
+          icon: ArrowDownToLine,
+          separatorBefore: !onMoveToTop,
+          onSelect: onMoveToBottom,
         }
       : null,
     canDelete
@@ -458,6 +482,7 @@ export interface PlaylistTracksPanelProps<T extends PlaylistPanelTrack> {
   onBulkAddToLibrary?: (tracks: T[]) => unknown;
   onBulkMoveToPlaylist?: (tracks: T[], target: PlaylistTrackTarget) => unknown;
   onReorder?: (jobIds: string[]) => unknown;
+  onMoveTrack?: (track: T, edge: "top" | "bottom") => unknown;
   bulkActionLoading?: boolean;
 }
 
@@ -507,6 +532,7 @@ export function PlaylistTracksPanel<T extends PlaylistPanelTrack>({
   onBulkAddToLibrary,
   onBulkMoveToPlaylist,
   onReorder,
+  onMoveTrack,
   bulkActionLoading = false,
 }: PlaylistTracksPanelProps<T>) {
   const [searchParams] = useSearchParams();
@@ -601,7 +627,9 @@ export function PlaylistTracksPanel<T extends PlaylistPanelTrack>({
   const playableTracks = useMemo(() => visibleTracks.filter(canPlayTrack), [visibleTracks]);
   const allVisibleSelected =
     visibleTracks.length > 0 && visibleTracks.every((track) => selectedIds.has(track.id));
-  const canReorder = editMode && sortKey === "index" && sortDirection === "asc" && !normalizedQuery;
+  const inPlaylistOrder = sortKey === "index" && sortDirection === "asc";
+  const canReorder = editMode && inPlaylistOrder && !normalizedQuery;
+  const moveTrack = inPlaylistOrder ? onMoveTrack : undefined;
   const isSourceActive = matchesSource(playbackSource);
   const currentTrackId = isSourceActive && currentTrack?.id ? currentTrack.id : null;
 
@@ -809,6 +837,14 @@ export function PlaylistTracksPanel<T extends PlaylistPanelTrack>({
           onManualReSearch={onManualReSearchTrack}
           onLinkFile={onLinkFileTrack}
           onDelete={onDeleteTrack}
+          onMoveToTop={
+            moveTrack && trackNumbers.get(track.id) !== 1 ? () => moveTrack(track, "top") : null
+          }
+          onMoveToBottom={
+            moveTrack && trackNumbers.get(track.id) !== tracks.length
+              ? () => moveTrack(track, "bottom")
+              : null
+          }
           playlistMenuProps={playlistMenuProps}
           queueItems={canPlay ? getQueueItems(toQueueTrack(track), { source: playbackSource }) : []}
         />

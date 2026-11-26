@@ -683,6 +683,45 @@ test("upgrading stops treating an album's release group as its release", () => {
   );
 });
 
+test("upgrading marks the files whose album or track tags named a release", () => {
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+  migrate(db, migrations.slice(0, 35));
+  db.exec(`
+    INSERT INTO library_artists (id, identity_key, name, created_at, updated_at)
+      VALUES (1, 'artist', 'Artist', 0, 0);
+    INSERT INTO library_albums (id, identity_key, artist_id, title, metadata_json, created_at, updated_at)
+      VALUES (1, 'tagged', 1, 'Tagged', '{"tags":{"musicbrainz_albumid":"release-a"}}', 0, 0),
+        (2, 'untagged', 1, 'Untagged', '{"tags":{}}', 0, 0);
+    INSERT INTO library_tracks (id, identity_key, title, metadata_json, created_at, updated_at)
+      VALUES (1, 'group', 'Group', '{"tags":{"musicbrainz_releasegroupid":"group-a"}}', 0, 0),
+        (2, 'release', 'Release', '{"tags":{"musicbrainz_albumid":"release-b"}}', 0, 0),
+        (3, 'untagged', 'Untagged', '{"tags":{"title":"Untagged"}}', 0, 0),
+        (4, 'shared', 'Shared', '{"tags":{"musicbrainz_albumid":"release-a"}}', 0, 0),
+        (5, 'unfiled', 'Unfiled', '{"tags":{"title":"Unfiled"}}', 0, 0);
+    INSERT INTO library_album_tracks (album_id, track_id, created_at)
+      VALUES (2, 1, 0), (1, 3, 0), (1, 4, 0), (2, 4, 0), (1, 5, 0);
+    INSERT INTO library_media_files (track_id, album_id, source, path, created_at, updated_at)
+      VALUES (1, 2, 'aurral', '/1.flac', 0, 0), (2, NULL, 'aurral', '/2.flac', 0, 0),
+        (3, 1, 'aurral', '/3.flac', 0, 0), (4, 1, 'aurral', '/4a.flac', 0, 0),
+        (4, 2, 'aurral', '/4b.flac', 0, 0), (5, NULL, 'aurral', '/5.flac', 0, 0);
+  `);
+
+  migrate(db);
+
+  assert.deepEqual(
+    db.prepare("SELECT path, release_tagged FROM library_media_files ORDER BY path").raw().all(),
+    [
+      ["/1.flac", 1],
+      ["/2.flac", 1],
+      ["/3.flac", 1],
+      ["/4a.flac", 1],
+      ["/4b.flac", 0],
+      ["/5.flac", 1],
+    ],
+  );
+});
+
 test("upgrading keeps the track lists stored for an album's release and files", () => {
   const artist = upsertLibraryArtist({ identityKey: "artist:kept-list", name: "Kept List" });
   const albums = ["kept-group", "kept-release"].map((name, index) => {
@@ -719,5 +758,66 @@ test("upgrading keeps the track lists stored for an album's release and files", 
   assert.deepEqual(
     getLibraryAlbumsToList().filter((album) => albums.includes(album.id)),
     [],
+  );
+});
+
+test("upgrading keeps only the first of several NUL-separated album artist values", () => {
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+  migrate(db, migrations.slice(0, 37));
+  db.prepare("INSERT INTO settings (key, value) VALUES ('librarySearchIndexVersion', '3')").run();
+  db.prepare(
+    `INSERT INTO library_artists (identity_key, name, created_at, updated_at)
+     VALUES ('name:artist:proxy', ?, 1, 1), ('name:artist:ac dc', 'AC/DC', 1, 1)`,
+  ).run("Proxy\0﻿\0﻿");
+  db.prepare(
+    `INSERT INTO library_albums (identity_key, artist_id, title, album_artist, created_at, updated_at)
+     VALUES ('name:album:bubble', 1, 'Bubble Bite EP', ?, 1, 1)`,
+  ).run("Proxy\0﻿\0﻿");
+  db.prepare(
+    `INSERT INTO download_jobs (id, artist_name, track_name, owner_id, status, created_at)
+     VALUES ('job', ?, 'Bubble', 'library', 'failed', 1)`,
+  ).run("Proxy\0﻿\0﻿");
+
+  migrate(db);
+
+  assert.deepEqual(db.prepare("SELECT name FROM library_artists ORDER BY id").pluck().all(), [
+    "Proxy",
+    "AC/DC",
+  ]);
+  assert.equal(db.prepare("SELECT album_artist FROM library_albums").pluck().get(), "Proxy");
+  assert.equal(db.prepare("SELECT artist_name FROM download_jobs").pluck().get(), "Proxy");
+  assert.equal(
+    db.prepare("SELECT value FROM settings WHERE key = 'librarySearchIndexVersion'").get(),
+    undefined,
+  );
+});
+
+test("upgrading stores day-first album release dates year first", () => {
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+  migrate(db, migrations.slice(0, 38));
+  db.prepare(
+    `INSERT INTO library_artists (identity_key, name, created_at, updated_at)
+     VALUES ('name:artist:a', 'A', 1, 1)`,
+  ).run();
+  const insert = db.prepare<[string, string, string]>(
+    `INSERT INTO library_albums (identity_key, artist_id, title, release_date, created_at, updated_at)
+     VALUES (?, 1, ?, ?, 1, 1)`,
+  );
+  for (const [key, date] of [
+    ["day-first", "25/03/2022"],
+    ["ambiguous", "05/04/2022"],
+    ["iso", "2022-03-25"],
+    ["unknown", "Unknown"],
+  ] as const) {
+    insert.run(key, key, date);
+  }
+
+  migrate(db);
+
+  assert.deepEqual(
+    db.prepare("SELECT release_date FROM library_albums ORDER BY id").pluck().all(),
+    ["2022-03-25", "2022", "2022-03-25", "Unknown"],
   );
 });

@@ -3,8 +3,9 @@ import { createHash } from "node:crypto";
 import { createAurral3Schema } from "./aurral-3-schema.ts";
 import { NOTIFICATION_EVENTS } from "../../lib/notificationEvents.ts";
 import { isRecord } from "../../lib/isRecord.ts";
-import { trackArtistCreditFromTags } from "../../lib/artistCredit.ts";
-import type { LibraryTracksRow, SettingsRow, UsersRow } from "../db/rows.ts";
+import { tagValues, trackArtistCreditFromTags } from "../../lib/artistCredit.ts";
+import { yearFirstReleaseDate } from "../../lib/releaseDate.ts";
+import type { LibraryAlbumsRow, LibraryTracksRow, SettingsRow, UsersRow } from "../db/rows.ts";
 
 type Migration = (db: Database.Database) => void;
 
@@ -536,6 +537,86 @@ const listTracksForFilesOnly: Migration = (db) => {
   }
 };
 
+const storeFileReleaseTags: Migration = (db) => {
+  if (
+    db
+      .prepare(
+        "SELECT 1 FROM pragma_table_info('library_media_files') WHERE name = 'release_tagged'",
+      )
+      .get()
+  )
+    return;
+  const namesRelease = `json_valid(metadata_json)
+    AND (coalesce(json_extract(metadata_json, '$.tags.musicbrainz_releasegroupid'), '') <> ''
+      OR coalesce(json_extract(metadata_json, '$.tags.musicbrainz_albumid'), '') <> '')`;
+  db.exec(`
+    ALTER TABLE library_media_files ADD COLUMN release_tagged INTEGER NOT NULL DEFAULT 0;
+    UPDATE library_media_files AS media SET release_tagged = 1
+    WHERE EXISTS (
+        SELECT 1 FROM library_album_tracks AS link
+        JOIN library_albums ON library_albums.id = link.album_id
+        WHERE link.track_id = media.track_id
+          AND (media.album_id = link.album_id OR media.album_id IS NULL)
+          AND ${namesRelease}
+      )
+      OR (
+        EXISTS (SELECT 1 FROM library_tracks WHERE id = media.track_id AND ${namesRelease})
+        AND NOT EXISTS (
+          SELECT 1 FROM library_media_files AS other
+          WHERE other.track_id = media.track_id AND other.id <> media.id
+        )
+      );
+  `);
+};
+
+const storeHubAccountId: Migration = (db) => {
+  if (db.prepare("SELECT 1 FROM pragma_table_info('hub_links') WHERE name = 'account_id'").get()) {
+    return;
+  }
+  db.exec("ALTER TABLE hub_links ADD COLUMN account_id TEXT");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_hub_links_account ON hub_links (origin, account_id)");
+};
+
+const dropAlbumArtistTagSeparators: Migration = (db) => {
+  let changed = false;
+  for (const [table, column] of [
+    ["library_artists", "name"],
+    ["library_albums", "album_artist"],
+    ["download_jobs", "artist_name"],
+  ] as const) {
+    const rows = db
+      .prepare<[], { id: number | string; value: string }>(
+        `SELECT id, ${column} AS value FROM ${table} WHERE instr(CAST(${column} AS BLOB), X'00') > 0`,
+      )
+      .all();
+    const update = db.prepare<[string, number | string]>(
+      `UPDATE ${table} SET ${column} = ? WHERE id = ?`,
+    );
+    for (const row of rows) {
+      const [name] = tagValues(row.value);
+      if (!name) continue;
+      update.run(name, row.id);
+      changed = true;
+    }
+  }
+  if (changed) db.prepare("DELETE FROM settings WHERE key = 'librarySearchIndexVersion'").run();
+};
+
+const storeReleaseDatesYearFirst: Migration = (db) => {
+  const rows = db
+    .prepare<[], Pick<LibraryAlbumsRow, "id" | "release_date">>(
+      "SELECT id, release_date FROM library_albums WHERE release_date GLOB '*[0-9][./-]*[0-9][./-][0-9][0-9][0-9][0-9]'",
+    )
+    .all();
+  const update = db.prepare<[string | null, number]>(
+    "UPDATE library_albums SET release_date = ? WHERE id = ?",
+  );
+  for (const row of rows) {
+    const date = yearFirstReleaseDate(row.release_date ?? "");
+    if (date !== row.release_date) update.run(date, row.id);
+  }
+};
+
 export const migrations: Migration[] = [
   createAurral3Schema,
   indexFinishedDownloadNames,
@@ -572,6 +653,10 @@ export const migrations: Migration[] = [
   clearReleaseGroupsStoredAsReleases,
   keepTrackListsOfClearedReleases,
   listTracksForFilesOnly,
+  storeFileReleaseTags,
+  storeHubAccountId,
+  dropAlbumArtistTagSeparators,
+  storeReleaseDatesYearFirst,
 ];
 
 export function migrate(db: Database.Database, steps: readonly Migration[] = migrations) {
