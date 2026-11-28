@@ -1,10 +1,11 @@
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { parseFile, type ILyricsTag } from "music-metadata";
 import type { RequestUser } from "../middleware/requestUser.ts";
 import { asAppError } from "../../lib/errors.ts";
 import { getSong, resolveStreamPath } from "./subsonicLibraryService.ts";
 import { lrclibGetLyrics } from "./apiClients/lrclib.ts";
+import { libraryFolderOwner } from "./libraryFolders.ts";
 
 type LyricLine = { start?: number; value: string };
 type Lyrics = { lang: string; synced: boolean; offset?: number; line: LyricLine[] };
@@ -63,8 +64,11 @@ function embeddedLyrics(tag: ILyricsTag): Omit<Lyrics, "lang"> | null {
   return textLyrics(tag.text);
 }
 
+const sidecarPathOf = (filePath: string) =>
+  path.join(path.dirname(filePath), `${path.parse(filePath).name}.lrc`);
+
 async function localLyrics(filePath: string): Promise<Lyrics[]> {
-  const sidecarPath = path.join(path.dirname(filePath), `${path.parse(filePath).name}.lrc`);
+  const sidecarPath = sidecarPathOf(filePath);
   try {
     const lyrics = textLyrics(await readFile(sidecarPath, "utf8"));
     if (lyrics) return [{ lang: "und", ...lyrics }];
@@ -119,4 +123,32 @@ export async function getLyricsBySongId(id: string, user: RequestUser) {
     displayTitle: song.title,
     ...entry,
   }));
+}
+
+// Other players reading the Library (Plex, Jellyfin, Navidrome) only see lyrics in files.
+// A plugin can file a download in a read-only folder, which Aurral never writes to.
+export async function saveSidecarLyrics(
+  filePath: string,
+  track: { artist?: string | null; title?: string | null; album?: string | null },
+) {
+  if (!track.artist?.trim() || !track.title?.trim()) return false;
+  if (libraryFolderOwner(filePath) !== "aurral") return false;
+  if ((await localLyrics(filePath)).length) return false;
+  const durationSec = await parseFile(filePath, { duration: true, skipCovers: true })
+    .then((metadata) => metadata.format.duration ?? null)
+    .catch(() => null);
+  const text = await lrclibGetLyrics({
+    artist: track.artist,
+    title: track.title,
+    album: track.album,
+    durationSec,
+  });
+  if (!text || !textLyrics(text)) return false;
+  try {
+    await writeFile(sidecarPathOf(filePath), `${text.trim()}\n`, { flag: "wx" });
+  } catch (error) {
+    if (asAppError(error)?.code === "EEXIST") return false;
+    throw error;
+  }
+  return true;
 }

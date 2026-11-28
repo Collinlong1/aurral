@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import type { ServerResponse } from "node:http";
 import { buffer } from "node:stream/consumers";
-import { access, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import fs, { access, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterAll, afterEach, beforeEach, test, type TestContext } from "vite-plus/test";
+import { afterAll, afterEach, beforeEach, test, vi, type TestContext } from "vite-plus/test";
 import { brainzmashGroup, serveGroups } from "../helpers/releaseFixture.ts";
 import {
   cleanupIsolatedState,
@@ -189,7 +189,7 @@ async function startFake() {
 function release(
   guid: string,
   title: string,
-  seeders: number,
+  seeders?: number,
   link = "/release.torrent",
   field = "downloadUrl",
 ) {
@@ -231,10 +231,12 @@ afterAll(async () => {
   await cleanupIsolatedState(state);
 });
 
-test("an album search keeps seeded torrents of the album, best quality first", async () => {
+test("an album search prefers quality first, then more seeders within a quality tier", async () => {
   fake.releases = [
-    release("mp3", "Glass Coast - Lowlands (2020) [MP3 320]", 40),
-    release("flac", "Glass Coast - Lowlands (2020) [FLAC]", 5),
+    release("mp3", "Glass Coast - Lowlands (2020) [MP3 320]", 100),
+    release("unknown-seeders", "Glass Coast - Lowlands (2020) [FLAC]"),
+    release("flac", "Glass Coast - Lowlands (2020) [FLAC]", 1),
+    release("popular-flac", "Glass Coast - Lowlands (2020) [FLAC]", 50),
     release("dead", "Glass Coast - Lowlands (2020) [FLAC 24bit]", 0),
     release("other", "Glass Coast - Highlands (2022) [FLAC]", 90),
   ];
@@ -252,20 +254,22 @@ test("an album search keeps seeded torrents of the album, best quality first", a
   assert.deepEqual(
     results.map((result) => [result.id, result.title]),
     [
+      ["popular-flac", "Lowlands"],
       ["flac", "Lowlands"],
+      ["unknown-seeders", "Lowlands"],
       ["mp3", "Lowlands"],
     ],
   );
   assert.deepEqual(
     upgrades.map((result) => result.id),
-    ["flac"],
+    ["popular-flac", "flac", "unknown-seeders"],
   );
 
   fake.musicReleases = [release("mp3", "Glass Coast - Lowlands (2020) [MP3 320]", 40)];
   const broader = await search({ currentTier: "mp3-320" });
   assert.deepEqual(
     broader.map((result) => result.id),
-    ["flac"],
+    ["popular-flac", "flac", "unknown-seeders"],
   );
 });
 
@@ -391,7 +395,7 @@ test("status waits for the torrent, signs in again when its session ends, then l
   assert.equal((await qbittorrentClient.testConnection()).connected, false);
 });
 
-test("discard removes the torrent, finished or not", async () => {
+test("discard removes an unfinished torrent and leaves a finished one seeding, marked as rejected", async () => {
   const torrent = { name: "", state: "downloading", save_path: "", files: [] };
   fake.torrents = [
     { ...torrent, hash: "other", progress: 0.1, tags: "" },
@@ -402,22 +406,28 @@ test("discard removes the torrent, finished or not", async () => {
   await qbittorrentSource.discard!("a");
   await qbittorrentSource.discard!("b");
 
-  assert.deepEqual(fake.deleted, ["partial", "done"]);
+  assert.deepEqual(fake.deleted, ["partial"]);
+  assert.equal(
+    fake.torrents.find((torrent) => torrent.hash === "done")?.tags,
+    "b, aurral-rejected",
+  );
 });
 
-test("cleanup removes imported torrents once qBittorrent stops seeding them", async () => {
+test("cleanup removes imported and rejected torrents once qBittorrent stops seeding them", async () => {
   const torrent = { name: "", save_path: "", files: [], progress: 1 };
   fake.torrents = [
     { ...torrent, hash: "stopped", state: "stoppedUP", tags: "aurral-1, aurral-imported" },
     { ...torrent, hash: "paused", state: "pausedUP", tags: "aurral-2, aurral-imported" },
     { ...torrent, hash: "seeding", state: "uploading", tags: "aurral-3, aurral-imported" },
+    { ...torrent, hash: "rejected", state: "stoppedUP", tags: "aurral-5, aurral-rejected" },
+    { ...torrent, hash: "rejected-seeding", state: "uploading", tags: "aurral-6, aurral-rejected" },
     { ...torrent, hash: "unimported", state: "stoppedUP", tags: "aurral-4" },
     { ...torrent, hash: "other", state: "stoppedUP", tags: "" },
   ];
 
   await removeSeededTorrents();
 
-  assert.deepEqual(fake.deleted, ["stopped|paused"]);
+  assert.deepEqual(fake.deleted, ["stopped|paused|rejected"]);
 });
 
 // An album torrent of Lowlands whose files are on disk, as qBittorrent
@@ -493,6 +503,50 @@ test("a track request downloads only the track's file from an album torrent and 
   assert.equal(job.status, "done");
   assert.equal(job.releaseGuid, "album:lowlands");
   assert.deepEqual(fake.deleted, []);
+});
+
+test("a finished torrent Aurral can't take files from fails with the cause and isn't downloaded again", async (t) => {
+  t.onTestFinished(() => {
+    vi.restoreAllMocks();
+  });
+  const cases = [
+    {
+      prepare: () => rm(path.join(folder, "Glass Coast - Lowlands"), { recursive: true }),
+      error: /can't find .*Glass Coast - Lowlands.* Add a remote path mapping for qBittorrent/,
+    },
+    {
+      prepare: async () => {
+        const full = Object.assign(new Error("no space left on device"), { code: "ENOSPC" });
+        vi.spyOn(fs, "link").mockRejectedValue(full);
+        vi.spyOn(fs, "copyFile").mockRejectedValue(full);
+      },
+      error: /Aurral couldn't copy .*Night Drive\.flac: no space left on device$/,
+    },
+  ];
+  for (const { prepare, error } of cases) {
+    await rm(folder, { recursive: true, force: true });
+    await mkdir(folder);
+    fake.torrents = [];
+    fake.added = [];
+    fake.deleted = [];
+    await lowlandsTorrent();
+    await prepare();
+    const jobId = createTrackedJob(
+      downloadTracker,
+      { artistName: "Glass Coast", trackName: "Night Drive", albumName: "Lowlands" },
+      "qbittorrent-source",
+    );
+    const search = { jobId, phase: "search", source: "qbittorrent" } as const;
+
+    await assert.rejects(runPipeline(search), error);
+    await assert.rejects(runPipeline(search), /No matching album/);
+    assert.equal(fake.added.length, 1);
+    assert.deepEqual(fake.deleted, []);
+    assert.match(
+      fake.torrents.find((torrent) => torrent.hash === "h1")?.tags ?? "",
+      /aurral-rejected/,
+    );
+  }
 });
 
 test("a track request downloads the whole album when the file names don't show the track, and picks it by its tags", async () => {
@@ -591,7 +645,7 @@ test("an album upgrade keeps seeding the torrent it imported from", async (t) =>
   assert.deepEqual(fake.deleted, []);
 });
 
-test("an album attempt removes a finished torrent it imported nothing from", async (t) => {
+test("an album attempt leaves a finished torrent it imported nothing from seeding, marked as rejected", async (t) => {
   await lowlandsTorrent();
   const jobId = await lowlandsAlbumJob(t, ["Harbor", "Pier"]);
 
@@ -607,5 +661,9 @@ test("an album attempt removes a finished torrent it imported nothing from", asy
     "finalize",
   );
   assert.notEqual(trackedJob(downloadTracker, jobId).status, "done");
-  assert.deepEqual(fake.deleted, ["h1"]);
+  assert.deepEqual(fake.deleted, []);
+  assert.match(
+    fake.torrents.find((torrent) => torrent.hash === "h1")?.tags ?? "",
+    /aurral-rejected/,
+  );
 });
