@@ -3,7 +3,11 @@ import { createHash } from "node:crypto";
 import { createAurral3Schema } from "./aurral-3-schema.ts";
 import { NOTIFICATION_EVENTS } from "../../lib/notificationEvents.ts";
 import { isRecord } from "../../lib/isRecord.ts";
-import { tagValues, trackArtistCreditFromTags } from "../../lib/artistCredit.ts";
+import {
+  tagValues,
+  trackArtistCreditFromTags,
+  VARIOUS_ARTISTS_MBID,
+} from "../../lib/artistCredit.ts";
 import { yearFirstReleaseDate } from "../../lib/releaseDate.ts";
 import type { LibraryAlbumsRow, LibraryTracksRow, SettingsRow, UsersRow } from "../db/rows.ts";
 
@@ -617,6 +621,76 @@ const storeReleaseDatesYearFirst: Migration = (db) => {
   }
 };
 
+const nameVariousArtists: Migration = (db) => {
+  const renamed = db
+    .prepare<[string]>(
+      "UPDATE library_artists SET name = 'Various Artists' WHERE mbid = ? AND name <> 'Various Artists'",
+    )
+    .run(VARIOUS_ARTISTS_MBID).changes;
+  if (renamed) db.prepare("DELETE FROM settings WHERE key = 'librarySearchIndexVersion'").run();
+};
+
+// Before #2257, deleting an album that shared songs with a kept album cleared its
+// management row but left the album and those links. Only that delete leaves an
+// album Aurral requested with no management row and a monitoring exclusion.
+const finishAlbumDeletesThatKeptSharedSongs: Migration = (db) => {
+  const albums = db
+    .prepare<[], Pick<LibraryAlbumsRow, "id" | "artist_id">>(
+      `SELECT album.id, album.artist_id FROM library_albums AS album
+       WHERE json_valid(album.metadata_json)
+         AND json_extract(album.metadata_json, '$.librarySource') = 'aurral'
+         AND json_extract(album.metadata_json, '$.monitored') = 1
+         AND NOT EXISTS (
+           SELECT 1 FROM library_management
+           WHERE entity_kind = 'album' AND entity_id = album.id
+         )
+         AND EXISTS (
+           SELECT 1 FROM library_monitoring_exclusions AS exclusion
+           WHERE exclusion.kind = 'album'
+             AND exclusion.mbid IN (album.release_group_mbid, album.mbid)
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM library_media_files AS media
+           WHERE media.available = 1
+             AND (media.album_id = album.id OR (media.album_id IS NULL AND media.track_id IN (
+               SELECT track_id FROM library_album_tracks WHERE album_id = album.id
+             )))
+         )`,
+    )
+    .all();
+  if (albums.length === 0) return;
+  const trackIds = db.prepare<[number], number>(
+    "SELECT track_id FROM library_album_tracks WHERE album_id = ?",
+  );
+  const unlink = db.prepare<[number]>("DELETE FROM library_album_tracks WHERE album_id = ?");
+  const forgetMissingFiles = db.prepare<[number]>(
+    "DELETE FROM library_media_files WHERE album_id = ? AND available = 0",
+  );
+  const removeAlbum = db.prepare<[number]>("DELETE FROM library_albums WHERE id = ?");
+  const removeTrack = db.prepare<[number]>(
+    `DELETE FROM library_tracks WHERE id = ?
+       AND NOT EXISTS (SELECT 1 FROM library_album_tracks WHERE track_id = library_tracks.id)
+       AND NOT EXISTS (SELECT 1 FROM library_media_files WHERE track_id = library_tracks.id)`,
+  );
+  const removeArtist = db.prepare<[number]>(
+    `DELETE FROM library_artists WHERE id = ?
+       AND NOT EXISTS (SELECT 1 FROM library_albums WHERE artist_id = library_artists.id)
+       AND NOT EXISTS (
+         SELECT 1 FROM library_management
+         WHERE entity_kind = 'artist' AND entity_id = library_artists.id
+       )`,
+  );
+  for (const album of albums) {
+    const tracks = trackIds.pluck().all(album.id);
+    unlink.run(album.id);
+    forgetMissingFiles.run(album.id);
+    removeAlbum.run(album.id);
+    for (const track of tracks) removeTrack.run(track);
+    removeArtist.run(album.artist_id);
+  }
+  db.prepare("DELETE FROM settings WHERE key = 'librarySearchIndexVersion'").run();
+};
+
 export const migrations: Migration[] = [
   createAurral3Schema,
   indexFinishedDownloadNames,
@@ -657,6 +731,8 @@ export const migrations: Migration[] = [
   storeHubAccountId,
   dropAlbumArtistTagSeparators,
   storeReleaseDatesYearFirst,
+  nameVariousArtists,
+  finishAlbumDeletesThatKeptSharedSongs,
 ];
 
 export function migrate(db: Database.Database, steps: readonly Migration[] = migrations) {

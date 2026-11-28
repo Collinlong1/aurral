@@ -9,6 +9,7 @@ import type { PipelinePayload } from "../../backend/services/downloadPipeline.ts
 import { test, beforeEach, afterAll, vi } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import Database from "better-sqlite3";
 
@@ -706,6 +707,29 @@ test("a job keeps why it was queued across restart, and upgrades and flows say s
     playlistId: null,
   });
   assert.equal(causeOf(legacyId), null);
+});
+
+test("an upgrade skips the files and releases its track already rejected", () => {
+  const tracker = new DownloadTracker();
+  const doneId = requireFixture(
+    tracker.addJob({ artistName: "The Band", trackName: "Song" }, "library"),
+  );
+  tracker.recordDeniedSource(doneId, "slskd", "peer\0Album\\08 - Other Song.flac");
+  tracker.recordDeniedSource(doneId, "usenet", "album:release-guid");
+  tracker.setDone(doneId, "/music/song.m4a");
+  const upgradeId = requireFixture(tracker.addUpgradeJob(tracker.getJob(doneId)));
+
+  const denied = [
+    ["slskd", "peer\0Album\\08 - Other Song.flac"],
+    ["usenet", "album:release-guid"],
+  ];
+  assert.deepEqual(trackedJob(tracker, upgradeId).deniedRemoteSources, denied);
+  const stored = db
+    .prepare<[string], { denied_remote_sources: string | null }>(
+      "SELECT denied_remote_sources FROM download_jobs WHERE id = ?",
+    )
+    .get(upgradeId);
+  assert.deepEqual(JSON.parse(stored?.denied_remote_sources ?? "null"), denied);
 });
 
 test("partial album fallback persists per-track mode across restart", async () => {
@@ -1425,13 +1449,19 @@ test("classifies a file outside the Library folder without making it eligible fo
   const tracker = trackerModule.downloadTracker;
   const sharedPath = path.join(isolatedState.baseDir, "shared", "Song.mp3");
   await mkdir(path.dirname(sharedPath), { recursive: true });
-  await writeFile(
+  execFileSync("ffmpeg", [
+    "-loglevel",
+    "error",
+    "-f",
+    "lavfi",
+    "-i",
+    "anullsrc",
+    "-t",
+    "0.1",
+    "-b:a",
+    "128k",
     sharedPath,
-    Buffer.from(
-      "SUQzBAAAAAAAIlRTU0UAAAAOAAADTGF2ZjYxLjcuMTAzAAAAAAAAAAAAAAD/+5DAAAAAAAAAAAAAAAAAAAAAAABJbmZvAAAADwAAAAIAAATkAKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqr//////////////////////////////////////////////////////////////////wAAAABMYXZjNjEuMTkAAAAAAAAAAAAAAAAkBQcAAAAAAAAE5MAlg1kAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
-      "base64",
-    ),
-  );
+  ]);
   dbOps.updateSettings({
     ...dbOps.getSettings(),
     downloadFolderPath: path.join(isolatedState.baseDir, "managed"),
